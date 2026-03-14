@@ -64,6 +64,9 @@ export default function Navbar() {
           <Link href="#enterprise" className={`text-sm font-medium transition-colors duration-500 ${isDarkBg ? 'text-white/70 hover:text-white' : 'text-muted-text hover:text-primary'}`}>
             Enterprise
           </Link>
+          <Link href="#pricing" className={`text-sm font-medium transition-colors duration-500 ${isDarkBg ? 'text-white/70 hover:text-white' : 'text-muted-text hover:text-primary'}`}>
+            Pricing
+          </Link>
         </div>
 
         <div className="flex items-center gap-4">

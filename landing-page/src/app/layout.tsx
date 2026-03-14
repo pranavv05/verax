@@ -13,8 +13,8 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "Vouch | Modern Document Workspace for CA Firms",
-  description: "Stop the WhatsApp chaos. Collect, extract, and export client data directly to Tally Prime. Built for the modern CA firm.",
+  title: "Verax | Modern Document Workspace for CA Firms",
+  description: "Eliminate document chaos. Verax helps CA firms collect documents, extract data with AI, and sync to Tally instantly.",
 };
 
 

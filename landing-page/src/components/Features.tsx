@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Smartphone, Zap, FileJson, Link as LinkIcon, UploadCloud, CheckCircle2, ArrowRight } from "lucide-react";
+import { Smartphone, Zap, FileJson, Link as LinkIcon, UploadCloud, CheckCircle2, ArrowRight, Users } from "lucide-react";
 
 // --- MOCKUP COMPONENTS (Pure CSS/Tailwind) ---
 
@@ -221,24 +221,53 @@ const TallyMockup = () => (
 const features = [
   {
     title: "Zero-Friction Document Collection.",
-    description: "Eliminate WhatsApp chases and endless email threads. Create secure, single-use client portals in one click. Clients upload via a simple Magic Link—no app to install, no password to remember.",
+    description: "Eliminate WhatsApp chases and endless email threads. Create secure, single-use client portals in one click. Clients upload via a simple Magic Link—no app to install, no password to remember. Every file lands exactly where it belongs, tagged and ready for processing.",
     icon: Smartphone, 
     Mockup: MagicLinkMockup,
     color: "bg-blue-500/10 text-blue-600",
   },
   {
-    title: "99.9% Accurate AI Extraction.",
-    description: "Turn chaotic PDFs and images into structured financial data instantly. The Vouch Intelligence Engine reads invoices, identifies vendors, extracts line items, and calculates totals faster than humanly possible.",
+    title: "Multi-Engine AI Extraction.",
+    description: "Verax doesn't just read text; it understands financial context. Our engine extracts vendor data, GST breakdown, and line-item details from Invoices, Receipts, and Bank Statements with 99.9% precision. Flag low-confidence entries for human review only when necessary.",
     icon: Zap,
     Mockup: ExtractionMockup,
     color: "bg-accent/10 text-accent",
   },
   {
-    title: "One-Click Tally Prime Sync.",
-    description: "Bridge the gap between raw client data and your back line. Vouch automatically maps extracted values to your specific ledgers and generates pre-formatted XML files for instant Tally reconciliation.",
+    title: "Enterprise Tally & ERP Sync.",
+    description: "Bridge the gap between raw data and your back line. Verax automatically maps extracted values to your specific chart of accounts. Generate pre-formatted Tally XMLs, Zoho-compatible exports, or push directly via API to your existing accounting stack.",
     icon: FileJson,
     Mockup: TallyMockup,
     color: "bg-purple-500/10 text-purple-600",
+  },
+];
+
+const secondaryFeatures = [
+  {
+    title: "Client Command Center",
+    description: "A specialized CRM for CAs. Manage 100+ clients with a unified view of their document trails and filing status.",
+    icon: Users,
+  },
+  {
+    title: "Bank Statement Parsing",
+    description: "Full PDF parsing for all major Indian banks. Extract transaction rows directly into Excel or Tally XML.",
+  },
+  {
+    title: "Compliance Calendar",
+    description: "Automatic tracking for GST, TDS, and ITR deadlines. Send automated nudges to clients when files are missing.",
+    icon: CheckCircle2,
+  },
+  {
+    title: "Ledger Auto-Mapping",
+    description: "Our AI learns your mapping patterns. Map 'Reliance' to 'Purchases' once, and it never asks you again.",
+  },
+  {
+    title: "Team Collaboration",
+    description: "Built for teams. Assign clients to specific articled assistants and review their work before final export.",
+  },
+  {
+    title: "Bank-Grade Security",
+    description: "AES-256 encryption at rest and TLS 1.3 in transit. Every client's data is isolated in a secure vault.",
   },
 ];
 
@@ -247,13 +276,14 @@ export default function Features() {
     <section id="features" className="py-24 bg-surface">
       <div className="container mx-auto px-6">
         <div className="text-center mb-20">
-          <h2 className="text-3xl md:text-5xl font-display font-bold mb-4 text-primary">The Infrastructure for Growth.</h2>
+          <h2 className="text-3xl md:text-5xl font-display font-bold mb-4 text-primary">The Full OS for Modern Firms.</h2>
           <p className="text-lg text-muted-text max-w-2xl mx-auto font-medium">
-            We've rebuilt the accounting workflow from the ground up. Collect, process, and sync financial data without missing a single invoice or dropping a single file.
+            Verax replaces fragmented tools with a single, high-performance infrastructure. Built from the ground up to handle the specific needs of Indian Chartered Accountants.
           </p>
         </div>
 
-        <div className="space-y-32">
+        {/* Deep Dive Features */}
+        <div className="space-y-32 mb-40">
           {features.map((feature, index) => (
             <motion.div
               key={index}
@@ -274,7 +304,7 @@ export default function Features() {
                   {feature.description}
                 </p>
                 <div className="flex items-center gap-4 text-sm font-semibold uppercase tracking-wider text-accent cursor-pointer hover:gap-6 transition-all">
-                  <span>Learn how it works</span>
+                  <span>Explore the module</span>
                   <div className="h-px w-8 bg-accent/30" />
                 </div>
               </div>
@@ -286,6 +316,32 @@ export default function Features() {
               </div>
             </motion.div>
           ))}
+        </div>
+
+        {/* Professional Feature Grid */}
+        <div className="pt-20 border-t border-border">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-16">
+            {secondaryFeatures.map((sFeature, idx) => (
+              <motion.div 
+                key={idx}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: idx * 0.1 }}
+                className="flex flex-col group"
+              >
+                <div className="w-12 h-12 rounded-xl bg-primary/5 text-primary flex items-center justify-center mb-6 group-hover:bg-primary group-hover:text-white transition-all duration-300">
+                  {sFeature.icon ? <sFeature.icon size={20} /> : <Zap size={20} />}
+                </div>
+                <h4 className="text-xl font-display font-bold text-primary mb-3">
+                  {sFeature.title}
+                </h4>
+                <p className="text-muted-text font-medium leading-relaxed">
+                  {sFeature.description}
+                </p>
+              </motion.div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
