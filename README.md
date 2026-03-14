@@ -1,8 +1,10 @@
-﻿# CA SaaS Platform
+# CA SaaS Platform
 
 Multi-tenant SaaS platform for Chartered Accountant firms in India.
 
 ## Overview
+
+Full documentation of the product vision and technical strategy can be found in the [PRD & Technical Architecture](docs/PRD.md).
 
 This monorepo contains:
 - `frontend`: React 18 + Vite + Tailwind web app
