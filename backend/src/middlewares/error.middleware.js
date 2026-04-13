@@ -12,7 +12,7 @@ const errorHandler = (error, req, res, next) => {
     statusCode
   };
 
-  if (statusCode >= 500 && process.env.NODE_ENV !== "production") {
+  if (statusCode >= 500 && process.env.DEBUG_ERRORS === "true") {
     response.details = error.stack;
   }
 

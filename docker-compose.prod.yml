@@ -1,0 +1,167 @@
+# Production docker-compose — use with:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Required env vars (set in your .env or CI secrets):
+#   POSTGRES_PASSWORD, DATABASE_URL, REDIS_URL
+#   JWT_SECRET, JWT_REFRESH_SECRET  (min 32 random chars each)
+#   AWS_S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   OPENAI_API_KEY
+#   VITE_API_BASE_URL  (public URL of backend, e.g. https://api.example.com)
+#   FRONTEND_URL       (public URL of frontend, e.g. https://example.com)
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: ca-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ca_saas}
+      POSTGRES_USER: ${POSTGRES_USER:-ca_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # No ports exposed — accessed only inside the Docker network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    container_name: ca-redis
+    restart: unless-stopped
+    # No ports exposed — accessed only inside the Docker network
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    image: node:20-alpine
+    container_name: ca-backend
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
+      AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-120000}
+      FRONTEND_URL: ${FRONTEND_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-15}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-7}
+      REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-ca_refresh_token}
+      MAGIC_LINK_SINGLE_USE: ${MAGIC_LINK_SINGLE_USE:-true}
+      MAGIC_LINK_EXPIRY_HOURS: ${MAGIC_LINK_EXPIRY_HOURS:-24}
+      UPLOAD_URL_EXPIRY_SECONDS: ${UPLOAD_URL_EXPIRY_SECONDS:-900}
+      TALLY_EXPORT_URL_EXPIRY_SECONDS: ${TALLY_EXPORT_URL_EXPIRY_SECONDS:-900}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      DOCUMENT_WORKER_CONCURRENCY: ${DOCUMENT_WORKER_CONCURRENCY:-3}
+    command: sh -c "npm install --omit=dev && npm start"
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    image: ca-frontend:prod
+    container_name: ca-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    image: ca-ai-service:prod
+    container_name: ca-ai-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AI_SERVICE_PORT: 8001
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      AI_WRITE_BACK_ENABLED: ${AI_WRITE_BACK_ENABLED:-true}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      TEXTRACT_TIMEOUT_SECONDS: ${TEXTRACT_TIMEOUT_SECONDS:-60}
+      MAX_PDF_PAGES_FOR_FALLBACK: ${MAX_PDF_PAGES_FOR_FALLBACK:-3}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+    # No ports exposed — backend calls it via internal Docker network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    image: node:20-alpine
+    container_name: ca-worker
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
+      AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-120000}
+      DOCUMENT_WORKER_CONCURRENCY: ${DOCUMENT_WORKER_CONCURRENCY:-3}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-15}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-7}
+      REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-ca_refresh_token}
+      MAGIC_LINK_SINGLE_USE: ${MAGIC_LINK_SINGLE_USE:-true}
+      MAGIC_LINK_EXPIRY_HOURS: ${MAGIC_LINK_EXPIRY_HOURS:-24}
+      UPLOAD_URL_EXPIRY_SECONDS: ${UPLOAD_URL_EXPIRY_SECONDS:-900}
+      TALLY_EXPORT_URL_EXPIRY_SECONDS: ${TALLY_EXPORT_URL_EXPIRY_SECONDS:-900}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+    command: sh -c "npm install --omit=dev && npm run worker:documents"
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_node_modules:

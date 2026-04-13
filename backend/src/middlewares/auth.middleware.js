@@ -36,6 +36,17 @@ const requireAuth = (req, res, next) => {
   }
 };
 
+const requireAdmin = (req, res, next) => {
+  if (!req.user) {
+    return next(ApiError.unauthorized("Authentication required"));
+  }
+  if (req.user.role !== "admin") {
+    return next(ApiError.forbidden("Admin access required"));
+  }
+  return next();
+};
+
 module.exports = {
-  requireAuth
+  requireAuth,
+  requireAdmin
 };
