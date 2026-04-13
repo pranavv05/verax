@@ -66,7 +66,13 @@ const PublicLayout = ({ children }) => {
 
           {/* CTA Buttons */}
           <div className="hidden items-center gap-3 md:flex">
-            <button 
+            <Link
+              to="/login"
+              className="btn-secondary text-sm px-5 py-2.5"
+            >
+              Sign in
+            </Link>
+            <button
               onClick={scrollToWaitlist}
               className="btn-accent text-sm px-6 py-2.5"
             >
@@ -121,12 +127,19 @@ const PublicLayout = ({ children }) => {
                   </NavLink>
                 ))}
                 <hr className="my-2 border-[#e7dcc8]" />
+                <Link
+                  to="/login"
+                  onClick={() => setMobileOpen(false)}
+                  className="btn-secondary mt-1 text-center text-sm py-3 block"
+                >
+                  Sign in
+                </Link>
                 <button
                   onClick={() => {
                     setMobileOpen(false);
                     scrollToWaitlist();
                   }}
-                  className="btn-accent mt-1 text-center text-sm py-3"
+                  className="btn-accent mt-2 text-center text-sm py-3"
                 >
                   Join Waitlist
                 </button>

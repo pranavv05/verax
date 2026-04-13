@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
@@ -8,37 +8,41 @@ import StatusBadge from "../components/ui/StatusBadge";
 import { clientsApi } from "../api/clients-api";
 import { formatDateTime, parseApiError } from "../lib/utils";
 
-const newClientSchema = z.object({
+const clientSchema = z.object({
   name: z.string().min(2, "Client name is required").max(255),
   email: z
     .string()
     .email("Enter a valid email")
     .or(z.literal(""))
-    .transform((value) => value || null),
+    .transform((v) => v || null),
   phone: z
     .string()
     .max(15, "Phone should be 15 chars max")
     .or(z.literal(""))
-    .transform((value) => value || null),
+    .transform((v) => v || null),
   gstin: z
     .string()
     .max(15, "GSTIN should be 15 chars max")
     .or(z.literal(""))
-    .transform((value) => (value ? value.toUpperCase() : null)),
-  status: z.enum(["active", "inactive", "pending"]) 
+    .transform((v) => (v ? v.toUpperCase() : null)),
+  status: z.enum(["active", "inactive", "pending"])
 });
+
+const emptyForm = { name: "", email: "", phone: "", gstin: "", status: "active" };
 
 const ClientsPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
   const [requestingId, setRequestingId] = useState("");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 0 });
-
   const [filters, setFilters] = useState({ page: 1, limit: 20, search: "", status: "" });
-  const [form, setForm] = useState({ name: "", email: "", phone: "", gstin: "", status: "active" });
+  const [form, setForm] = useState(emptyForm);
+  const [editingClient, setEditingClient] = useState(null); // null = add mode, object = edit mode
+  const [confirmDeleteId, setConfirmDeleteId] = useState(""); // id to confirm delete
 
   const loadClients = async () => {
     setLoading(true);
@@ -58,12 +62,31 @@ const ClientsPage = () => {
     loadClients();
   }, [filters.page, filters.status, filters.search]);
 
-  const onCreateClient = async (event) => {
+  const startEdit = (client) => {
+    setEditingClient(client);
+    setForm({
+      name: client.name || "",
+      email: client.email || "",
+      phone: client.phone || "",
+      gstin: client.gstin || "",
+      status: client.status || "active"
+    });
+    setError("");
+    setToast("");
+  };
+
+  const cancelEdit = () => {
+    setEditingClient(null);
+    setForm(emptyForm);
+    setError("");
+  };
+
+  const onSubmit = async (event) => {
     event.preventDefault();
     setError("");
     setToast("");
 
-    const validation = newClientSchema.safeParse(form);
+    const validation = clientSchema.safeParse(form);
     if (!validation.success) {
       setError(validation.error.issues[0]?.message || "Invalid form values");
       return;
@@ -71,14 +94,39 @@ const ClientsPage = () => {
 
     setSaving(true);
     try {
-      await clientsApi.create(validation.data);
-      setForm({ name: "", email: "", phone: "", gstin: "", status: "active" });
-      setToast("Client created successfully.");
+      if (editingClient) {
+        await clientsApi.update(editingClient.id, validation.data);
+        setToast("Client updated successfully.");
+        setEditingClient(null);
+        setForm(emptyForm);
+      } else {
+        await clientsApi.create(validation.data);
+        setForm(emptyForm);
+        setToast("Client created successfully.");
+      }
       await loadClients();
     } catch (submitError) {
-      setError(parseApiError(submitError, "Unable to create client"));
+      setError(parseApiError(submitError, editingClient ? "Unable to update client" : "Unable to create client"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onDeleteConfirmed = async () => {
+    const id = confirmDeleteId;
+    setConfirmDeleteId("");
+    setDeletingId(id);
+    setError("");
+    setToast("");
+    try {
+      await clientsApi.remove(id);
+      setToast("Client deleted.");
+      if (editingClient?.id === id) cancelEdit();
+      await loadClients();
+    } catch (deleteError) {
+      setError(parseApiError(deleteError, "Unable to delete client"));
+    } finally {
+      setDeletingId("");
     }
   };
 
@@ -97,13 +145,11 @@ const ClientsPage = () => {
     }
   };
 
-  const hasRows = rows.length > 0;
-
   const canGoPrevious = pagination.page > 1;
   const canGoNext = pagination.totalPages > pagination.page;
 
   const tableBody = useMemo(() => {
-    if (!hasRows) {
+    if (!rows.length) {
       return (
         <tr>
           <td colSpan={7} className="p-0">
@@ -117,7 +163,7 @@ const ClientsPage = () => {
     }
 
     return rows.map((client) => (
-      <tr key={client.id} className="border-t border-[#eadfcf]">
+      <tr key={client.id} className={`border-t border-[#eadfcf] ${editingClient?.id === client.id ? "bg-indigo-50/50" : ""}`}>
         <td className="px-3 py-3 text-sm font-semibold text-ink-900">{client.name}</td>
         <td className="px-3 py-3 text-sm text-[#5f6f84]">{client.gstin || "-"}</td>
         <td className="px-3 py-3 text-sm text-[#5f6f84]">{client.email || "-"}</td>
@@ -127,30 +173,74 @@ const ClientsPage = () => {
         </td>
         <td className="px-3 py-3 text-xs text-[#6e7f96]">{formatDateTime(client.createdAt)}</td>
         <td className="px-3 py-3 text-right text-sm">
-          <div className="flex flex-wrap justify-end gap-2">
-            <Link className="btn-secondary px-2.5 py-1.5 text-xs" to={`/clients/${client.id}`}>
+          <div className="flex flex-wrap justify-end gap-1.5">
+            <Link className="btn-secondary px-2 py-1.5 text-xs" to={`/clients/${client.id}`}>
               Details
             </Link>
-            <Link className="btn-secondary px-2.5 py-1.5 text-xs" to={`/clients/${client.id}/documents`}>
-              Documents
+            <Link className="btn-secondary px-2 py-1.5 text-xs" to={`/clients/${client.id}/documents`}>
+              Docs
             </Link>
             <button
               type="button"
-              className="btn-primary px-2.5 py-1.5 text-xs"
+              className="btn-secondary px-2 py-1.5 text-xs"
+              onClick={() => startEdit(client)}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="px-2 py-1.5 text-xs rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
+              disabled={deletingId === client.id}
+              onClick={() => setConfirmDeleteId(client.id)}
+            >
+              {deletingId === client.id ? "..." : "Delete"}
+            </button>
+            <button
+              type="button"
+              className="btn-primary px-2 py-1.5 text-xs"
               disabled={requestingId === client.id}
               onClick={() => onRequestDocs(client.id)}
             >
-              {requestingId === client.id ? "Sending..." : "Request docs"}
+              {requestingId === client.id ? "..." : "Request docs"}
             </button>
           </div>
         </td>
       </tr>
     ));
-  }, [hasRows, requestingId, rows]);
+  }, [rows, editingClient, deletingId, requestingId]);
 
   return (
     <AppShell title="Clients" subtitle="Search, filter, and manage clients across your firm.">
+      {/* Delete confirmation modal */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
+          <div className="panel mx-4 w-full max-w-sm p-6">
+            <h3 className="text-lg font-bold text-ink-900">Delete client?</h3>
+            <p className="mt-2 text-sm text-[#607086]">
+              This will permanently delete the client and all associated data. This cannot be undone.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                className="btn-secondary flex-1"
+                onClick={() => setConfirmDeleteId("")}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="flex-1 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 transition"
+                onClick={onDeleteConfirmed}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+        {/* Client table */}
         <article className="panel p-4">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-1 gap-2">
@@ -158,16 +248,12 @@ const ClientsPage = () => {
                 className="field"
                 placeholder="Search by name, email, GSTIN, phone"
                 value={filters.search}
-                onChange={(event) =>
-                  setFilters((prev) => ({ ...prev, page: 1, search: event.target.value }))
-                }
+                onChange={(e) => setFilters((prev) => ({ ...prev, page: 1, search: e.target.value }))}
               />
               <select
-                className="field max-w-[170px]"
+                className="field max-w-[160px]"
                 value={filters.status}
-                onChange={(event) =>
-                  setFilters((prev) => ({ ...prev, page: 1, status: event.target.value }))
-                }
+                onChange={(e) => setFilters((prev) => ({ ...prev, page: 1, status: e.target.value }))}
               >
                 <option value="">All statuses</option>
                 <option value="active">Active</option>
@@ -221,17 +307,37 @@ const ClientsPage = () => {
           </div>
         </article>
 
+        {/* Add / Edit panel */}
         <article className="panel p-4">
-          <h2 className="text-lg font-bold text-ink-900">Add new client</h2>
-          <p className="mt-1 text-sm text-[#66778f]">Create a client profile and issue upload links.</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-ink-900">
+                {editingClient ? `Edit: ${editingClient.name}` : "Add new client"}
+              </h2>
+              <p className="mt-0.5 text-sm text-[#66778f]">
+                {editingClient
+                  ? "Update client details below."
+                  : "Create a client profile and issue upload links."}
+              </p>
+            </div>
+            {editingClient && (
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="text-xs text-[#607086] hover:text-ink-900 underline"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
 
-          <form className="mt-4 space-y-3" onSubmit={onCreateClient}>
+          <form className="mt-4 space-y-3" onSubmit={onSubmit}>
             <div>
               <label className="label">Client name</label>
               <input
                 className="field"
                 value={form.name}
-                onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                 placeholder="M/s Example Industries"
               />
             </div>
@@ -242,7 +348,7 @@ const ClientsPage = () => {
                 <input
                   className="field"
                   value={form.email}
-                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                  onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
                   placeholder="accounts@example.com"
                   type="email"
                 />
@@ -252,7 +358,7 @@ const ClientsPage = () => {
                 <input
                   className="field"
                   value={form.phone}
-                  onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
+                  onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
                   placeholder="9876543210"
                 />
               </div>
@@ -262,9 +368,9 @@ const ClientsPage = () => {
               <div>
                 <label className="label">GSTIN</label>
                 <input
-                  className="field"
+                  className="field uppercase"
                   value={form.gstin}
-                  onChange={(event) => setForm((prev) => ({ ...prev, gstin: event.target.value }))}
+                  onChange={(e) => setForm((prev) => ({ ...prev, gstin: e.target.value }))}
                   placeholder="22AAAAA0000A1Z5"
                 />
               </div>
@@ -273,7 +379,7 @@ const ClientsPage = () => {
                 <select
                   className="field"
                   value={form.status}
-                  onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
+                  onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}
                 >
                   <option value="active">Active</option>
                   <option value="pending">Pending</option>
@@ -295,7 +401,9 @@ const ClientsPage = () => {
             ) : null}
 
             <button type="submit" className="btn-primary w-full" disabled={saving}>
-              {saving ? "Creating..." : "Create client"}
+              {saving
+                ? editingClient ? "Saving..." : "Creating..."
+                : editingClient ? "Save changes" : "Create client"}
             </button>
           </form>
         </article>

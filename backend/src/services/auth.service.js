@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const { randomUUID } = require("crypto");
 const ApiError = require("../utils/api-error");
 const env = require("../config/env");
+const pool = require("../db/pool");
 const { withTenantTransaction, setLocalConfig } = require("../db/tenant-context");
 const {
   createAccessToken,
@@ -72,6 +73,60 @@ const createSession = async (client, { user, userAgent, ipAddress }) => {
   );
 
   return { accessToken, refreshToken, tokenId };
+};
+
+const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddress }) => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await setLocalConfig(client, "app.current_firm_id", "");
+    await setLocalConfig(client, "app.auth_context", "signup");
+    await setLocalConfig(client, "app.auth_email", normalizedEmail);
+
+    const existing = await client.query(
+      "SELECT id FROM users WHERE lower(email) = $1 AND deleted_at IS NULL LIMIT 1",
+      [normalizedEmail]
+    );
+    if (existing.rowCount > 0) {
+      throw ApiError.conflict("An account with this email already exists");
+    }
+
+    const firmResult = await client.query(
+      "INSERT INTO firms (name, plan) VALUES ($1, 'starter') RETURNING id, name, plan",
+      [firmName.trim()]
+    );
+    const firm = firmResult.rows[0];
+
+    await setLocalConfig(client, "app.current_firm_id", firm.id);
+    await setLocalConfig(client, "app.auth_context", "");
+    await setLocalConfig(client, "app.auth_email", "");
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const userResult = await client.query(
+      `INSERT INTO users (firm_id, name, email, password_hash, role)
+       VALUES ($1, $2, $3, $4, 'admin')
+       RETURNING id, firm_id, name, email, role`,
+      [firm.id, name.trim(), normalizedEmail, passwordHash]
+    );
+    const user = userResult.rows[0];
+
+    const session = await createSession(client, { user, userAgent, ipAddress });
+
+    await client.query("COMMIT");
+    return {
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      user: mapUserResponse(user),
+      firm
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 const loginUser = async ({ email, password, userAgent, ipAddress }) => {
@@ -345,6 +400,7 @@ const validateMagicToken = async ({ token }) =>
   );
 
 module.exports = {
+  registerFirm,
   loginUser,
   refreshAccessToken,
   logoutSession,

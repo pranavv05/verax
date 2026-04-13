@@ -4,6 +4,7 @@ const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const {
+  registerFirm,
   loginUser,
   refreshAccessToken,
   logoutSession,
@@ -26,6 +27,13 @@ const authRateLimiter = rateLimit({
   }
 });
 
+const signupSchema = Joi.object({
+  name: Joi.string().trim().min(2).max(255).required(),
+  firmName: Joi.string().trim().min(2).max(255).required(),
+  email: Joi.string().email().required(),
+  password: Joi.string().min(8).max(128).required()
+});
+
 const loginSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(8).max(128).required()
@@ -34,6 +42,29 @@ const loginSchema = Joi.object({
 const magicTokenSchema = Joi.object({
   token: Joi.string().pattern(/^[a-zA-Z0-9]{32,128}$/).required()
 });
+
+router.post(
+  "/signup",
+  authRateLimiter,
+  validate(signupSchema),
+  asyncHandler(async (req, res) => {
+    const result = await registerFirm({
+      name: req.body.name,
+      firmName: req.body.firmName,
+      email: req.body.email,
+      password: req.body.password,
+      userAgent: req.headers["user-agent"],
+      ipAddress: req.ip
+    });
+
+    res.cookie(env.REFRESH_COOKIE_NAME, result.refreshToken, getRefreshCookieOptions());
+    res.status(201).json({
+      accessToken: result.accessToken,
+      user: result.user,
+      firm: result.firm
+    });
+  })
+);
 
 router.post(
   "/login",

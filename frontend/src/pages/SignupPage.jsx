@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { useAuth } from "../contexts/AuthContext";
+import { authApi } from "../api/auth-api";
+import { tokenStore, userStore } from "../lib/token-store";
 import { parseApiError } from "../lib/utils";
 
 const signupSchema = z.object({
@@ -35,8 +37,12 @@ const SignupPage = () => {
 
     setLoading(true);
     try {
-      // For now, redirect to login since signup API may not be implemented yet
-      navigate("/login", { replace: true, state: { from: "/dashboard" } });
+      const result = await authApi.signup(validation.data);
+      tokenStore.setAccessToken(result.accessToken);
+      if (result.user) {
+        userStore.setUser(result.user);
+      }
+      navigate("/dashboard", { replace: true });
     } catch (submitError) {
       setError(parseApiError(submitError, "Unable to create account"));
     } finally {

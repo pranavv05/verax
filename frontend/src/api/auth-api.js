@@ -1,6 +1,13 @@
 ﻿import { request } from "../lib/api-client";
 
 export const authApi = {
+  signup(payload) {
+    return request("/api/auth/signup", {
+      method: "POST",
+      body: payload,
+      auth: false
+    });
+  },
   login(payload) {
     return request("/api/auth/login", {
       method: "POST",
