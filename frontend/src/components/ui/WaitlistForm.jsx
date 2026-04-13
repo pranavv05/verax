@@ -18,7 +18,7 @@ const WaitlistForm = () => {
     setMessage("");
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/waitlist/join`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/waitlist/join`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
