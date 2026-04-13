@@ -8,7 +8,9 @@ const {
   initiateUploadForFirm,
   confirmUploadForFirm,
   markDocumentQueued,
-  markDocumentQueueFailure
+  markDocumentQueueFailure,
+  listDocuments,
+  getDocumentById
 } = require("../services/documents.service");
 const { enqueueDocumentProcessingJob } = require("../services/document-queue.service");
 
@@ -38,7 +40,46 @@ const confirmSchema = Joi.object({
   document_id: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).required()
 });
 
+const listQuerySchema = Joi.object({
+  client_id: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).optional(),
+  status: Joi.string().valid("uploaded", "processing", "extracted", "reviewed", "exported").optional(),
+  doc_type: Joi.string().valid("invoice", "bank_statement", "bill", "other").optional(),
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(200).default(50)
+});
+
 router.use(requireAuth);
+
+router.get(
+  "/",
+  validate(listQuerySchema, "query"),
+  asyncHandler(async (req, res) => {
+    const result = await req.withTenantTransaction((db) =>
+      listDocuments(db, {
+        firmId: req.user.firmId,
+        clientId: req.query.client_id,
+        status: req.query.status,
+        docType: req.query.doc_type,
+        page: req.query.page,
+        limit: req.query.limit
+      })
+    );
+    res.status(200).json(result);
+  })
+);
+
+router.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const result = await req.withTenantTransaction((db) =>
+      getDocumentById(db, {
+        firmId: req.user.firmId,
+        documentId: req.params.id
+      })
+    );
+    res.status(200).json(result);
+  })
+);
 
 router.post(
   "/upload",

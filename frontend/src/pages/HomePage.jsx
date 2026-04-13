@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import PublicLayout from "../components/layout/PublicLayout";
+import WaitlistForm from "../components/ui/WaitlistForm";
 
 const features = [
   {
@@ -82,13 +83,13 @@ const HomePage = () => {
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-ink-600 opacity-0 animate-fade-in-up-delay-2">
               Manage clients, automate document extraction with AI-powered OCR, and export to TallyPrime — all from one beautiful, secure platform.
             </p>
-            <div className="mt-10 flex flex-col items-center gap-4 opacity-0 animate-fade-in-up-delay-3 sm:flex-row sm:justify-center">
-              <Link to="/signup" className="btn-accent px-8 py-3.5 text-base">
-                Start Free Trial
-              </Link>
-              <Link to="/features" className="btn-secondary px-8 py-3.5 text-base">
-                Explore Features
-              </Link>
+            <div id="waitlist-section" className="mt-10 opacity-0 animate-fade-in-up-delay-3">
+              <WaitlistForm />
+              <div className="mt-6 flex justify-center">
+                <Link to="/features" className="text-sm font-semibold text-ink-600 hover:text-ink-900 transition-colors">
+                  Explore Features →
+                </Link>
+              </div>
             </div>
           </div>
 
@@ -102,7 +103,7 @@ const HomePage = () => {
                     <span className="h-3 w-3 rounded-full bg-amber-400/80" />
                     <span className="h-3 w-3 rounded-full bg-mint-400/80" />
                   </div>
-                  <span className="text-xs font-medium text-ink-500">CA Suite Dashboard</span>
+                  <span className="text-xs font-medium text-ink-500">Verax Dashboard</span>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-xl border border-[#e7dcc8] bg-sand-50/50 p-4">
@@ -128,7 +129,7 @@ const HomePage = () => {
       <section className="section-padding relative">
         <div className="mx-auto max-w-7xl">
           <div className="mx-auto max-w-2xl text-center">
-            <p className="text-xs font-bold uppercase tracking-[0.25em] text-mint-500">Why CA Suite</p>
+            <p className="text-xs font-bold uppercase tracking-[0.25em] text-mint-500">Why Verax</p>
             <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-ink-900 sm:text-4xl">
               Everything you need to run your practice
             </h2>
@@ -215,15 +216,10 @@ const HomePage = () => {
                 Ready to modernize your practice?
               </h2>
               <p className="mx-auto mt-4 max-w-xl text-base text-sand-100/70">
-                Join hundreds of CA firms already using CA Suite to streamline their client document workflows and Tally exports.
+                Join hundreds of CA firms already using Verax to streamline their client document workflows and Tally exports.
               </p>
-              <div className="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-                <Link to="/signup" className="btn-accent px-10 py-3.5 text-base">
-                  Start Your Free Trial
-                </Link>
-                <Link to="/features" className="rounded-lg border border-white/20 px-8 py-3.5 text-base font-semibold text-white transition-all duration-300 hover:bg-white/10">
-                  See All Features
-                </Link>
+              <div className="mt-8">
+                <WaitlistForm />
               </div>
             </div>
           </div>

@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
 import PublicLayout from "../components/layout/PublicLayout";
+import WaitlistForm from "../components/ui/WaitlistForm";
 
 const values = [
   {
@@ -51,7 +51,7 @@ const AboutPage = () => {
         <div className="relative mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
           <div className="mx-auto max-w-3xl text-center">
             <p className="animate-fade-in-up text-xs font-bold uppercase tracking-[0.25em] text-mint-500">
-              About CA Suite
+              About Verax
             </p>
             <h1 className="mt-4 text-4xl font-extrabold leading-tight tracking-tight text-ink-900 opacity-0 animate-fade-in-up-delay-1 sm:text-5xl">
               Simplifying accounting,{" "}
@@ -77,7 +77,7 @@ const AboutPage = () => {
                 Indian CA firms handle thousands of documents every month — invoices, receipts, bank statements, and more. Yet most still rely on manual data entry and disconnected tools.
               </p>
               <p className="mt-4 text-base leading-relaxed text-ink-600">
-                CA Suite was built to change that. We combine AI-powered document extraction, streamlined review workflows, and direct TallyPrime integration into one cohesive platform that respects how CAs actually work.
+                Verax was built to change that. We combine AI-powered document extraction, streamlined review workflows, and direct TallyPrime integration into one cohesive platform that respects how CAs actually work.
               </p>
               <p className="mt-4 text-base leading-relaxed text-ink-600">
                 Our goal is simple: give every CA firm — from solo practitioners to large practices — the tools to work faster, with fewer errors, and with complete peace of mind about data security.
@@ -169,13 +169,8 @@ const AboutPage = () => {
               <p className="mx-auto mt-4 max-w-xl text-base text-sand-100/70">
                 We'd love to hear from you. Whether you're ready to get started or just exploring, our team is here to help.
               </p>
-              <div className="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-                <Link to="/signup" className="btn-accent px-10 py-3.5 text-base">
-                  Get Started Today
-                </Link>
-                <Link to="/features" className="rounded-lg border border-white/20 px-8 py-3.5 text-base font-semibold text-white transition-all duration-300 hover:bg-white/10">
-                  View Features
-                </Link>
+              <div className="mt-8">
+                <WaitlistForm />
               </div>
             </div>
           </div>

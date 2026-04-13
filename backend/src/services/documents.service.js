@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const path = require("path");
 const ApiError = require("../utils/api-error");
 const env = require("../config/env");
-const { createUploadUrl, assertObjectExists } = require("./s3.service");
+const { createUploadUrl, assertObjectExists, createDownloadUrl } = require("./s3.service");
 const { assertAllowedFile } = require("../utils/upload-validation");
 const { withTenantTransaction, setLocalConfig } = require("../db/tenant-context");
 
@@ -478,11 +478,115 @@ const markDocumentQueueFailure = async (db, { firmId, documentId, errorMessage }
   );
 };
 
+const VALID_STATUSES = new Set(["uploaded", "processing", "extracted", "reviewed", "exported"]);
+const VALID_DOC_TYPES = new Set(["invoice", "bank_statement", "bill", "other"]);
+
+const listDocuments = async (db, { firmId, clientId, status, docType, page = 1, limit = 50 }) => {
+  if (status && !VALID_STATUSES.has(status)) {
+    throw ApiError.badRequest("Invalid status filter");
+  }
+  if (docType && !VALID_DOC_TYPES.has(docType)) {
+    throw ApiError.badRequest("Invalid doc_type filter");
+  }
+
+  const filters = ["d.firm_id = $1", "d.deleted_at IS NULL"];
+  const values = [firmId];
+  let idx = 2;
+
+  if (clientId) {
+    filters.push(`d.client_id = $${idx}`);
+    values.push(clientId);
+    idx += 1;
+  }
+  if (status) {
+    filters.push(`d.status = $${idx}`);
+    values.push(status);
+    idx += 1;
+  }
+  if (docType) {
+    filters.push(`d.doc_type = $${idx}`);
+    values.push(docType);
+    idx += 1;
+  }
+
+  const whereClause = filters.join(" AND ");
+  const safeLimit = Math.min(Number(limit) || 50, 200);
+  const offset = (Math.max(Number(page) || 1, 1) - 1) * safeLimit;
+
+  const [countResult, rowsResult] = await Promise.all([
+    db.query(`SELECT COUNT(*)::int AS total FROM documents d WHERE ${whereClause}`, values),
+    db.query(
+      `SELECT d.id, d.client_id, d.firm_id, d.file_name, d.s3_key,
+              d.doc_type, d.status, d.processing_error, d.uploaded_at, d.updated_at
+       FROM documents d
+       WHERE ${whereClause}
+       ORDER BY d.uploaded_at DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, safeLimit, offset]
+    )
+  ]);
+
+  const total = countResult.rows[0].total;
+  return {
+    data: rowsResult.rows.map((row) => ({
+      id: row.id,
+      clientId: row.client_id,
+      firmId: row.firm_id,
+      fileName: row.file_name,
+      docType: row.doc_type,
+      status: row.status,
+      processingError: row.processing_error,
+      uploadedAt: row.uploaded_at,
+      updatedAt: row.updated_at
+    })),
+    pagination: {
+      page: Math.max(Number(page) || 1, 1),
+      limit: safeLimit,
+      total,
+      totalPages: total === 0 ? 0 : Math.ceil(total / safeLimit)
+    }
+  };
+};
+
+const getDocumentById = async (db, { firmId, documentId }) => {
+  const result = await db.query(
+    `SELECT id, client_id, firm_id, file_name, s3_key, doc_type, status,
+            processing_error, processing_attempts, uploaded_at, updated_at
+     FROM documents
+     WHERE id = $1 AND firm_id = $2 AND deleted_at IS NULL
+     LIMIT 1`,
+    [documentId, firmId]
+  );
+
+  if (result.rowCount === 0) {
+    throw ApiError.notFound("Document not found");
+  }
+
+  const row = result.rows[0];
+  const { url: downloadUrl } = await createDownloadUrl({ key: row.s3_key });
+
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    firmId: row.firm_id,
+    fileName: row.file_name,
+    docType: row.doc_type,
+    status: row.status,
+    processingError: row.processing_error,
+    processingAttempts: row.processing_attempts,
+    uploadedAt: row.uploaded_at,
+    updatedAt: row.updated_at,
+    download_url: downloadUrl
+  };
+};
+
 module.exports = {
   initiateUploadForFirm,
   initiateUploadWithMagicToken,
   confirmUploadForFirm,
   confirmUploadWithMagicToken,
   markDocumentQueued,
-  markDocumentQueueFailure
+  markDocumentQueueFailure,
+  listDocuments,
+  getDocumentById
 };

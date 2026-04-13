@@ -12,6 +12,15 @@ const PublicLayout = ({ children }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
 
+  const scrollToWaitlist = () => {
+    const element = document.getElementById("waitlist-section");
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth" });
+    } else if (location.pathname !== "/") {
+      window.location.href = "/#waitlist-section";
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Navbar */}
@@ -21,7 +30,7 @@ const PublicLayout = ({ children }) => {
           <Link to="/" className="flex items-center gap-3 group">
             <div className="relative">
               <div className="rounded-xl bg-gradient-to-br from-ink-900 to-ink-700 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-50 transition-all duration-300 group-hover:shadow-elevated">
-                CA Suite
+                Verax
               </div>
               <div className="absolute -inset-1 rounded-xl bg-gradient-to-r from-mint-500/20 to-indigo-400/20 opacity-0 blur transition-opacity duration-300 group-hover:opacity-100" />
             </div>
@@ -57,12 +66,12 @@ const PublicLayout = ({ children }) => {
 
           {/* CTA Buttons */}
           <div className="hidden items-center gap-3 md:flex">
-            <Link to="/login" className="btn-ghost text-sm">
-              Sign in
-            </Link>
-            <Link to="/signup" className="btn-accent text-sm px-5 py-2.5">
-              Get Started
-            </Link>
+            <button 
+              onClick={scrollToWaitlist}
+              className="btn-accent text-sm px-6 py-2.5"
+            >
+              Join Waitlist
+            </button>
           </div>
 
           {/* Mobile Menu Button */}
@@ -112,20 +121,15 @@ const PublicLayout = ({ children }) => {
                   </NavLink>
                 ))}
                 <hr className="my-2 border-[#e7dcc8]" />
-                <Link
-                  to="/login"
-                  onClick={() => setMobileOpen(false)}
-                  className="rounded-lg px-4 py-3 text-sm font-semibold text-ink-700 transition hover:bg-sand-100"
-                >
-                  Sign in
-                </Link>
-                <Link
-                  to="/signup"
-                  onClick={() => setMobileOpen(false)}
+                <button
+                  onClick={() => {
+                    setMobileOpen(false);
+                    scrollToWaitlist();
+                  }}
                   className="btn-accent mt-1 text-center text-sm py-3"
                 >
-                  Get Started
-                </Link>
+                  Join Waitlist
+                </button>
               </nav>
             </div>
           </>
@@ -142,7 +146,7 @@ const PublicLayout = ({ children }) => {
             {/* Brand */}
             <div className="sm:col-span-2 lg:col-span-1">
               <div className="inline-block rounded-xl bg-white/10 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-100">
-                CA Suite
+                Verax
               </div>
               <p className="mt-4 max-w-xs text-sm leading-relaxed text-sand-100/70">
                 Modern practice management built specifically for Chartered Accountant firms in India.
@@ -155,7 +159,11 @@ const PublicLayout = ({ children }) => {
               <ul className="mt-4 space-y-3 text-sm text-sand-100/70">
                 <li><Link to="/features" className="transition hover:text-white">Features</Link></li>
                 <li><Link to="/about" className="transition hover:text-white">About</Link></li>
-                <li><Link to="/signup" className="transition hover:text-white">Get Started</Link></li>
+                <li>
+                  <button onClick={scrollToWaitlist} className="transition hover:text-white text-left">
+                    Join Waitlist
+                  </button>
+                </li>
               </ul>
             </div>
 
@@ -182,7 +190,7 @@ const PublicLayout = ({ children }) => {
 
           <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 sm:flex-row">
             <p className="text-xs text-sand-100/50">
-              © {new Date().getFullYear()} CA Suite. All rights reserved.
+              © {new Date().getFullYear()} Verax. All rights reserved.
             </p>
             <p className="text-xs text-sand-100/40">
               Built with ❤️ for CA firms across India

@@ -1,4 +1,4 @@
-﻿# CA SaaS Platform
+# Verax
 
 Multi-tenant SaaS platform for Chartered Accountant firms in India.
 

@@ -60,7 +60,7 @@ const AppShell = ({ title, subtitle, children }) => {
             {/* Logo */}
             <div className="group relative">
               <div className="rounded-xl bg-gradient-to-br from-ink-900 to-ink-700 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-50 transition-all duration-300 group-hover:shadow-elevated">
-                CA Suite
+                Verax
               </div>
               <div className="absolute -inset-1 rounded-xl bg-gradient-to-r from-mint-500/20 to-indigo-400/20 opacity-0 blur transition-opacity duration-300 group-hover:opacity-100" />
             </div>

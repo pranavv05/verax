@@ -57,7 +57,7 @@ const LoginPage = () => {
 
             <Link to="/" className="relative inline-block">
               <div className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-100 backdrop-blur-sm border border-white/10 transition hover:bg-white/20">
-                CA Suite
+                Verax
               </div>
             </Link>
 

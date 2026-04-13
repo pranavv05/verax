@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
 import PublicLayout from "../components/layout/PublicLayout";
+import WaitlistForm from "../components/ui/WaitlistForm";
 
 const featureDetails = [
   {
@@ -155,15 +155,10 @@ const FeaturesPage = () => {
                 See it in action
               </h2>
               <p className="mx-auto mt-4 max-w-xl text-base text-white/80">
-                Start your free trial today and experience how CA Suite can transform your firm's workflow.
+                Start your free trial today and experience how Verax can transform your firm's workflow.
               </p>
-              <div className="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-                <Link to="/signup" className="rounded-lg bg-white px-10 py-3.5 text-base font-semibold text-mint-600 transition-all duration-300 hover:shadow-elevated hover:-translate-y-0.5">
-                  Get Started Free
-                </Link>
-                <Link to="/login" className="rounded-lg border border-white/30 px-8 py-3.5 text-base font-semibold text-white transition-all duration-300 hover:bg-white/10">
-                  Sign In
-                </Link>
+              <div className="mt-8">
+                <WaitlistForm />
               </div>
             </div>
           </div>

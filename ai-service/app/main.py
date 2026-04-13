@@ -17,7 +17,7 @@ from app.services.s3_service import S3Service
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ai-service")
 
-app = FastAPI(title="CA SaaS AI Service", version="1.0.0")
+app = FastAPI(title="Verax AI Service", version="1.0.0")
 
 s3_service: S3Service | None = None
 preprocess_service: PreprocessService | None = None

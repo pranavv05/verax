@@ -1,0 +1,21 @@
+# Node.js patterns
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Knex/DB files
+waitlist.sqlite
+*.db

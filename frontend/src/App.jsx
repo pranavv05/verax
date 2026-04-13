@@ -8,11 +8,9 @@ import DashboardPage from "./pages/DashboardPage";
 import ExportPage from "./pages/ExportPage";
 import FeaturesPage from "./pages/FeaturesPage";
 import HomePage from "./pages/HomePage";
-import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import PublicUploadPage from "./pages/PublicUploadPage";
 import ReviewPage from "./pages/ReviewPage";
-import SignupPage from "./pages/SignupPage";
 
 const Protected = ({ children }) => <ProtectedRoute>{children}</ProtectedRoute>;
 
@@ -22,8 +20,6 @@ const App = () => (
     <Route path="/" element={<HomePage />} />
     <Route path="/features" element={<FeaturesPage />} />
     <Route path="/about" element={<AboutPage />} />
-    <Route path="/signup" element={<SignupPage />} />
-    <Route path="/login" element={<LoginPage />} />
     <Route path="/upload/:token" element={<PublicUploadPage />} />
 
     {/* Protected dashboard pages */}

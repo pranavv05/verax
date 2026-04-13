@@ -8,6 +8,8 @@ const clientRoutes = require("./routes/clients.routes");
 const documentRoutes = require("./routes/documents.routes");
 const publicUploadRoutes = require("./routes/public-upload.routes");
 const exportRoutes = require("./routes/exports.routes");
+const extractionRoutes = require("./routes/extractions.routes");
+const waitlistRoutes = require("./routes/waitlist.routes");
 const env = require("./config/env");
 const { notFoundHandler, errorHandler } = require("./middlewares/error.middleware");
 
@@ -37,6 +39,8 @@ app.use("/api/clients", clientRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/upload", publicUploadRoutes);
 app.use("/api/export", exportRoutes);
+app.use("/api/extractions", extractionRoutes);
+app.use("/api/waitlist", waitlistRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

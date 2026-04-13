@@ -57,7 +57,7 @@ const SignupPage = () => {
 
             <Link to="/" className="relative inline-block">
               <div className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-100 backdrop-blur-sm border border-white/10 transition hover:bg-white/20">
-                CA Suite
+                Verax
               </div>
             </Link>
 
@@ -67,7 +67,7 @@ const SignupPage = () => {
             </h1>
 
             <p className="relative mt-4 max-w-md text-base text-sand-100/70">
-              Join hundreds of CA firms using CA Suite to streamline their document workflows and Tally exports.
+              Join hundreds of CA firms using Verax to streamline their document workflows and Tally exports.
             </p>
 
             <ul className="relative mt-8 space-y-4 text-sm text-sand-100/90">
@@ -102,7 +102,7 @@ const SignupPage = () => {
         {/* Signup Form */}
         <section className="panel p-6 sm:p-8">
           <h2 className="text-2xl font-extrabold text-ink-900">Create your account</h2>
-          <p className="mt-1 text-sm text-[#607086]">Get started with CA Suite in minutes.</p>
+          <p className="mt-1 text-sm text-[#607086]">Get started with Verax in minutes.</p>
 
           <form className="mt-6 space-y-4" onSubmit={onSubmit}>
             <div className="grid gap-4 sm:grid-cols-2">
