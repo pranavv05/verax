@@ -61,8 +61,8 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
         raw_text, ocr_engine = ocr_service.extract_text(
             request.s3_key, preprocessed.processed_images
         )
-        structured_data = llm_service.extract_structured_data(raw_text)
-        confidence_score = llm_service.calculate_confidence(structured_data)
+        structured_data = llm_service.extract_structured_data(raw_text, doc_type=request.doc_type)
+        confidence_score = llm_service.calculate_confidence(structured_data, doc_type=request.doc_type)
 
         if settings.ai_write_back_enabled:
             if not request.firm_id:

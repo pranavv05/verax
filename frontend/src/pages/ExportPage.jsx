@@ -26,6 +26,22 @@ const exportSchema = z
     }
   });
 
+const DOC_TYPE_LABELS = {
+  invoice: { label: "Invoice", className: "bg-indigo-100 text-indigo-700" },
+  bank_statement: { label: "Bank Stmt", className: "bg-sky-100 text-sky-700" },
+  bill: { label: "Bill", className: "bg-amber-100 text-amber-700" },
+  other: { label: "Other", className: "bg-gray-100 text-gray-600" }
+};
+
+const DocTypeBadge = ({ docType }) => {
+  const cfg = DOC_TYPE_LABELS[docType] || DOC_TYPE_LABELS.other;
+  return (
+    <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold ${cfg.className}`}>
+      {cfg.label}
+    </span>
+  );
+};
+
 const ExportPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -224,6 +240,7 @@ const ExportPage = () => {
                         onChange={() => onToggleDocument(doc.id)}
                       />
                       <span className="flex-1 truncate">{doc.fileName || doc.file_name}</span>
+                      <DocTypeBadge docType={doc.docType || doc.doc_type} />
                       <StatusBadge status={doc.status} />
                     </label>
                   ))}
