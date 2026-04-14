@@ -6,11 +6,14 @@ const validate = require("../middlewares/validate.middleware");
 const {
   registerFirm,
   loginUser,
+  registerFirm,
   refreshAccessToken,
   logoutSession,
   validateMagicToken,
   getRefreshCookieOptions
 } = require("../services/auth.service");
+const { getCurrentUser } = require("../services/firms.service");
+const { requireAuth } = require("../middlewares/auth.middleware");
 const env = require("../config/env");
 
 const router = express.Router();
@@ -124,6 +127,17 @@ router.get(
   asyncHandler(async (req, res) => {
     const result = await validateMagicToken({ token: req.params.token });
     res.status(200).json(result);
+  })
+);
+
+router.get(
+  "/me",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = await req.withTenantTransaction((db) =>
+      getCurrentUser(db, { firmId: req.user.firmId, userId: req.user.userId })
+    );
+    res.status(200).json(user);
   })
 );
 

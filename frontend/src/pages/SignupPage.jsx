@@ -39,9 +39,7 @@ const SignupPage = () => {
     try {
       const result = await authApi.signup(validation.data);
       tokenStore.setAccessToken(result.accessToken);
-      if (result.user) {
-        userStore.setUser(result.user);
-      }
+      if (result.user) userStore.setUser(result.user);
       navigate("/dashboard", { replace: true });
     } catch (submitError) {
       setError(parseApiError(submitError, "Unable to create account"));

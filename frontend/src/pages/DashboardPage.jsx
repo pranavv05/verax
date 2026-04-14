@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
-import LoadingState from "../components/ui/LoadingState";
+import { DashboardSkeleton } from "../components/ui/skeletons";
 import StatCard from "../components/ui/StatCard";
 import StatusBadge from "../components/ui/StatusBadge";
 import { dashboardApi } from "../api/dashboard-api";
@@ -19,6 +19,7 @@ const DashboardPage = () => {
   const [data, setData] = useState({
     totalClients: 0,
     pendingDocs: 0,
+    reviewedDocs: 0,
     exportedThisMonth: 0,
     activity: []
   });
@@ -65,9 +66,9 @@ const DashboardPage = () => {
         gradient: "from-indigo-500 to-indigo-600"
       },
       {
-        label: "Docs pending review",
+        label: "Awaiting review",
         value: data.pendingDocs,
-        hint: "Uploaded documents waiting in queue",
+        hint: "Extracted documents ready for your review",
         tone: "warning",
         icon: (
           <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
@@ -77,9 +78,9 @@ const DashboardPage = () => {
         gradient: "from-ember-500 to-ember-600"
       },
       {
-        label: "Docs exported this month",
-        value: data.exportedThisMonth,
-        hint: "Generated and downloaded tally exports",
+        label: "Approved this session",
+        value: data.reviewedDocs,
+        hint: "Documents reviewed and approved for export",
         tone: "success",
         icon: (
           <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
@@ -87,6 +88,18 @@ const DashboardPage = () => {
           </svg>
         ),
         gradient: "from-mint-500 to-mint-600"
+      },
+      {
+        label: "Exports this month",
+        value: data.exportedThisMonth,
+        hint: "Tally XML files generated and downloaded",
+        tone: "success",
+        icon: (
+          <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+          </svg>
+        ),
+        gradient: "from-indigo-500 to-indigo-600"
       }
     ],
     [data]
@@ -110,14 +123,15 @@ const DashboardPage = () => {
         </div>
       </section>
 
-      {loading ? <LoadingState message="Loading dashboard metrics..." /> : null}
       {error ? (
         <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
           {error}
         </div>
       ) : null}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {loading ? <DashboardSkeleton /> : null}
+
+      {!loading && <><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
           <StatCard key={card.label} {...card} />
         ))}
@@ -190,21 +204,21 @@ const DashboardPage = () => {
             </Link>
             <Link
               className="group flex items-center gap-3 rounded-xl border border-[#dccdb0] bg-white px-4 py-3.5 font-semibold transition-all duration-200 hover:bg-sand-100 hover:shadow-sm hover:-translate-y-0.5"
-              to="/upload/sample-token"
+              to="/tools"
             >
               <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-ember-500/10 to-ember-500/20 text-ember-600">
                 <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
                 </svg>
               </div>
-              <span className="flex-1">Preview public upload flow</span>
+              <span className="flex-1">Data tools — Excel register cleaner</span>
               <svg width="16" height="16" className="text-ink-400 transition group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
               </svg>
             </Link>
           </div>
         </article>
-      </section>
+      </section></>}
     </AppShell>
   );
 };

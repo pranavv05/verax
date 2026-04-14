@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
-import LoadingState from "../components/ui/LoadingState";
+import { ReviewSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { documentsApi } from "../api/documents-api";
 import { extractionsApi } from "../api/extractions-api";
 import { parseApiError } from "../lib/utils";
 
-/* ─────────────────────────────── field config ────────────────────────────────── */
+/* ─── field configs by doc type ────────────────────────────────────────────── */
 
-const headerFields = [
+const INVOICE_FIELDS = [
   ["vendor_name", "Vendor / Party Name"],
   ["vendor_gstin", "Vendor GSTIN"],
   ["invoice_number", "Invoice Number"],
@@ -26,6 +26,22 @@ const headerFields = [
   ["tds_amount", "TDS Amount"]
 ];
 
+const BANK_FIELDS = [
+  ["account_holder", "Account Holder Name"],
+  ["account_number", "Account Number"],
+  ["bank_name", "Bank Name"],
+  ["ifsc_code", "IFSC Code"],
+  ["statement_period_from", "Statement Period From"],
+  ["statement_period_to", "Statement Period To"],
+  ["opening_balance", "Opening Balance (₹)"],
+  ["closing_balance", "Closing Balance (₹)"]
+];
+
+const getHeaderFields = (docType) =>
+  docType === "bank_statement" ? BANK_FIELDS : INVOICE_FIELDS;
+
+/* ─── line item / transaction helpers ──────────────────────────────────────── */
+
 const emptyLineItem = () => ({
   description: "",
   quantity: "",
@@ -37,44 +53,40 @@ const emptyLineItem = () => ({
   suggestions: []
 });
 
-/* ─────────────────────────── validation helpers ─────────────────────────────── */
+const emptyTransaction = () => ({
+  date: "",
+  narration: "",
+  debit: "",
+  credit: "",
+  balance: "",
+  reference: ""
+});
+
+/* ─── validation helpers ────────────────────────────────────────────────────── */
 
 const getFieldValidation = (validation, fieldKey) => {
   if (!validation) return null;
-
-  if (fieldKey === "vendor_gstin" && validation.gstin && !validation.gstin.valid) {
+  if (fieldKey === "vendor_gstin" && validation.gstin && !validation.gstin.valid)
     return validation.gstin;
-  }
-
-  if (fieldKey === "tax_amount" && Array.isArray(validation.tax_math)) {
-    const issue = validation.tax_math.find((i) => i.field === "tax_amount");
-    if (issue) return issue;
-  }
-
-  if (fieldKey === "total_amount" && Array.isArray(validation.tax_math)) {
-    const issue = validation.tax_math.find((i) => i.field === "total_amount");
-    if (issue) return issue;
-  }
-
-  if (fieldKey === "cgst" && Array.isArray(validation.tax_math)) {
-    const issue = validation.tax_math.find((i) => i.field === "cgst");
-    if (issue) return issue;
-  }
-
-  if (fieldKey === "tds_rate" && validation.tds && !validation.tds.valid) {
+  if (fieldKey === "tax_amount" && Array.isArray(validation.tax_math))
+    return validation.tax_math.find((i) => i.field === "tax_amount") || null;
+  if (fieldKey === "total_amount" && Array.isArray(validation.tax_math))
+    return validation.tax_math.find((i) => i.field === "total_amount") || null;
+  if (fieldKey === "cgst" && Array.isArray(validation.tax_math))
+    return validation.tax_math.find((i) => i.field === "cgst") || null;
+  if (fieldKey === "tds_rate" && validation.tds && !validation.tds.valid)
     return validation.tds;
-  }
-
   return null;
 };
 
 const hasBlockingErrors = (validation) => {
   if (!validation) return false;
-  if (validation.gstin && !validation.gstin.valid && validation.gstin.severity === "error") return true;
-  return false;
+  return Boolean(
+    validation.gstin && !validation.gstin.valid && validation.gstin.severity === "error"
+  );
 };
 
-/* ─────────────────────────────── component ──────────────────────────────────── */
+/* ─── component ─────────────────────────────────────────────────────────────── */
 
 const ReviewPage = () => {
   const { doc_id: documentId } = useParams();
@@ -85,10 +97,15 @@ const ReviewPage = () => {
   const [document, setDocument] = useState(null);
   const [form, setForm] = useState({});
   const [lineItems, setLineItems] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [confidence, setConfidence] = useState(0);
   const [validation, setValidation] = useState(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+
+  const docType = document?.docType || document?.doc_type || "invoice";
+  const isBankStatement = docType === "bank_statement";
+  const headerFields = getHeaderFields(docType);
 
   /* ─── load ─── */
 
@@ -111,16 +128,18 @@ const ReviewPage = () => {
         setConfidence(ext?.confidence_score || ext?.confidenceScore || 0);
         setValidation(ext?.validation || null);
 
+        // Populate header form fields
         const fields = {};
-        for (const [key] of headerFields) {
+        for (const [key] of [...INVOICE_FIELDS, ...BANK_FIELDS]) {
           fields[key] = sd[key] ?? "";
         }
         setForm(fields);
 
-        const enrichedItems = ext?.line_items || sd.line_items || [];
+        // Line items (invoice/bill)
+        const rawItems = ext?.line_items || sd.line_items || [];
         setLineItems(
-          enrichedItems.length > 0
-            ? enrichedItems.map((item) => ({
+          rawItems.length > 0
+            ? rawItems.map((item) => ({
                 description: item.description || "",
                 quantity: item.quantity ?? "",
                 unit_price: item.unit_price ?? "",
@@ -131,6 +150,19 @@ const ReviewPage = () => {
                 suggestions: item.suggestions || []
               }))
             : []
+        );
+
+        // Transactions (bank statement)
+        const rawTxns = sd.transactions || [];
+        setTransactions(
+          rawTxns.map((txn) => ({
+            date: txn.date || "",
+            narration: txn.narration || "",
+            debit: txn.debit ?? "",
+            credit: txn.credit ?? "",
+            balance: txn.balance ?? "",
+            reference: txn.reference || ""
+          }))
         );
       }
 
@@ -150,32 +182,41 @@ const ReviewPage = () => {
 
   /* ─── form helpers ─── */
 
-  const onFieldChange = (key, value) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  };
+  const onFieldChange = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const onLineItemChange = (idx, key, value) => {
+  const onLineItemChange = (idx, key, value) =>
     setLineItems((prev) => {
       const next = [...prev];
       next[idx] = { ...next[idx], [key]: value };
       return next;
     });
-  };
+
+  const onTransactionChange = (idx, key, value) =>
+    setTransactions((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [key]: value };
+      return next;
+    });
 
   const addLineItem = () => setLineItems((prev) => [...prev, emptyLineItem()]);
+  const removeLineItem = (idx) => setLineItems((prev) => prev.filter((_, i) => i !== idx));
 
-  const removeLineItem = (idx) =>
-    setLineItems((prev) => prev.filter((_, i) => i !== idx));
+  const addTransaction = () => setTransactions((prev) => [...prev, emptyTransaction()]);
+  const removeTransaction = (idx) => setTransactions((prev) => prev.filter((_, i) => i !== idx));
 
   /* ─── build payload ─── */
 
   const buildPayload = () => {
     const payload = { ...form };
-    payload.line_items = lineItems.map(({ suggestions, ...rest }) => rest);
+    if (isBankStatement) {
+      payload.transactions = transactions.map(({ ...rest }) => rest);
+    } else {
+      payload.line_items = lineItems.map(({ suggestions, ...rest }) => rest);
+    }
     return payload;
   };
 
-  /* ─── save ─── */
+  /* ─── save / approve / reprocess ─── */
 
   const onSave = async () => {
     setSaving(true);
@@ -190,8 +231,6 @@ const ReviewPage = () => {
       setSaving(false);
     }
   };
-
-  /* ─── approve ─── */
 
   const onApprove = async () => {
     setApproving(true);
@@ -208,8 +247,6 @@ const ReviewPage = () => {
       setApproving(false);
     }
   };
-
-  /* ─── reprocess ─── */
 
   const onReprocess = async () => {
     setReprocessing(true);
@@ -264,7 +301,7 @@ const ReviewPage = () => {
       title="Extraction Review"
       subtitle="Verify AI output against the original document before approving export-ready entries."
     >
-      {loading ? <LoadingState message="Loading document review..." /> : null}
+      {loading ? <ReviewSkeleton /> : null}
 
       {error && (
         <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -281,8 +318,7 @@ const ReviewPage = () => {
       {/* Duplicate invoice warning */}
       {validation?.duplicate?.isDuplicate && (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-          <span className="mr-1">Warning:</span>
-          {validation.duplicate.message}
+          Warning: {validation.duplicate.message}
           {validation.duplicate.existingDocumentId && (
             <Link
               to={`/review/${validation.duplicate.existingDocumentId}`}
@@ -294,13 +330,25 @@ const ReviewPage = () => {
         </div>
       )}
 
-      {/* ─── Two-column layout: preview | fields ─── */}
+      {/* Two-column layout */}
       <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         {/* Left: document preview */}
         <article className="panel p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-bold text-ink-900">Original document</h2>
-            <StatusBadge status={document?.status || "uploaded"} />
+            <div className="flex items-center gap-2">
+              {isBankStatement && (
+                <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+                  Bank Statement
+                </span>
+              )}
+              {docType === "bill" && (
+                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                  Bill
+                </span>
+              )}
+              <StatusBadge status={document?.status || "uploaded"} />
+            </div>
           </div>
           {previewNode}
         </article>
@@ -311,26 +359,24 @@ const ReviewPage = () => {
             <h2 className="text-lg font-bold text-ink-900">Extracted fields</h2>
             <div
               className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                lowConfidence
-                  ? "bg-amber-100 text-amber-700"
-                  : "bg-mint-500/10 text-mint-700"
+                lowConfidence ? "bg-amber-100 text-amber-700" : "bg-mint-500/10 text-mint-700"
               }`}
             >
               Confidence {Math.round(Number(confidence || 0) * 100)}%
             </div>
           </div>
 
-          <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+          <div className="max-h-[58vh] space-y-3 overflow-y-auto pr-1">
             {headerFields.map(([key, label]) => {
-              const fieldValidation = getFieldValidation(validation, key);
+              const fv = getFieldValidation(validation, key);
               return (
                 <div key={key}>
                   <label className="label">{label}</label>
                   <input
                     className={`field ${lowConfidence && !form[key] ? "bg-amber-50" : ""} ${
-                      fieldValidation && fieldValidation.severity === "error"
+                      fv?.severity === "error"
                         ? "border-rose-400 bg-rose-50/50"
-                        : fieldValidation
+                        : fv
                         ? "border-amber-300 bg-amber-50/50"
                         : ""
                     }`}
@@ -338,16 +384,14 @@ const ReviewPage = () => {
                     disabled={isExported}
                     onChange={(e) => onFieldChange(key, e.target.value)}
                   />
-                  {fieldValidation && fieldValidation.message && (
+                  {fv?.message && (
                     <p
                       className={`mt-1 text-xs font-medium ${
-                        fieldValidation.severity === "error"
-                          ? "text-rose-600"
-                          : "text-amber-600"
+                        fv.severity === "error" ? "text-rose-600" : "text-amber-600"
                       }`}
                     >
-                      {fieldValidation.severity === "error" ? "Error: " : "Warning: "}
-                      {fieldValidation.message}
+                      {fv.severity === "error" ? "Error: " : "Warning: "}
+                      {fv.message}
                     </p>
                   )}
                 </div>
@@ -386,160 +430,109 @@ const ReviewPage = () => {
                   : ""
               }
             >
-              {approving
-                ? "Approving..."
-                : isReviewed
-                ? "Approved"
-                : "Approve"}
+              {approving ? "Approving..." : isReviewed ? "Approved" : "Approve"}
             </button>
           </div>
         </article>
       </section>
 
-      {/* ─── Line Items Table ─── */}
-      <section className="panel mt-4 p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-ink-900">
-            Line Items
-            <span className="ml-2 text-sm font-normal text-ink-500">
-              ({lineItems.length} {lineItems.length === 1 ? "item" : "items"})
-            </span>
-          </h2>
-          {!isExported && (
-            <button
-              type="button"
-              className="btn-secondary px-3 py-1.5 text-xs"
-              onClick={addLineItem}
-            >
-              + Add Row
-            </button>
-          )}
-        </div>
+      {/* ─── Bank Statement: Transactions table ─── */}
+      {isBankStatement && (
+        <section className="panel mt-4 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-ink-900">
+              Transactions
+              <span className="ml-2 text-sm font-normal text-ink-500">
+                ({transactions.length} {transactions.length === 1 ? "entry" : "entries"})
+              </span>
+            </h2>
+            {!isExported && (
+              <button
+                type="button"
+                className="btn-secondary px-3 py-1.5 text-xs"
+                onClick={addTransaction}
+              >
+                + Add Row
+              </button>
+            )}
+          </div>
 
-        {lineItems.length === 0 ? (
-          <p className="py-6 text-center text-sm text-ink-400">
-            No line items extracted. Click "Add Row" to add manually or reprocess the document.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-separate border-spacing-0">
-              <thead>
-                <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
-                  <th className="rounded-l-lg px-2 py-2.5 w-10">#</th>
-                  <th className="px-2 py-2.5">Extracted Name</th>
-                  <th className="px-2 py-2.5 w-16">Qty</th>
-                  <th className="px-2 py-2.5 w-20">Rate</th>
-                  <th className="px-2 py-2.5 w-24">Amount</th>
-                  <th className="px-2 py-2.5 w-20">HSN</th>
-                  <th className="px-2 py-2.5 w-16">UOM</th>
-                  <th className="px-2 py-2.5 bg-mint-500/5">
-                    <span className="text-mint-700">Tally Item Name</span>
-                  </th>
-                  <th className="rounded-r-lg px-2 py-2.5 w-10 text-center">
-                    <span className="sr-only">Remove</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {lineItems.map((item, idx) => {
-                  const datalistId = `suggestions-${idx}`;
-                  return (
-                    <tr
-                      key={idx}
-                      className="border-t border-[#eadfcf] align-top"
-                    >
-                      <td className="px-2 py-2 text-xs text-ink-400 font-mono">
-                        {idx + 1}
+          {transactions.length === 0 ? (
+            <p className="py-6 text-center text-sm text-ink-400">
+              No transactions extracted. Click "Add Row" to add manually or reprocess.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full border-separate border-spacing-0">
+                <thead>
+                  <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
+                    <th className="rounded-l-lg px-2 py-2.5 w-10">#</th>
+                    <th className="px-2 py-2.5 w-28">Date</th>
+                    <th className="px-2 py-2.5">Narration</th>
+                    <th className="px-2 py-2.5 w-28 text-right">Debit (₹)</th>
+                    <th className="px-2 py-2.5 w-28 text-right">Credit (₹)</th>
+                    <th className="px-2 py-2.5 w-28 text-right">Balance (₹)</th>
+                    <th className="px-2 py-2.5 w-28">Reference</th>
+                    <th className="rounded-r-lg px-2 py-2.5 w-10 text-center">
+                      <span className="sr-only">Remove</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.map((txn, idx) => (
+                    <tr key={idx} className="border-t border-[#eadfcf] align-top">
+                      <td className="px-2 py-2 text-xs text-ink-400 font-mono">{idx + 1}</td>
+                      <td className="px-2 py-2">
+                        <input
+                          className="field text-xs w-full"
+                          type="date"
+                          value={txn.date}
+                          disabled={isExported}
+                          onChange={(e) => onTransactionChange(idx, "date", e.target.value)}
+                        />
                       </td>
                       <td className="px-2 py-2">
                         <input
                           className="field text-xs"
-                          value={item.description}
+                          value={txn.narration}
                           disabled={isExported}
-                          onChange={(e) =>
-                            onLineItemChange(idx, "description", e.target.value)
-                          }
+                          onChange={(e) => onTransactionChange(idx, "narration", e.target.value)}
                         />
                       </td>
                       <td className="px-2 py-2">
                         <input
-                          className="field text-xs w-full"
-                          type="text"
+                          className="field text-xs w-full text-right"
                           inputMode="decimal"
-                          value={item.quantity}
+                          value={txn.debit}
                           disabled={isExported}
-                          onChange={(e) =>
-                            onLineItemChange(idx, "quantity", e.target.value)
-                          }
+                          onChange={(e) => onTransactionChange(idx, "debit", e.target.value)}
                         />
                       </td>
                       <td className="px-2 py-2">
                         <input
-                          className="field text-xs w-full"
-                          type="text"
+                          className="field text-xs w-full text-right"
                           inputMode="decimal"
-                          value={item.unit_price}
+                          value={txn.credit}
                           disabled={isExported}
-                          onChange={(e) =>
-                            onLineItemChange(idx, "unit_price", e.target.value)
-                          }
+                          onChange={(e) => onTransactionChange(idx, "credit", e.target.value)}
                         />
                       </td>
                       <td className="px-2 py-2">
                         <input
-                          className="field text-xs w-full"
-                          type="text"
+                          className="field text-xs w-full text-right"
                           inputMode="decimal"
-                          value={item.total}
+                          value={txn.balance}
                           disabled={isExported}
-                          onChange={(e) =>
-                            onLineItemChange(idx, "total", e.target.value)
-                          }
+                          onChange={(e) => onTransactionChange(idx, "balance", e.target.value)}
                         />
                       </td>
                       <td className="px-2 py-2">
                         <input
                           className="field text-xs w-full"
-                          value={item.hsn_code}
+                          value={txn.reference}
                           disabled={isExported}
-                          onChange={(e) =>
-                            onLineItemChange(idx, "hsn_code", e.target.value)
-                          }
+                          onChange={(e) => onTransactionChange(idx, "reference", e.target.value)}
                         />
-                      </td>
-                      <td className="px-2 py-2">
-                        <input
-                          className="field text-xs w-full"
-                          value={item.uom}
-                          placeholder="PCS"
-                          disabled={isExported}
-                          onChange={(e) =>
-                            onLineItemChange(idx, "uom", e.target.value)
-                          }
-                        />
-                      </td>
-                      <td className="px-2 py-2 bg-mint-500/5">
-                        <input
-                          className="field text-xs w-full border-mint-300 focus:border-mint-500 focus:ring-mint-500/20"
-                          value={item.tally_item_name}
-                          disabled={isExported}
-                          list={datalistId}
-                          placeholder="Mapped name..."
-                          onChange={(e) =>
-                            onLineItemChange(
-                              idx,
-                              "tally_item_name",
-                              e.target.value
-                            )
-                          }
-                        />
-                        {item.suggestions && item.suggestions.length > 0 && (
-                          <datalist id={datalistId}>
-                            {item.suggestions.map((s, si) => (
-                              <option key={si} value={s} />
-                            ))}
-                          </datalist>
-                        )}
                       </td>
                       <td className="px-2 py-2 text-center">
                         {!isExported && (
@@ -547,27 +540,170 @@ const ReviewPage = () => {
                             type="button"
                             className="text-ink-400 hover:text-rose-500 transition-colors text-lg leading-none"
                             title="Remove row"
-                            onClick={() => removeLineItem(idx)}
+                            onClick={() => removeTransaction(idx)}
                           >
                             &times;
                           </button>
                         )}
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
-        {/* TDS validation banner */}
-        {validation?.tds && !validation.tds.valid && validation.tds.message && (
-          <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            TDS: {validation.tds.message}
+      {/* ─── Invoice/Bill: Line Items table ─── */}
+      {!isBankStatement && (
+        <section className="panel mt-4 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-ink-900">
+              Line Items
+              <span className="ml-2 text-sm font-normal text-ink-500">
+                ({lineItems.length} {lineItems.length === 1 ? "item" : "items"})
+              </span>
+            </h2>
+            {!isExported && (
+              <button
+                type="button"
+                className="btn-secondary px-3 py-1.5 text-xs"
+                onClick={addLineItem}
+              >
+                + Add Row
+              </button>
+            )}
           </div>
-        )}
-      </section>
+
+          {lineItems.length === 0 ? (
+            <p className="py-6 text-center text-sm text-ink-400">
+              No line items extracted. Click "Add Row" to add manually or reprocess the document.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full border-separate border-spacing-0">
+                <thead>
+                  <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
+                    <th className="rounded-l-lg px-2 py-2.5 w-10">#</th>
+                    <th className="px-2 py-2.5">Description</th>
+                    <th className="px-2 py-2.5 w-16">Qty</th>
+                    <th className="px-2 py-2.5 w-20">Rate</th>
+                    <th className="px-2 py-2.5 w-24">Amount</th>
+                    <th className="px-2 py-2.5 w-20">HSN</th>
+                    <th className="px-2 py-2.5 w-16">UOM</th>
+                    <th className="px-2 py-2.5 bg-mint-500/5">
+                      <span className="text-mint-700">Tally Item Name</span>
+                    </th>
+                    <th className="rounded-r-lg px-2 py-2.5 w-10 text-center">
+                      <span className="sr-only">Remove</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.map((item, idx) => {
+                    const datalistId = `suggestions-${idx}`;
+                    return (
+                      <tr key={idx} className="border-t border-[#eadfcf] align-top">
+                        <td className="px-2 py-2 text-xs text-ink-400 font-mono">{idx + 1}</td>
+                        <td className="px-2 py-2">
+                          <input
+                            className="field text-xs"
+                            value={item.description}
+                            disabled={isExported}
+                            onChange={(e) => onLineItemChange(idx, "description", e.target.value)}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className="field text-xs w-full"
+                            inputMode="decimal"
+                            value={item.quantity}
+                            disabled={isExported}
+                            onChange={(e) => onLineItemChange(idx, "quantity", e.target.value)}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className="field text-xs w-full"
+                            inputMode="decimal"
+                            value={item.unit_price}
+                            disabled={isExported}
+                            onChange={(e) => onLineItemChange(idx, "unit_price", e.target.value)}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className="field text-xs w-full"
+                            inputMode="decimal"
+                            value={item.total}
+                            disabled={isExported}
+                            onChange={(e) => onLineItemChange(idx, "total", e.target.value)}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className="field text-xs w-full"
+                            value={item.hsn_code}
+                            disabled={isExported}
+                            onChange={(e) => onLineItemChange(idx, "hsn_code", e.target.value)}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className="field text-xs w-full"
+                            value={item.uom}
+                            placeholder="PCS"
+                            disabled={isExported}
+                            onChange={(e) => onLineItemChange(idx, "uom", e.target.value)}
+                          />
+                        </td>
+                        <td className="px-2 py-2 bg-mint-500/5">
+                          <input
+                            className="field text-xs w-full border-mint-300 focus:border-mint-500 focus:ring-mint-500/20"
+                            value={item.tally_item_name}
+                            disabled={isExported}
+                            list={datalistId}
+                            placeholder="Mapped name..."
+                            onChange={(e) =>
+                              onLineItemChange(idx, "tally_item_name", e.target.value)
+                            }
+                          />
+                          {item.suggestions?.length > 0 && (
+                            <datalist id={datalistId}>
+                              {item.suggestions.map((s, si) => (
+                                <option key={si} value={s} />
+                              ))}
+                            </datalist>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {!isExported && (
+                            <button
+                              type="button"
+                              className="text-ink-400 hover:text-rose-500 transition-colors text-lg leading-none"
+                              title="Remove row"
+                              onClick={() => removeLineItem(idx)}
+                            >
+                              &times;
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {validation?.tds && !validation.tds.valid && validation.tds.message && (
+            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              TDS: {validation.tds.message}
+            </div>
+          )}
+        </section>
+      )}
     </AppShell>
   );
 };
