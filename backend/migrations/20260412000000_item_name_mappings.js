@@ -17,7 +17,13 @@ exports.up = async function up(knex) {
 
     CREATE POLICY item_name_mappings_firm_isolation ON item_name_mappings
       USING (firm_id = current_setting('app.current_firm_id')::uuid);
-
+    CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
     CREATE TRIGGER set_updated_at_item_name_mappings
       BEFORE UPDATE ON item_name_mappings
       FOR EACH ROW EXECUTE FUNCTION set_updated_at();

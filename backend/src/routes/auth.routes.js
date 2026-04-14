@@ -6,7 +6,6 @@ const validate = require("../middlewares/validate.middleware");
 const {
   registerFirm,
   loginUser,
-  registerFirm,
   refreshAccessToken,
   logoutSession,
   validateMagicToken,
@@ -51,6 +50,12 @@ router.post(
   authRateLimiter,
   validate(signupSchema),
   asyncHandler(async (req, res) => {
+    const { password, ...safeBody } = req.body || {};
+    console.info("[auth/signup] req.body", {
+      ...safeBody,
+      password: password ? "[redacted]" : undefined
+    });
+
     const result = await registerFirm({
       name: req.body.name,
       firmName: req.body.firmName,

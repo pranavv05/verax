@@ -4,6 +4,7 @@ const Joi = require("joi");
 
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 dotenv.config();
+console.log("JWT_SECRET:", process.env.JWT_SECRET);
 
 const envSchema = Joi.object({
   NODE_ENV: Joi.string().valid("development", "test", "production").default("development"),
