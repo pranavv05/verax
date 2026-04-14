@@ -4,18 +4,27 @@ import { exportsApi } from "./exports-api";
 
 export const dashboardApi = {
   async getOverview() {
-    const [clientsResult, docsResult, exportsResult] = await Promise.allSettled([
-      clientsApi.list({ page: 1, limit: 1 }),
-      documentsApi.list({ page: 1, limit: 20, status: "uploaded" }),
-      exportsApi.history({ page: 1, limit: 20 })
-    ]);
+    const [clientsResult, pendingDocsResult, reviewedDocsResult, exportsResult] =
+      await Promise.allSettled([
+        clientsApi.list({ page: 1, limit: 1 }),
+        documentsApi.list({ page: 1, limit: 1, status: "extracted" }),
+        documentsApi.list({ page: 1, limit: 1, status: "reviewed" }),
+        exportsApi.history({ page: 1, limit: 20 })
+      ]);
 
     const totalClients =
-      clientsResult.status === "fulfilled" ? clientsResult.value?.pagination?.total || 0 : 0;
+      clientsResult.status === "fulfilled"
+        ? clientsResult.value?.pagination?.total ?? clientsResult.value?.data?.length ?? 0
+        : 0;
 
     const pendingDocs =
-      docsResult.status === "fulfilled"
-        ? docsResult.value?.pagination?.total || docsResult.value?.data?.length || 0
+      pendingDocsResult.status === "fulfilled"
+        ? pendingDocsResult.value?.pagination?.total ?? pendingDocsResult.value?.data?.length ?? 0
+        : 0;
+
+    const reviewedDocs =
+      reviewedDocsResult.status === "fulfilled"
+        ? reviewedDocsResult.value?.pagination?.total ?? reviewedDocsResult.value?.data?.length ?? 0
         : 0;
 
     const exportRows =
@@ -26,13 +35,11 @@ export const dashboardApi = {
     const currentYear = now.getUTCFullYear();
 
     const exportedThisMonth = exportRows.filter((row) => {
-      if (!row.exportedAt) {
-        return false;
-      }
-      const exportedDate = new Date(row.exportedAt);
+      if (!row.exportedAt && !row.createdAt) return false;
+      const d = new Date(row.exportedAt || row.createdAt);
       return (
-        exportedDate.getUTCMonth() === currentMonth &&
-        exportedDate.getUTCFullYear() === currentYear &&
+        d.getUTCMonth() === currentMonth &&
+        d.getUTCFullYear() === currentYear &&
         row.status !== "failed"
       );
     }).length;
@@ -40,6 +47,7 @@ export const dashboardApi = {
     return {
       totalClients,
       pendingDocs,
+      reviewedDocs,
       exportedThisMonth,
       activity: exportRows.slice(0, 6)
     };

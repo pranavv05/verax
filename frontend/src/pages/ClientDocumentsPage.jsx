@@ -9,6 +9,20 @@ import { clientsApi } from "../api/clients-api";
 import { uploadApi } from "../api/upload-api";
 import { formatDateTime, parseApiError } from "../lib/utils";
 
+const DOC_TYPE_META = {
+  invoice:       { label: "Invoice",      cls: "bg-indigo-100 text-indigo-700" },
+  bank_statement:{ label: "Bank Stmt",    cls: "bg-sky-100 text-sky-700" },
+  bill:          { label: "Bill",         cls: "bg-amber-100 text-amber-700" },
+  other:         { label: "Other",        cls: "bg-gray-100 text-gray-600" }
+};
+
+const DocTypeBadge = ({ docType }) => {
+  const meta = DOC_TYPE_META[docType] || DOC_TYPE_META.other;
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${meta.cls}`}>{meta.label}</span>
+  );
+};
+
 const ClientDocumentsPage = () => {
   const { id } = useParams();
   const [clientName, setClientName] = useState("Client documents");
@@ -160,7 +174,7 @@ const ClientDocumentsPage = () => {
                 {rows.map((doc) => (
                   <tr key={doc.id} className="border-t border-[#eadfcf]">
                     <td className="px-3 py-3 text-sm font-semibold text-ink-900">{doc.fileName || doc.file_name}</td>
-                    <td className="px-3 py-3 text-sm capitalize text-[#627389]">{doc.docType || doc.doc_type}</td>
+                    <td className="px-3 py-3"><DocTypeBadge docType={doc.docType || doc.doc_type} /></td>
                     <td className="px-3 py-3 text-sm">
                       <StatusBadge status={doc.status} />
                     </td>

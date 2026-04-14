@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from fastapi import File
 from fastapi import HTTPException
+from fastapi import UploadFile
+from fastapi.responses import Response
 
 from app.config import settings
 from app.models import ProcessRequest
@@ -12,6 +15,7 @@ from app.services.llm_service import LLMService
 from app.services.ocr_service import OCRService
 from app.services.persistence_service import PersistenceService
 from app.services.preprocess_service import PreprocessService
+from app.services.register_cleaner_service import process_bytes as clean_register_bytes
 from app.services.s3_service import S3Service
 
 logging.basicConfig(level=logging.INFO)
@@ -90,4 +94,25 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
         raise
     except Exception as error:  # noqa: BLE001
         logger.exception("Failed to process document_id=%s", request.document_id)
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.post("/tools/register-clean")
+async def register_clean(file: UploadFile = File(...)) -> Response:
+    """Accept an Excel file, return a cleaned Excel file."""
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are accepted")
+    try:
+        raw_bytes = await file.read()
+        cleaned_bytes = clean_register_bytes(raw_bytes)
+        safe_name = file.filename.rsplit(".", 1)[0] + "_cleaned.xlsx"
+        return Response(
+            content=cleaned_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("Register clean failed")
         raise HTTPException(status_code=500, detail=str(error)) from error
