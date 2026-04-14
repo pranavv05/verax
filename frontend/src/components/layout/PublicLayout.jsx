@@ -5,7 +5,9 @@ import { cn } from "../../lib/utils";
 const publicNavItems = [
   { to: "/", label: "Home" },
   { to: "/features", label: "Features" },
-  { to: "/about", label: "About" }
+  { to: "/pricing", label: "Pricing" },
+  { to: "/about", label: "About" },
+  { to: "/security", label: "Security" },
 ];
 
 const PublicLayout = ({ children }) => {
@@ -158,7 +160,9 @@ const PublicLayout = ({ children }) => {
               <h4 className="text-xs font-bold uppercase tracking-widest text-sand-200">Product</h4>
               <ul className="mt-4 space-y-3 text-sm text-sand-100/70">
                 <li><Link to="/features" className="transition hover:text-white">Features</Link></li>
+                <li><Link to="/pricing" className="transition hover:text-white">Pricing</Link></li>
                 <li><Link to="/about" className="transition hover:text-white">About</Link></li>
+                <li><Link to="/security" className="transition hover:text-white">Security</Link></li>
                 <li>
                   <button onClick={scrollToWaitlist} className="transition hover:text-white text-left">
                     Join Waitlist
@@ -183,7 +187,7 @@ const PublicLayout = ({ children }) => {
               <ul className="mt-4 space-y-3 text-sm text-sand-100/70">
                 <li><span className="cursor-default">Privacy Policy</span></li>
                 <li><span className="cursor-default">Terms of Service</span></li>
-                <li><span className="cursor-default">Security</span></li>
+                <li><Link to="/security" className="transition hover:text-white">Security</Link></li>
               </ul>
             </div>
           </div>

@@ -128,4 +128,92 @@ router.post(
   })
 );
 
+// ---------------------------------------------------------------------------
+// POST /api/tools/bank-statement-xml
+// ---------------------------------------------------------------------------
+router.post(
+  "/bank-statement-xml",
+  asyncHandler(async (req, res) => {
+    const contentType = req.headers["content-type"] || "";
+    if (!contentType.includes("multipart/form-data")) {
+      throw ApiError.badRequest("Request must be multipart/form-data with a 'file' field");
+    }
+
+    const aiServiceUrl = new URL("/tools/bank-statement-xml", env.AI_SERVICE_URL);
+
+    // Forward optional query params (company_name, bank_ledger) if provided
+    if (req.query.company_name) aiServiceUrl.searchParams.set("company_name", req.query.company_name);
+    if (req.query.bank_ledger)  aiServiceUrl.searchParams.set("bank_ledger",  req.query.bank_ledger);
+
+    const isHttps = aiServiceUrl.protocol === "https:";
+    const transport = isHttps ? https : http;
+    const timeoutMs = env.AI_SERVICE_TIMEOUT_MS || 120000;
+
+    const forwardHeaders = { "content-type": contentType };
+    if (req.headers["content-length"]) {
+      forwardHeaders["content-length"] = req.headers["content-length"];
+    }
+
+    await new Promise((resolve, reject) => {
+      const proxyReq = transport.request(
+        {
+          hostname: aiServiceUrl.hostname,
+          port: aiServiceUrl.port || (isHttps ? 443 : 80),
+          path: aiServiceUrl.pathname + (aiServiceUrl.search || ""),
+          method: "POST",
+          headers: forwardHeaders,
+          timeout: timeoutMs,
+        },
+        (proxyRes) => {
+          const status = proxyRes.statusCode || 500;
+
+          if (status !== 200) {
+            let body = "";
+            proxyRes.setEncoding("utf8");
+            proxyRes.on("data", (chunk) => { body += chunk; });
+            proxyRes.on("end", () => {
+              let detail = `AI service returned ${status}`;
+              try {
+                const parsed = JSON.parse(body);
+                if (parsed.detail) detail = parsed.detail;
+              } catch {
+                // body is not JSON
+              }
+              if (status === 400) {
+                reject(ApiError.badRequest(detail));
+              } else {
+                reject(new ApiError(502, detail, "AI_SERVICE_ERROR"));
+              }
+            });
+            return;
+          }
+
+          const disposition = proxyRes.headers["content-disposition"];
+          res.setHeader("Content-Type", "application/xml");
+          if (disposition) res.setHeader("Content-Disposition", disposition);
+          if (proxyRes.headers["content-length"]) {
+            res.setHeader("Content-Length", proxyRes.headers["content-length"]);
+          }
+
+          res.status(200);
+          proxyRes.pipe(res, { end: true });
+          proxyRes.on("end", resolve);
+          proxyRes.on("error", reject);
+        }
+      );
+
+      proxyReq.on("timeout", () => {
+        proxyReq.destroy();
+        reject(new ApiError(504, "AI service timed out while converting bank statement", "GATEWAY_TIMEOUT"));
+      });
+
+      proxyReq.on("error", (err) => {
+        reject(new ApiError(502, `Could not reach AI service: ${err.message}`, "AI_SERVICE_UNREACHABLE"));
+      });
+
+      req.pipe(proxyReq, { end: true });
+    });
+  })
+);
+
 module.exports = router;

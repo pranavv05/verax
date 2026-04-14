@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import AboutPage from "./pages/AboutPage";
 import AuditLogPage from "./pages/AuditLogPage";
+import PricingPage from "./pages/PricingPage";
+import SecurityPage from "./pages/SecurityPage";
 import ClientDetailPage from "./pages/ClientDetailPage";
 import ClientDocumentsPage from "./pages/ClientDocumentsPage";
 import ClientsPage from "./pages/ClientsPage";
@@ -26,6 +28,8 @@ const App = () => (
     <Route path="/" element={<HomePage />} />
     <Route path="/features" element={<FeaturesPage />} />
     <Route path="/about" element={<AboutPage />} />
+    <Route path="/pricing" element={<PricingPage />} />
+    <Route path="/security" element={<SecurityPage />} />
     <Route path="/login" element={<LoginPage />} />
     <Route path="/signup" element={<SignupPage />} />
     <Route path="/upload/:token" element={<PublicUploadPage />} />
