@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import AppShell from "../components/layout/AppShell";
-import LoadingState from "../components/ui/LoadingState";
+import { TableRowsSkeleton } from "../components/ui/skeletons";
 import EmptyState from "../components/ui/EmptyState";
 import { auditApi } from "../api/audit-api";
 import { formatDateTime, parseApiError } from "../lib/utils";
@@ -126,7 +126,23 @@ const AuditLogPage = () => {
         ) : null}
 
         {loading ? (
-          <LoadingState message="Loading audit logs..." />
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-0">
+              <thead>
+                <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
+                  <th className="rounded-l-lg px-3 py-3 whitespace-nowrap">Timestamp</th>
+                  <th className="px-3 py-3">User</th>
+                  <th className="px-3 py-3">Action</th>
+                  <th className="px-3 py-3 whitespace-nowrap">Entity Type</th>
+                  <th className="px-3 py-3 whitespace-nowrap">Entity ID</th>
+                  <th className="rounded-r-lg px-3 py-3">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                <TableRowsSkeleton rows={8} cols={6} />
+              </tbody>
+            </table>
+          </div>
         ) : rows.length === 0 ? (
           <EmptyState
             title="No audit log entries"

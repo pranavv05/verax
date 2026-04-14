@@ -2,7 +2,7 @@
 import { Link, useParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
-import LoadingState from "../components/ui/LoadingState";
+import { ClientDocumentsSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { documentsApi } from "../api/documents-api";
 import { clientsApi } from "../api/clients-api";
@@ -147,11 +147,13 @@ const ClientDocumentsPage = () => {
         </article>
       </section>
 
-      {loading ? <LoadingState message="Loading documents..." /> : null}
-
       <section className="panel overflow-hidden p-4">
         <h2 className="text-lg font-bold text-ink-900">Document inbox</h2>
-        {rows.length === 0 ? (
+        {loading ? (
+          <div className="mt-4">
+            <ClientDocumentsSkeleton rows={5} />
+          </div>
+        ) : rows.length === 0 ? (
           <div className="mt-4">
             <EmptyState
               title="No documents yet"

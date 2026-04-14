@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
-import LoadingState from "../components/ui/LoadingState";
+import { TableRowsSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { clientsApi } from "../api/clients-api";
 import { formatDateTime, parseApiError } from "../lib/utils";
@@ -177,8 +177,6 @@ const ClientsPage = () => {
             </div>
           </div>
 
-          {loading ? <LoadingState message="Loading clients..." /> : null}
-
           <div className="overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0">
               <thead>
@@ -192,7 +190,9 @@ const ClientsPage = () => {
                   <th className="rounded-r-lg px-3 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody>{tableBody}</tbody>
+              <tbody>
+                {loading ? <TableRowsSkeleton rows={6} cols={7} /> : tableBody}
+              </tbody>
             </table>
           </div>
 

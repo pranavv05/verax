@@ -2,7 +2,7 @@
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
-import LoadingState from "../components/ui/LoadingState";
+import { ExportSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { clientsApi } from "../api/clients-api";
 import { documentsApi } from "../api/documents-api";
@@ -166,8 +166,8 @@ const ExportPage = () => {
 
   return (
     <AppShell title="Tally Export" subtitle="Select approved documents and generate TallyPrime-compatible XML.">
-      {loading ? <LoadingState message="Loading export workspace..." /> : null}
-
+      {loading ? <ExportSkeleton /> : (
+      <>
       {error ? (
         <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
           {error}
@@ -323,6 +323,7 @@ const ExportPage = () => {
           </div>
         )}
       </section>
+      </>)}
     </AppShell>
   );
 };

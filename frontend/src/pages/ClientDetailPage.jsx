@@ -2,7 +2,7 @@
 import { Link, useParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
-import LoadingState from "../components/ui/LoadingState";
+import { ClientDetailSkeleton } from "../components/ui/skeletons";
 import StatCard from "../components/ui/StatCard";
 import StatusBadge from "../components/ui/StatusBadge";
 import { clientsApi } from "../api/clients-api";
@@ -52,7 +52,7 @@ const ClientDetailPage = () => {
 
   return (
     <AppShell title={client?.name || "Client Detail"} subtitle="Client profile, upload status, and compliance pipeline.">
-      {loading ? <LoadingState message="Loading client details..." /> : null}
+      {loading ? <ClientDetailSkeleton /> : null}
 
       {error ? (
         <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
-import LoadingState from "../components/ui/LoadingState";
+import { ReviewSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { documentsApi } from "../api/documents-api";
 import { extractionsApi } from "../api/extractions-api";
@@ -301,7 +301,7 @@ const ReviewPage = () => {
       title="Extraction Review"
       subtitle="Verify AI output against the original document before approving export-ready entries."
     >
-      {loading ? <LoadingState message="Loading document review..." /> : null}
+      {loading ? <ReviewSkeleton /> : null}
 
       {error && (
         <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">

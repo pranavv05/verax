@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
-import LoadingState from "../components/ui/LoadingState";
+import { DashboardSkeleton } from "../components/ui/skeletons";
 import StatCard from "../components/ui/StatCard";
 import StatusBadge from "../components/ui/StatusBadge";
 import { dashboardApi } from "../api/dashboard-api";
@@ -123,14 +123,15 @@ const DashboardPage = () => {
         </div>
       </section>
 
-      {loading ? <LoadingState message="Loading dashboard metrics..." /> : null}
       {error ? (
         <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
           {error}
         </div>
       ) : null}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {loading ? <DashboardSkeleton /> : null}
+
+      {!loading && <><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
           <StatCard key={card.label} {...card} />
         ))}
@@ -217,7 +218,7 @@ const DashboardPage = () => {
             </Link>
           </div>
         </article>
-      </section>
+      </section></>}
     </AppShell>
   );
 };

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
-import LoadingState from "../components/ui/LoadingState";
+import { SettingsSkeleton } from "../components/ui/skeletons";
 import { firmsApi } from "../api/firms-api";
 import { parseApiError } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
@@ -109,7 +109,7 @@ const SettingsPage = () => {
   return (
     <AppShell title="Settings" subtitle="Manage your firm details and account preferences.">
       {loading ? (
-        <LoadingState message="Loading settings..." />
+        <SettingsSkeleton />
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Firm Settings */}
