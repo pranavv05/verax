@@ -391,6 +391,13 @@ const validateMagicToken = async ({ token }) =>
         throw ApiError.forbidden("Client is inactive");
       }
 
+      if (
+        !clientRow.upload_token_expires_at ||
+        new Date(clientRow.upload_token_expires_at) <= new Date()
+      ) {
+        throw ApiError.notFound("Magic link is invalid or expired");
+      }
+
       return {
         valid: true,
         client: {
