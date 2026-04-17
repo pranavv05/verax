@@ -60,14 +60,17 @@ const ExportPage = () => {
 
   const loadBaseData = async () => {
     setLoading(true);
+    setError("");
     try {
       const [clientsResult, historyResult] = await Promise.allSettled([
-        clientsApi.list({ page: 1, limit: 200, status: "active" }),
+        clientsApi.list({ page: 1, limit: 200 }),
         exportsApi.history({ page: 1, limit: 20 })
       ]);
 
       if (clientsResult.status === "fulfilled") {
         setClients(clientsResult.value.data || []);
+      } else {
+        setError(parseApiError(clientsResult.reason, "Unable to load clients — check that you are logged in"));
       }
 
       if (historyResult.status === "fulfilled") {

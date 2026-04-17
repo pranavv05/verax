@@ -80,25 +80,27 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
     throw ApiError.badRequest("Email is required");
   }
   const normalizedEmail = email.trim().toLowerCase();
-  console.info("[auth/signup] normalized email before firm insert", normalizedEmail);
-  const client = await pool.connect();
+  const passwordHash = await bcrypt.hash(password, 12);
 
+  const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Use open context for email uniqueness check
     await setLocalConfig(client, "app.current_firm_id", "");
     await setLocalConfig(client, "app.auth_context", "signup");
     await setLocalConfig(client, "app.auth_email", normalizedEmail);
+    await setLocalConfig(client, "app.upload_token", "");
 
-    const existing = await client.query(
-      "SELECT id FROM users WHERE lower(email) = $1 AND deleted_at IS NULL LIMIT 1",
+    const existingUser = await client.query(
+      `SELECT id FROM users WHERE lower(email) = $1 AND deleted_at IS NULL LIMIT 1`,
       [normalizedEmail]
     );
-    if (existing.rowCount > 0) {
+    if (existingUser.rowCount > 0) {
       throw ApiError.conflict("An account with this email already exists");
     }
 
     const firmResult = await client.query(
-      "INSERT INTO firms (name, owner_email, plan) VALUES ($1, $2, 'starter') RETURNING id, name, owner_email, plan",
+      `INSERT INTO firms (name, owner_email, plan) VALUES ($1, $2, 'starter') RETURNING id, name, plan`,
       [firmName.trim(), normalizedEmail]
     );
     const firm = firmResult.rows[0];
@@ -107,7 +109,6 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
     await setLocalConfig(client, "app.auth_context", "");
     await setLocalConfig(client, "app.auth_email", "");
 
-    const passwordHash = await bcrypt.hash(password, 12);
     const userResult = await client.query(
       `INSERT INTO users (firm_id, name, email, password_hash, role)
        VALUES ($1, $2, $3, $4, 'admin')
@@ -123,7 +124,7 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
       accessToken: session.accessToken,
       refreshToken: session.refreshToken,
       user: mapUserResponse(user),
-      firm
+      firm: { id: firm.id, name: firm.name, plan: firm.plan }
     };
   } catch (error) {
     await client.query("ROLLBACK");
