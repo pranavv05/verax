@@ -305,7 +305,9 @@ const ExportPage = () => {
                 {history.map((row) => (
                   <tr key={row.id} className="border-t border-[#eadfcf]">
                     <td className="px-3 py-3 font-mono text-xs text-[#4e6078]">{row.id.slice(0, 12)}</td>
-                    <td className="px-3 py-3 text-sm text-[#5f6f84]">{row.clientId}</td>
+                    <td className="px-3 py-3 text-sm text-[#5f6f84]">
+                      {clients.find((c) => c.id === row.clientId)?.name || row.clientId?.slice(0, 8)}
+                    </td>
                     <td className="px-3 py-3 text-sm text-[#5f6f84]">{(row.documentIds || []).length}</td>
                     <td className="px-3 py-3"><StatusBadge status={row.status} /></td>
                     <td className="px-3 py-3 text-xs text-[#6f8097]">{formatDateTime(row.exportedAt || row.createdAt)}</td>
