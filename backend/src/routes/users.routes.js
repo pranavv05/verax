@@ -2,7 +2,7 @@ const express = require("express");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const { listUsers, inviteUser, removeUser } = require("../services/users.service");
 
 const router = express.Router();
@@ -34,6 +34,7 @@ router.get(
 
 router.post(
   "/",
+  requireAdmin,
   validate(inviteUserSchema),
   asyncHandler(async (req, res) => {
     const user = await req.withTenantTransaction((db) =>
@@ -52,6 +53,7 @@ router.post(
 
 router.delete(
   "/:id",
+  requireAdmin,
   validate(userIdParamSchema, "params"),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>

@@ -2,7 +2,7 @@ const express = require("express");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const { getFirmSettings, updateFirmSettings, getCurrentUser } = require("../services/firms.service");
 
 const router = express.Router();
@@ -25,6 +25,7 @@ router.get(
 router.put(
   "/settings",
   requireAuth,
+  requireAdmin,
   validate(updateFirmSettingsSchema),
   asyncHandler(async (req, res) => {
     const firm = await req.withTenantTransaction((db) =>

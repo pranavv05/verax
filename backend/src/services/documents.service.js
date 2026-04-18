@@ -84,6 +84,13 @@ const getClientByMagicToken = async (db, token) => {
     throw ApiError.badRequest("Cannot upload documents for an inactive client");
   }
 
+  if (
+    !client.upload_token_expires_at ||
+    new Date(client.upload_token_expires_at) <= new Date()
+  ) {
+    throw ApiError.notFound("Magic link is invalid or expired");
+  }
+
   return client;
 };
 
