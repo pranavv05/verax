@@ -6,6 +6,7 @@ import EmptyState from "../components/ui/EmptyState";
 import { usersApi } from "../api/users-api";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDateTime, parseApiError } from "../lib/utils";
+import { isAdmin } from "../utils/permissions";
 
 const inviteSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -32,6 +33,7 @@ const RoleBadge = ({ role }) => {
 
 const TeamPage = () => {
   const { user: currentUser } = useAuth();
+  const canAdmin = isAdmin(currentUser);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -134,20 +136,22 @@ const TeamPage = () => {
                 {rows.length} member{rows.length !== 1 ? "s" : ""} in your firm
               </p>
             </div>
-            <button
-              type="button"
-              className="btn-primary text-sm"
-              onClick={() => {
-                setShowInviteForm((prev) => !prev);
-                setFormError("");
-              }}
-            >
-              {showInviteForm ? "Cancel" : "Invite team member"}
-            </button>
+            {canAdmin && (
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                onClick={() => {
+                  setShowInviteForm((prev) => !prev);
+                  setFormError("");
+                }}
+              >
+                {showInviteForm ? "Cancel" : "Invite team member"}
+              </button>
+            )}
           </div>
 
           {/* Inline invite form */}
-          {showInviteForm && (
+          {canAdmin && showInviteForm && (
             <div className="mb-5 rounded-xl border border-[#e7dcc8] bg-sand-50/60 p-5">
               <h3 className="mb-4 text-sm font-bold text-ink-900">Invite a new team member</h3>
               <form className="space-y-3" onSubmit={onInvite}>
@@ -289,7 +293,9 @@ const TeamPage = () => {
                           {formatDateTime(member.createdAt || member.created_at)}
                         </td>
                         <td className="px-3 py-3 text-right">
-                          {isCurrentUser ? (
+                          {!canAdmin ? (
+                            <span className="text-xs text-ink-400">View only</span>
+                          ) : isCurrentUser ? (
                             <span className="text-xs text-ink-400">Cannot remove yourself</span>
                           ) : isConfirming ? (
                             <div className="flex items-center justify-end gap-2">

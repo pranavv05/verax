@@ -16,12 +16,6 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const bootstrap = useCallback(async () => {
-    const existingToken = tokenStore.getAccessToken();
-    if (!existingToken) {
-      setIsBootstrapping(false);
-      return;
-    }
-
     try {
       const refreshed = await authApi.refresh();
       tokenStore.setAccessToken(refreshed.accessToken);

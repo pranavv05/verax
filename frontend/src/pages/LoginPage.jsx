@@ -111,9 +111,14 @@ const LoginPage = () => {
             </div>
 
             <div>
-              <label className="label" htmlFor="password">
-                Password
-              </label>
+              <div className="flex items-center justify-between gap-3">
+                <label className="label" htmlFor="password">
+                  Password
+                </label>
+                <Link className="text-xs font-semibold text-mint-500 underline transition hover:text-mint-600" to="/forgot-password">
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 id="password"
                 className="field"

@@ -3,13 +3,18 @@ const env = require("../config/env");
 const processDocumentWithAiService = async ({ documentId, s3Key, docType, firmId }) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.AI_SERVICE_TIMEOUT_MS);
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (env.AI_SERVICE_API_KEY) {
+    headers["X-AI-Service-Token"] = env.AI_SERVICE_API_KEY;
+  }
 
   try {
     const response = await fetch(`${env.AI_SERVICE_URL}/process`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers,
       body: JSON.stringify({
         document_id: documentId,
         s3_key: s3Key,

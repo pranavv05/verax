@@ -485,7 +485,14 @@ const markDocumentQueueFailure = async (db, { firmId, documentId, errorMessage }
   );
 };
 
-const VALID_STATUSES = new Set(["uploaded", "processing", "extracted", "reviewed", "exported"]);
+const VALID_STATUSES = new Set([
+  "uploaded",
+  "processing",
+  "extracted",
+  "review_required",
+  "reviewed",
+  "exported"
+]);
 const VALID_DOC_TYPES = new Set(["invoice", "bank_statement", "bill", "other"]);
 
 const listDocuments = async (db, { firmId, clientId, status, docType, page = 1, limit = 50 }) => {
@@ -558,7 +565,8 @@ const listDocuments = async (db, { firmId, clientId, status, docType, page = 1, 
 const getDocumentById = async (db, { firmId, documentId }) => {
   const result = await db.query(
     `SELECT id, client_id, firm_id, file_name, s3_key, doc_type, status,
-            processing_error, processing_attempts, uploaded_at, updated_at
+            processing_error, processing_attempts, gstr2b_match_status,
+            gstr2b_match_details, uploaded_at, updated_at
      FROM documents
      WHERE id = $1 AND firm_id = $2 AND deleted_at IS NULL
      LIMIT 1`,
@@ -581,10 +589,69 @@ const getDocumentById = async (db, { firmId, documentId }) => {
     status: row.status,
     processingError: row.processing_error,
     processingAttempts: row.processing_attempts,
+    gstr2bMatchStatus: row.gstr2b_match_status,
+    gstr2bMatchDetails: row.gstr2b_match_details,
     uploadedAt: row.uploaded_at,
     updatedAt: row.updated_at,
     download_url: downloadUrl
   };
+};
+
+const deleteDocument = async (db, { firmId, userId, documentId }) => {
+  const documentResult = await db.query(
+    `
+      SELECT id, status, s3_key
+      FROM documents
+      WHERE id = $1
+        AND firm_id = $2
+        AND deleted_at IS NULL
+      LIMIT 1
+    `,
+    [documentId, firmId]
+  );
+
+  if (documentResult.rowCount === 0) {
+    throw ApiError.notFound("Document not found");
+  }
+
+  const document = documentResult.rows[0];
+  if (document.status === "exported") {
+    throw ApiError.badRequest("Cannot delete a document that has already been exported");
+  }
+
+  await db.query(
+    `
+      UPDATE documents
+      SET deleted_at = NOW()
+      WHERE id = $1
+        AND firm_id = $2
+        AND deleted_at IS NULL
+    `,
+    [documentId, firmId]
+  );
+
+  await db.query(
+    `
+      UPDATE extractions
+      SET deleted_at = NOW()
+      WHERE document_id = $1
+        AND deleted_at IS NULL
+    `,
+    [documentId]
+  );
+
+  await insertAuditLog(db, {
+    firmId,
+    userId,
+    action: "document_deleted",
+    entityType: "document",
+    entityId: documentId,
+    metadata: {
+      status: document.status
+    }
+  });
+
+  return { success: true };
 };
 
 module.exports = {
@@ -595,5 +662,6 @@ module.exports = {
   markDocumentQueued,
   markDocumentQueueFailure,
   listDocuments,
-  getDocumentById
+  getDocumentById,
+  deleteDocument
 };

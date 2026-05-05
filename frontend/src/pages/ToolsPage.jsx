@@ -81,8 +81,8 @@ const RegisterCleanerCard = () => {
         <div>
           <h2 className="text-lg font-bold text-ink-900">Excel Register Cleaner</h2>
           <p className="mt-1 text-sm text-ink-500">
-            Upload a purchase or sales register Excel file. Merges multi-page tables, removes totals
-            and cancelled rows, standardises dates and amounts, and returns a formatted workbook.
+            Excel Register Cleaner — cleans and standardizes your purchase register Excel file.
+            Downloads as formatted .xlsx.
           </p>
         </div>
       </div>
@@ -131,6 +131,8 @@ const BankStatementXmlCard = () => {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [warnings, setWarnings] = useState([]);
+  const [skippedRows, setSkippedRows] = useState(0);
   const fileInputRef = useRef(null);
 
   const onFileChange = (e) => {
@@ -146,7 +148,7 @@ const BankStatementXmlCard = () => {
 
   const onConvert = async () => {
     if (!file) { setError("Please choose a PDF file first."); return; }
-    setProcessing(true); setError(""); setToast("");
+    setProcessing(true); setError(""); setToast(""); setWarnings([]); setSkippedRows(0);
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -167,16 +169,19 @@ const BankStatementXmlCard = () => {
         const err = await response.json().catch(() => ({ message: "Conversion failed" }));
         throw new Error(err.message || err.detail || "Conversion failed");
       }
-      const blob = await response.blob();
+      const result = await response.json();
+      const blob = new Blob([result.xml || ""], { type: "text/xml" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = file.name.replace(/\.[^.]+$/, "") + "_tally.xml";
+      anchor.download = "bank-statement-tally.xml";
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setToast("XML generated and downloaded successfully.");
+      setWarnings(result.warnings || []);
+      setSkippedRows(result.skippedRows || 0);
+      setToast(`XML generated with ${result.voucherCount || 0} voucher${result.voucherCount === 1 ? "" : "s"}${result.isScanned ? " from OCR" : ""}.`);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
@@ -242,6 +247,29 @@ const BankStatementXmlCard = () => {
 
         {error && <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</div>}
         {toast && <div className="rounded-lg border border-mint-300 bg-mint-500/10 px-3 py-2 text-sm font-semibold text-mint-700">{toast}</div>}
+        {warnings.length > 0 && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <p className="font-semibold">{warnings.length} rows had data conflicts. Review the warnings below.</p>
+            <details className="mt-2">
+              <summary className="cursor-pointer font-semibold">Show warning rows</summary>
+              <ul className="mt-2 space-y-1 text-xs">
+                {warnings.map((warning, index) => (
+                  <li key={`${warning.row || "row"}-${index}`}>
+                    Row {warning.row || "?"}: {warning.issue}
+                    {warning.originalDebit !== undefined && warning.originalCredit !== undefined
+                      ? ` (debit ${warning.originalDebit}, credit ${warning.originalCredit})`
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
+        )}
+        {skippedRows > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs font-semibold text-amber-800">
+            {skippedRows} summary or invalid row{skippedRows === 1 ? "" : "s"} skipped.
+          </div>
+        )}
 
         <button type="button" className="btn-primary w-full" disabled={processing || !file} onClick={onConvert}>
           {processing ? "Converting..." : "Convert & Download XML"}

@@ -27,6 +27,26 @@ export const authApi = {
       auth: false
     });
   },
+  forgotPassword(payload) {
+    return request("/api/auth/forgot-password", {
+      method: "POST",
+      body: payload,
+      auth: false
+    });
+  },
+  validatePasswordResetToken(token) {
+    return request(`/api/auth/reset-password/${token}`, {
+      method: "GET",
+      auth: false
+    });
+  },
+  resetPassword(payload) {
+    return request("/api/auth/reset-password", {
+      method: "POST",
+      body: payload,
+      auth: false
+    });
+  },
   validateMagicToken(token) {
     return request(`/api/auth/magic/${token}`, {
       method: "GET",

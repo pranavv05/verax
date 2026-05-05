@@ -10,6 +10,8 @@
 #   - AWS_SECRET_ACCESS_KEY
 #   - OPENAI_API_KEY
 #   - FRONTEND_URL         (your Vercel URL, e.g. https://your-app.vercel.app)
+#   - AI_SERVICE_URL       (https://verax-ai-service.onrender.com — set after AI service deploys)
+#   - AI_SERVICE_API_KEY   (same random 32+ char value on backend, AI service, and worker)
 #
 # Then in Vercel, set:
 #   - VITE_API_BASE_URL = the URL of verax-backend shown in Render dashboard
@@ -46,13 +48,13 @@ services:
           name: verax-redis
           type: redis
           property: connectionString
+      # Set AI_SERVICE_URL manually after deploy: https://verax-ai-service.onrender.com
       - key: AI_SERVICE_URL
-        fromService:
-          name: verax-ai-service
-          type: web
-          property: host
+        sync: false
       - key: AI_SERVICE_TIMEOUT_MS
         value: 120000
+      - key: AI_SERVICE_API_KEY
+        sync: false
       - key: AWS_REGION
         value: ap-south-1
       - key: MAGIC_LINK_SINGLE_USE
@@ -65,6 +67,8 @@ services:
         value: 900
       - key: MAX_UPLOAD_MB
         value: 50
+      - key: MAX_TOOL_UPLOAD_MB
+        value: 25
       - key: DOCUMENT_WORKER_CONCURRENCY
         value: 3
       # Set these manually in the Render dashboard after deploy:
@@ -99,6 +103,8 @@ services:
         value: 8001
       - key: OPENAI_MODEL
         value: gpt-4o
+      - key: AI_SERVICE_API_KEY
+        sync: false
       - key: AI_WRITE_BACK_ENABLED
         value: "true"
       - key: LLM_TIMEOUT_SECONDS
@@ -107,6 +113,8 @@ services:
         value: 60
       - key: MAX_PDF_PAGES_FOR_FALLBACK
         value: 3
+      - key: MAX_TOOL_UPLOAD_MB
+        value: 25
       # Set these manually in the Render dashboard after deploy:
       - key: OPENAI_API_KEY
         sync: false
@@ -136,13 +144,13 @@ services:
           name: verax-redis
           type: redis
           property: connectionString
+      # Set AI_SERVICE_URL manually after deploy: https://verax-ai-service.onrender.com
       - key: AI_SERVICE_URL
-        fromService:
-          name: verax-ai-service
-          type: web
-          property: host
+        sync: false
       - key: AI_SERVICE_TIMEOUT_MS
         value: 120000
+      - key: AI_SERVICE_API_KEY
+        sync: false
       - key: AWS_REGION
         value: ap-south-1
       - key: MAGIC_LINK_SINGLE_USE
@@ -155,6 +163,8 @@ services:
         value: 900
       - key: MAX_UPLOAD_MB
         value: 50
+      - key: MAX_TOOL_UPLOAD_MB
+        value: 25
       - key: DOCUMENT_WORKER_CONCURRENCY
         value: 3
       # Set these manually in the Render dashboard after deploy:

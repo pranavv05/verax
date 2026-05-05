@@ -1,15 +1,25 @@
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const { randomUUID } = require("crypto");
 const ApiError = require("../utils/api-error");
 const env = require("../config/env");
 const pool = require("../db/pool");
 const { withTenantTransaction, setLocalConfig } = require("../db/tenant-context");
+const { sendEmail } = require("./email.service");
+const {
+  PASSWORD_RESET_SUBJECT,
+  passwordResetTemplate
+} = require("../templates/passwordReset.template");
 const {
   createAccessToken,
   createRefreshToken,
   verifyRefreshToken,
   hashToken
 } = require("../utils/token-utils");
+
+const PASSWORD_RESET_TOKEN_TTL_MINUTES = 15;
+const PASSWORD_RESET_SUCCESS_MESSAGE =
+  "If an account exists for that email, a password reset link will be available shortly.";
 
 const mapUserResponse = (row) => ({
   id: row.id,
@@ -73,6 +83,312 @@ const createSession = async (client, { user, userAgent, ipAddress }) => {
   );
 
   return { accessToken, refreshToken, tokenId };
+};
+
+const revokeRefreshTokenFamily = async (client, { firmId, userId }) => {
+  await client.query(
+    `
+      UPDATE refresh_tokens
+      SET revoked_at = COALESCE(revoked_at, NOW())
+      WHERE firm_id = $1
+        AND user_id = $2
+        AND deleted_at IS NULL
+        AND expires_at > NOW()
+    `,
+    [firmId, userId]
+  );
+};
+
+const createPasswordResetToken = () => crypto.randomBytes(32).toString("hex");
+
+const buildPasswordResetUrl = (token) => `${env.FRONTEND_URL}/reset-password/${token}`;
+
+const insertAuditLog = async (client, { firmId, userId, action, entityType, entityId, metadata }) => {
+  await client.query(
+    `
+      INSERT INTO audit_logs (
+        firm_id,
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `,
+    [firmId, userId ?? null, action, entityType, entityId ?? null, JSON.stringify(metadata || {})]
+  );
+};
+
+const requestPasswordReset = async ({ email, userAgent, ipAddress }) => {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const result = await withTenantTransaction(
+    {
+      authContext: "login",
+      authEmail: normalizedEmail
+    },
+    async (client) => {
+      const userResult = await client.query(
+        `
+          SELECT u.id, u.firm_id, u.name, u.email, f.name AS firm_name
+          FROM users u
+          JOIN firms f ON f.id = u.firm_id
+          WHERE lower(u.email) = $1
+            AND u.deleted_at IS NULL
+            AND f.deleted_at IS NULL
+          LIMIT 1
+        `,
+        [normalizedEmail]
+      );
+
+      if (userResult.rowCount === 0) {
+        return null;
+      }
+
+      const user = userResult.rows[0];
+      await setLocalConfig(client, "app.current_firm_id", user.firm_id);
+      await setLocalConfig(client, "app.auth_context", "");
+      await setLocalConfig(client, "app.auth_email", "");
+
+      await client.query(
+        `
+          UPDATE password_reset_tokens
+          SET deleted_at = NOW()
+          WHERE firm_id = $1
+            AND user_id = $2
+            AND used_at IS NULL
+            AND expires_at > NOW()
+            AND deleted_at IS NULL
+        `,
+        [user.firm_id, user.id]
+      );
+
+      const token = createPasswordResetToken();
+      const tokenHash = hashToken(token);
+      await client.query(
+        `
+          INSERT INTO password_reset_tokens (
+            firm_id,
+            user_id,
+            token_hash,
+            expires_at,
+            user_agent,
+            ip_address
+          ) VALUES (
+            $1,
+            $2,
+            $3,
+            NOW() + make_interval(mins => $4::integer),
+            $5,
+            $6
+          )
+        `,
+        [
+          user.firm_id,
+          user.id,
+          tokenHash,
+          PASSWORD_RESET_TOKEN_TTL_MINUTES,
+          userAgent ?? null,
+          ipAddress ?? null
+        ]
+      );
+
+      await insertAuditLog(client, {
+        firmId: user.firm_id,
+        userId: user.id,
+        action: "password_reset_requested",
+        entityType: "user",
+        entityId: user.id,
+        metadata: {
+          email: user.email
+        }
+      });
+
+      return {
+        firmId: user.firm_id,
+        userId: user.id,
+        email: user.email,
+        firmName: user.firm_name,
+        resetUrl: buildPasswordResetUrl(token)
+      };
+    }
+  );
+
+  if (result?.resetUrl && env.NODE_ENV !== "production") {
+    console.info("[auth/password-reset] development reset link", {
+      email: normalizedEmail,
+      resetUrl: result.resetUrl
+    });
+  }
+
+  if (result?.resetUrl) {
+    const emailResult = await sendEmail({
+      to: result.email,
+      subject: PASSWORD_RESET_SUBJECT,
+      html: passwordResetTemplate({
+        resetLink: result.resetUrl,
+        expiryMinutes: PASSWORD_RESET_TOKEN_TTL_MINUTES,
+        firmName: result.firmName || "Verax"
+      })
+    });
+
+    await withTenantTransaction({ firmId: result.firmId }, (client) =>
+      insertAuditLog(client, {
+        firmId: result.firmId,
+        userId: result.userId,
+        action: "password_reset_emailed",
+        entityType: "user",
+        entityId: result.userId,
+        metadata: {
+          email: result.email,
+          sent: Boolean(emailResult.sent),
+          provider: env.EMAIL_PROVIDER,
+          error: emailResult.error ?? null
+        }
+      })
+    );
+  }
+
+  return {
+    message: PASSWORD_RESET_SUCCESS_MESSAGE,
+    devResetLink: env.NODE_ENV !== "production" ? result?.resetUrl ?? null : undefined
+  };
+};
+
+const getPasswordResetToken = async (client, { tokenHash, forUpdate = false }) => {
+  const result = await client.query(
+    `
+      SELECT
+        id,
+        firm_id,
+        user_id,
+        expires_at,
+        used_at
+      FROM password_reset_tokens prt
+      WHERE token_hash = $1
+        AND deleted_at IS NULL
+      LIMIT 1
+      ${forUpdate ? "FOR UPDATE" : ""}
+    `,
+    [tokenHash]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return result.rows[0];
+};
+
+const validatePasswordResetToken = async ({ token }) => {
+  const tokenHash = hashToken(token);
+
+  return withTenantTransaction(
+    {
+      authContext: "password_reset",
+      passwordResetTokenHash: tokenHash
+    },
+    async (client) => {
+      const row = await getPasswordResetToken(client, { tokenHash });
+      const valid =
+        Boolean(row) &&
+        !row.used_at &&
+        new Date(row.expires_at).getTime() > Date.now();
+
+      if (!valid) {
+        throw ApiError.notFound("Password reset link is invalid or expired");
+      }
+
+      await setLocalConfig(client, "app.current_firm_id", row.firm_id);
+      const userResult = await client.query(
+        `
+          SELECT email
+          FROM users
+          WHERE id = $1
+            AND firm_id = $2
+            AND deleted_at IS NULL
+          LIMIT 1
+        `,
+        [row.user_id, row.firm_id]
+      );
+
+      if (userResult.rowCount === 0) {
+        throw ApiError.notFound("Password reset link is invalid or expired");
+      }
+
+      return {
+        valid: true,
+        email: userResult.rows[0].email,
+        expiresAt: row.expires_at
+      };
+    }
+  );
+};
+
+const resetPassword = async ({ token, password }) => {
+  const tokenHash = hashToken(token);
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  return withTenantTransaction(
+    {
+      authContext: "password_reset",
+      passwordResetTokenHash: tokenHash
+    },
+    async (client) => {
+      const row = await getPasswordResetToken(client, { tokenHash, forUpdate: true });
+      const valid =
+        Boolean(row) &&
+        !row.used_at &&
+        new Date(row.expires_at).getTime() > Date.now();
+
+      if (!valid) {
+        throw ApiError.notFound("Password reset link is invalid or expired");
+      }
+
+      await setLocalConfig(client, "app.current_firm_id", row.firm_id);
+      await setLocalConfig(client, "app.auth_context", "");
+      await setLocalConfig(client, "app.password_reset_token_hash", "");
+
+      await client.query(
+        `
+          UPDATE users
+          SET password_hash = $1,
+              updated_at = NOW()
+          WHERE id = $2
+            AND firm_id = $3
+            AND deleted_at IS NULL
+        `,
+        [passwordHash, row.user_id, row.firm_id]
+      );
+
+      await client.query(
+        `
+          UPDATE password_reset_tokens
+          SET used_at = NOW(),
+              deleted_at = NOW()
+          WHERE id = $1
+            AND firm_id = $2
+        `,
+        [row.id, row.firm_id]
+      );
+
+      await revokeRefreshTokenFamily(client, {
+        firmId: row.firm_id,
+        userId: row.user_id
+      });
+
+      await insertAuditLog(client, {
+        firmId: row.firm_id,
+        userId: row.user_id,
+        action: "password_reset_completed",
+        entityType: "user",
+        entityId: row.user_id,
+        metadata: {}
+      });
+
+      return { success: true };
+    }
+  );
 };
 
 const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddress }) => {
@@ -247,10 +563,18 @@ const refreshAccessToken = async ({ refreshToken, userAgent, ipAddress }) => {
 
     const sessionRow = sessionResult.rows[0];
     if (sessionRow.token_hash !== hashToken(refreshToken)) {
+      await revokeRefreshTokenFamily(client, {
+        firmId: sessionRow.firm_id,
+        userId: sessionRow.user_id
+      });
       throw ApiError.unauthorized("Refresh token mismatch");
     }
 
     if (sessionRow.revoked_at) {
+      await revokeRefreshTokenFamily(client, {
+        firmId: sessionRow.firm_id,
+        userId: sessionRow.user_id
+      });
       throw ApiError.unauthorized("Refresh token has been revoked");
     }
 
@@ -417,5 +741,8 @@ module.exports = {
   refreshAccessToken,
   logoutSession,
   validateMagicToken,
+  requestPasswordReset,
+  validatePasswordResetToken,
+  resetPassword,
   getRefreshCookieOptions
 };

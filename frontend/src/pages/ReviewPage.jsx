@@ -5,7 +5,11 @@ import { ReviewSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { documentsApi } from "../api/documents-api";
 import { extractionsApi } from "../api/extractions-api";
+import { complianceApi } from "../api/compliance-api";
+import { documentVersionsApi } from "../api/document-versions-api";
+import { useAuth } from "../contexts/AuthContext";
 import { parseApiError } from "../lib/utils";
+import { isAdmin } from "../utils/permissions";
 
 /* ─── field configs by doc type ────────────────────────────────────────────── */
 
@@ -39,6 +43,23 @@ const BANK_FIELDS = [
 
 const getHeaderFields = (docType) =>
   docType === "bank_statement" ? BANK_FIELDS : INVOICE_FIELDS;
+
+const confidenceTone = (confidence) => {
+  const percentage = Math.round(Number(confidence || 0) * 100);
+  if (percentage >= 80) return { bar: "bg-mint-600", text: "text-mint-700", track: "bg-mint-500/10" };
+  if (percentage >= 60) return { bar: "bg-yellow-500", text: "text-yellow-700", track: "bg-yellow-100" };
+  if (percentage >= 40) return { bar: "bg-amber-500", text: "text-amber-700", track: "bg-amber-100" };
+  return { bar: "bg-rose-500", text: "text-rose-700", track: "bg-rose-100" };
+};
+
+const FIELD_ALIASES = {
+  vendor_name: ["supplier_name"],
+  vendor_gstin: ["supplier_gstin"],
+  subtotal: ["taxable_amount"],
+  cgst: ["cgst_amount"],
+  sgst: ["sgst_amount"],
+  igst: ["igst_amount"]
+};
 
 /* ─── line item / transaction helpers ──────────────────────────────────────── */
 
@@ -86,22 +107,131 @@ const hasBlockingErrors = (validation) => {
   );
 };
 
+const deriveGstr2bPeriod = (value) => {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  return `${month}${parsed.getFullYear()}`;
+};
+
+const formatMismatchField = (field) =>
+  ({
+    supplierGSTIN: "Supplier GSTIN",
+    taxableAmount: "Taxable Amount",
+    gstAmount: "GST Amount",
+    invoiceDate: "Invoice Date"
+  }[field] || field);
+
+const getGstBadge = (status) => {
+  if (!status) {
+    return { label: "Unverified", className: "bg-slate-100 text-slate-600" };
+  }
+  if (status === "matched") {
+    return { label: "GST Verified", className: "bg-mint-500/10 text-mint-700" };
+  }
+  if (status === "partial") {
+    return { label: "Partial Match", className: "bg-amber-100 text-amber-700" };
+  }
+  if (status === "not_found") {
+    return { label: "Not in GSTR-2B", className: "bg-rose-100 text-rose-700" };
+  }
+  if (status === "mismatch") {
+    return { label: "Mismatch", className: "bg-rose-100 text-rose-700" };
+  }
+  if (status === "unavailable") {
+    return { label: "GSP Unavailable", className: "bg-slate-100 text-slate-600" };
+  }
+  return { label: "Unverified", className: "bg-slate-100 text-slate-600" };
+};
+
+const getRecordValue = (record, field) => {
+  if (!record) return "-";
+  if (field === "supplierGSTIN") return record.supplierGSTIN || record.supplier_gstin || record.ctin || record.gstin || "-";
+  if (field === "taxableAmount") return record.taxableAmount ?? record.taxable_amount ?? record.txval ?? "-";
+  if (field === "gstAmount") {
+    return record.gstAmount ?? record.gst_amount ?? record.iamt ?? record.camt ?? "-";
+  }
+  if (field === "invoiceDate") return record.invoiceDate || record.invoice_date || record.idt || record.date || "-";
+  return record[field] ?? "-";
+};
+
+const getExtractedMismatchValue = (form, field) => {
+  if (field === "supplierGSTIN") return form.vendor_gstin || "-";
+  if (field === "taxableAmount") return form.taxable_amount || form.subtotal || "-";
+  if (field === "gstAmount") return form.tax_amount || "-";
+  if (field === "invoiceDate") return form.invoice_date || "-";
+  return form[field] || "-";
+};
+
+const HISTORY_FIELDS = [
+  ["invoice_number", "Invoice Number"],
+  ["invoice_date", "Invoice Date"],
+  ["vendor_name", "Supplier Name"],
+  ["vendor_gstin", "Supplier GSTIN"],
+  ["taxable_amount", "Taxable Amount"],
+  ["tax_amount", "GST Amount"],
+  ["total_amount", "Total Amount"]
+];
+
+const reasonLabel = (reason) =>
+  ({
+    pre_edit: "Before Edit",
+    pre_approval: "Before Approval",
+    reprocess: "Before Reprocess"
+  }[reason] || reason);
+
+const reasonClass = (reason) =>
+  ({
+    pre_edit: "bg-slate-100 text-slate-600",
+    pre_approval: "bg-indigo-100 text-indigo-700",
+    reprocess: "bg-amber-100 text-amber-700"
+  }[reason] || "bg-slate-100 text-slate-600");
+
+const relativeTime = (value) => {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "Just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+};
+
+const normalizeValue = (value) =>
+  value === undefined || value === null || value === "" ? "—" : String(value);
+
 /* ─── component ─────────────────────────────────────────────────────────────── */
 
 const ReviewPage = () => {
   const { doc_id: documentId } = useParams();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [approving, setApproving] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [document, setDocument] = useState(null);
+  const [extractionReady, setExtractionReady] = useState(false);
+  const [extractionMessage, setExtractionMessage] = useState("");
   const [form, setForm] = useState({});
+  const [structuredData, setStructuredData] = useState({});
   const [lineItems, setLineItems] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [confidence, setConfidence] = useState(0);
   const [validation, setValidation] = useState(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [gstMatch, setGstMatch] = useState(null);
+  const [gstChecking, setGstChecking] = useState(false);
+  const [gstDetailsOpen, setGstDetailsOpen] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState(null);
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [versionError, setVersionError] = useState("");
 
   const docType = document?.docType || document?.doc_type || "invoice";
   const isBankStatement = docType === "bank_statement";
@@ -113,18 +243,38 @@ const ReviewPage = () => {
     setLoading(true);
     setError("");
     try {
-      const [docResult, extractionResult] = await Promise.allSettled([
+      const [docResult, extractionResult, versionsResult] = await Promise.allSettled([
         documentsApi.getById(documentId),
-        extractionsApi.getByDocumentId(documentId)
+        extractionsApi.getByDocumentId(documentId),
+        documentVersionsApi.list(documentId)
       ]);
 
       if (docResult.status === "fulfilled") {
         setDocument(docResult.value);
+        if (docResult.value?.gstr2bMatchStatus) {
+          setGstMatch({
+            matchStatus: docResult.value.gstr2bMatchStatus,
+            ...(docResult.value.gstr2bMatchDetails || {})
+          });
+        } else {
+          setGstMatch(null);
+        }
       }
 
       if (extractionResult.status === "fulfilled") {
         const ext = extractionResult.value;
+
+        // Backend returns { extraction: null, message: "..." } when not yet processed
+        if (!ext || ext.extraction === null && ext.message) {
+          setExtractionReady(false);
+          setExtractionMessage(ext.message || "Document has not been processed yet.");
+          setStructuredData({});
+          return;
+        }
+
+        setExtractionReady(true);
         const sd = ext?.structured_data || ext?.structuredData || {};
+        setStructuredData(sd);
         setConfidence(ext?.confidence_score || ext?.confidenceScore || 0);
         setValidation(ext?.validation || null);
 
@@ -164,6 +314,12 @@ const ReviewPage = () => {
             reference: txn.reference || ""
           }))
         );
+      }
+
+      if (versionsResult.status === "fulfilled") {
+        setVersions(versionsResult.value.versions || []);
+      } else {
+        setVersions([]);
       }
 
       if (docResult.status === "rejected" && extractionResult.status === "rejected") {
@@ -225,6 +381,7 @@ const ReviewPage = () => {
     try {
       await extractionsApi.update(documentId, buildPayload());
       setToast("Extraction corrections saved.");
+      await loadData();
     } catch (saveError) {
       setError(parseApiError(saveError, "Unable to save extraction"));
     } finally {
@@ -255,6 +412,7 @@ const ReviewPage = () => {
     try {
       await extractionsApi.reprocess(documentId);
       setToast("Reprocess request queued. Refresh in a moment.");
+      await loadData();
     } catch (reprocessError) {
       setError(parseApiError(reprocessError, "Unable to reprocess document"));
     } finally {
@@ -262,12 +420,95 @@ const ReviewPage = () => {
     }
   };
 
+  const onVerifyGst = async () => {
+    const gstin = String(form.vendor_gstin || "").trim().toUpperCase();
+    const period = deriveGstr2bPeriod(form.invoice_date);
+
+    setToast("");
+    setError("");
+    if (!gstin) {
+      setError("No GSTIN found in document");
+      return;
+    }
+    if (!period) {
+      setError("Invoice date is required to derive the GSTR-2B period.");
+      return;
+    }
+
+    setGstChecking(true);
+    try {
+      const result = await complianceApi.matchGstr2b({
+        gstin,
+        period,
+        documentIds: [documentId]
+      });
+      const match = result.results?.[0];
+      setGstMatch(match || null);
+      setGstDetailsOpen(Boolean(match?.mismatchFields?.length));
+      setToast("GST verification updated.");
+    } catch (verifyError) {
+      setError(parseApiError(verifyError, "Unable to verify GST details"));
+    } finally {
+      setGstChecking(false);
+    }
+  };
+
+  const currentStructuredData = useMemo(() => {
+    const payload = { ...form };
+    if (isBankStatement) {
+      payload.transactions = transactions;
+    } else {
+      payload.line_items = lineItems.map(({ suggestions, ...rest }) => rest);
+    }
+    return payload;
+  }, [form, isBankStatement, lineItems, transactions]);
+
+  const openHistory = async () => {
+    setHistoryOpen(true);
+    setVersionError("");
+    if (!selectedVersion && versions.length > 0) {
+      await selectVersion(versions[0]);
+    }
+  };
+
+  const selectVersion = async (version) => {
+    setVersionLoading(true);
+    setVersionError("");
+    try {
+      const detail = await documentVersionsApi.get(documentId, version.id);
+      setSelectedVersion(detail);
+    } catch (historyError) {
+      setVersionError(parseApiError(historyError, "Unable to load version detail"));
+    } finally {
+      setVersionLoading(false);
+    }
+  };
+
   /* ─── derived state ─── */
 
   const lowConfidence = confidence < 0.8;
+  const confidencePercent = Math.round(Number(confidence || 0) * 100);
+  const confidenceStyle = confidenceTone(confidence);
+  const showConfidencePanel = ["extracted", "review_required"].includes(document?.status);
+  const taxMathWarning = structuredData?._tax_math_warning || "";
+  const lowConfidenceFields = Array.isArray(structuredData?.low_confidence_fields)
+    ? structuredData.low_confidence_fields
+    : [];
   const blocking = hasBlockingErrors(validation);
   const isExported = document?.status === "exported";
   const isReviewed = document?.status === "reviewed";
+  const canApprove = ["extracted", "review_required"].includes(document?.status);
+  const canAdmin = isAdmin(user);
+
+  const isLowConfidenceField = (key) => {
+    const candidates = [key, ...(FIELD_ALIASES[key] || [])];
+    return candidates.some((candidate) => lowConfidenceFields.includes(candidate));
+  };
+
+  const isMissingExtractedField = (key) => {
+    const candidates = [key, ...(FIELD_ALIASES[key] || [])];
+    return candidates.some((candidate) => structuredData?.[candidate] === null);
+  };
 
   const previewUrl = useMemo(
     () => document?.preview_url || document?.download_url || document?.downloadUrl || "",
@@ -315,6 +556,126 @@ const ReviewPage = () => {
         </div>
       )}
 
+      {historyOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-ink-900/40 backdrop-blur-sm">
+          <aside className="h-full w-full max-w-5xl overflow-y-auto bg-white shadow-elevated">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#eadfcf] bg-white px-5 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-ink-900">Edit History</h2>
+                <p className="text-sm text-[#607086]">{document?.fileName || document?.file_name}</p>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary px-3 py-1.5 text-xs"
+                onClick={() => setHistoryOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid gap-4 p-5 lg:grid-cols-[0.85fr_1.4fr]">
+              <section className="rounded-xl border border-[#e4d8c5] p-3">
+                {versions.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-[#6b7d93]">No edit history yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {versions.map((version) => (
+                      <button
+                        key={version.id}
+                        type="button"
+                        className={`w-full rounded-lg border px-3 py-3 text-left transition ${
+                          selectedVersion?.id === version.id
+                            ? "border-ink-900 bg-sand-100"
+                            : "border-[#eadfcf] hover:bg-sand-50"
+                        }`}
+                        onClick={() => selectVersion(version)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-bold text-ink-900">v{version.versionNumber}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${reasonClass(version.snapshotReason)}`}>
+                            {reasonLabel(version.snapshotReason)}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-[#607086]">
+                          {version.createdByName || "System"} · {relativeTime(version.createdAt)}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-xl border border-[#e4d8c5] p-4">
+                {versionLoading ? (
+                  <p className="py-8 text-center text-sm font-semibold text-[#607086]">Loading version...</p>
+                ) : versionError ? (
+                  <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {versionError}
+                  </div>
+                ) : selectedVersion ? (
+                  <div>
+                    <div className="grid grid-cols-2 gap-3 text-xs font-bold uppercase tracking-wide text-[#6a7b90]">
+                      <span>Historical v{selectedVersion.versionNumber}</span>
+                      <span>Current</span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {HISTORY_FIELDS.map(([key, label]) => {
+                        const oldValue = normalizeValue(selectedVersion.extractedData?.[key]);
+                        const newValue = normalizeValue(currentStructuredData?.[key]);
+                        const changed = oldValue !== newValue;
+                        return (
+                          <div key={key} className="grid gap-2 rounded-lg border border-[#f0e7d9] p-2 sm:grid-cols-[150px_1fr_1fr]">
+                            <div className="text-xs font-bold text-[#607086]">{label}</div>
+                            <div className={`rounded px-2 py-1 text-sm ${changed ? "bg-amber-100 text-amber-800" : "bg-sand-50 text-ink-800"}`}>
+                              {oldValue}
+                            </div>
+                            <div className={`rounded px-2 py-1 text-sm ${changed ? "bg-amber-100 text-amber-800" : "bg-sand-50 text-ink-800"}`}>
+                              {newValue}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {(() => {
+                        const oldCount = Array.isArray(selectedVersion.extractedData?.line_items)
+                          ? selectedVersion.extractedData.line_items.length
+                          : 0;
+                        const newCount = Array.isArray(currentStructuredData?.line_items)
+                          ? currentStructuredData.line_items.length
+                          : 0;
+                        const changed = oldCount !== newCount;
+                        return (
+                          <div className="grid gap-2 rounded-lg border border-[#f0e7d9] p-2 sm:grid-cols-[150px_1fr_1fr]">
+                            <div className="text-xs font-bold text-[#607086]">Line Items</div>
+                            <div className={`rounded px-2 py-1 text-sm ${changed ? "bg-amber-100 text-amber-800" : "bg-sand-50 text-ink-800"}`}>
+                              {oldCount} items
+                            </div>
+                            <div className={`rounded px-2 py-1 text-sm ${changed ? "bg-amber-100 text-amber-800" : "bg-sand-50 text-ink-800"}`}>
+                              {newCount} items
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="py-8 text-center text-sm text-[#6b7d93]">Select a version to compare.</p>
+                )}
+              </section>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Not yet processed banner */}
+      {!loading && !error && !extractionReady && extractionMessage && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+          {extractionMessage}
+          {document && (["uploaded", "processing"].includes(document.status)) && (
+            <span className="ml-2 font-normal">Current status: <strong>{document.status}</strong>. Refresh the page in a few moments.</span>
+          )}
+        </div>
+      )}
+
       {/* Duplicate invoice warning */}
       {validation?.duplicate?.isDuplicate && (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
@@ -327,6 +688,17 @@ const ReviewPage = () => {
               View original
             </Link>
           )}
+        </div>
+      )}
+
+      {document?.status === "review_required" && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p className="font-semibold">
+            This document was flagged during processing — low confidence or unexpected document type. Please verify all fields carefully before approving.
+          </p>
+          <p className="mt-1 font-medium">
+            Tip: Fields highlighted in red had low confidence. Verify these carefully.
+          </p>
         </div>
       )}
 
@@ -366,14 +738,44 @@ const ReviewPage = () => {
             </div>
           </div>
 
+          {showConfidencePanel && (
+            <div className="mb-4 rounded-lg border border-[#eadfcf] bg-sand-50/60 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-[#607086]">
+                  AI Extraction Confidence
+                </p>
+                <p className={`text-xs font-bold ${confidenceStyle.text}`}>
+                  {confidencePercent}% confidence
+                </p>
+              </div>
+              <div className={`mt-2 h-2 overflow-hidden rounded-full ${confidenceStyle.track}`}>
+                <div
+                  className={`h-full rounded-full ${confidenceStyle.bar}`}
+                  style={{ width: `${Math.max(0, Math.min(100, confidencePercent))}%` }}
+                />
+              </div>
+              {taxMathWarning && (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <p className="font-semibold">
+                    ⚠ Tax math mismatch detected — verify amounts before approving
+                  </p>
+                  <p className="mt-1">{taxMathWarning}</p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="max-h-[58vh] space-y-3 overflow-y-auto pr-1">
             {headerFields.map(([key, label]) => {
               const fv = getFieldValidation(validation, key);
+              const isGstinField = key === "vendor_gstin";
+              const gstBadge = getGstBadge(gstMatch?.matchStatus);
+              const fieldNeedsReview = isMissingExtractedField(key) || isLowConfidenceField(key);
               return (
                 <div key={key}>
                   <label className="label">{label}</label>
                   <input
-                    className={`field ${lowConfidence && !form[key] ? "bg-amber-50" : ""} ${
+                    className={`field ${fieldNeedsReview ? "border-rose-300 bg-rose-50/60" : ""} ${lowConfidence && !form[key] && !fieldNeedsReview ? "bg-amber-50" : ""} ${
                       fv?.severity === "error"
                         ? "border-rose-400 bg-rose-50/50"
                         : fv
@@ -384,6 +786,58 @@ const ReviewPage = () => {
                     disabled={isExported}
                     onChange={(e) => onFieldChange(key, e.target.value)}
                   />
+                  {fieldNeedsReview && (
+                    <p className="mt-1 text-xs font-medium text-rose-600">
+                      Verify this field before approving.
+                    </p>
+                  )}
+                  {isGstinField && (
+                    <div className="mt-2 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${gstBadge.className}`}
+                        >
+                          {gstChecking ? "Checking..." : gstBadge.label}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-secondary px-3 py-1.5 text-xs"
+                          disabled={gstChecking || isExported || !form.vendor_gstin}
+                          title={!form.vendor_gstin ? "No GSTIN found in document" : ""}
+                          onClick={onVerifyGst}
+                        >
+                          {gstChecking ? "Verifying..." : "Verify GST"}
+                        </button>
+                        {gstMatch?.mismatchFields?.length > 0 && (
+                          <button
+                            type="button"
+                            className="text-xs font-semibold text-[#607086] underline"
+                            onClick={() => setGstDetailsOpen((prev) => !prev)}
+                          >
+                            {gstDetailsOpen ? "Hide details" : "Show details"}
+                          </button>
+                        )}
+                      </div>
+
+                      {gstDetailsOpen && gstMatch?.mismatchFields?.length > 0 && (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                          <p className="font-semibold">
+                            Mismatched fields:{" "}
+                            {gstMatch.mismatchFields.map(formatMismatchField).join(", ")}
+                          </p>
+                          <div className="mt-2 space-y-1">
+                            {gstMatch.mismatchFields.map((field) => (
+                              <div key={field} className="grid gap-2 sm:grid-cols-3">
+                                <span className="font-medium">{formatMismatchField(field)}</span>
+                                <span>Extracted: {getExtractedMismatchValue(form, field)}</span>
+                                <span>GSTR-2B: {getRecordValue(gstMatch.gstr2bRecord, field)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {fv?.message && (
                     <p
                       className={`mt-1 text-xs font-medium ${
@@ -399,8 +853,18 @@ const ReviewPage = () => {
             })}
           </div>
 
+          {versions.length > 0 && (
+            <button
+              type="button"
+              className="btn-secondary mt-4 w-full"
+              onClick={openHistory}
+            >
+              View History
+            </button>
+          )}
+
           {/* Action buttons */}
-          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className={`mt-4 grid grid-cols-1 gap-2 ${canAdmin ? "sm:grid-cols-3" : ""}`}>
             <button
               type="button"
               className="btn-secondary"
@@ -409,29 +873,35 @@ const ReviewPage = () => {
             >
               {saving ? "Saving..." : "Save"}
             </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              disabled={reprocessing || isExported}
-              onClick={onReprocess}
-            >
-              {reprocessing ? "Queueing..." : "Reprocess"}
-            </button>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={approving || blocking || isExported || isReviewed}
-              onClick={onApprove}
-              title={
-                blocking
-                  ? "Fix errors before approving"
-                  : isReviewed
-                  ? "Already approved"
-                  : ""
-              }
-            >
-              {approving ? "Approving..." : isReviewed ? "Approved" : "Approve"}
-            </button>
+            {canAdmin && (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={reprocessing || isExported}
+                onClick={onReprocess}
+              >
+                {reprocessing ? "Queueing..." : "Reprocess"}
+              </button>
+            )}
+            {canAdmin && (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={approving || blocking || isExported || isReviewed || !canApprove}
+                onClick={onApprove}
+                title={
+                  blocking
+                    ? "Fix errors before approving"
+                    : isReviewed
+                    ? "Already approved"
+                    : !canApprove
+                    ? "Document must be extracted or marked needs review before approving"
+                    : ""
+                }
+              >
+                {approving ? "Approving..." : isReviewed ? "Approved" : "Approve"}
+              </button>
+            )}
           </div>
         </article>
       </section>

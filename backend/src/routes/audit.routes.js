@@ -2,7 +2,7 @@ const express = require("express");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const { listAuditLogs } = require("../services/audit.service");
 
 const router = express.Router();
@@ -18,6 +18,7 @@ router.use(requireAuth);
 
 router.get(
   "/",
+  requireAdmin,
   validate(listAuditLogsQuerySchema, "query"),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>

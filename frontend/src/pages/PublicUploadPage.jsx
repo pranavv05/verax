@@ -21,6 +21,7 @@ const PublicUploadPage = () => {
   const { token } = useParams();
 
   const [clientInfo, setClientInfo] = useState(null);
+  const [activeUploadToken, setActiveUploadToken] = useState(token);
   const [tokenLoading, setTokenLoading] = useState(true);
   const [tokenError, setTokenError] = useState("");
 
@@ -38,6 +39,7 @@ const PublicUploadPage = () => {
         const result = await authApi.validateMagicToken(token);
         if (active) {
           setClientInfo(result.client);
+          setActiveUploadToken(token);
         }
       } catch (error) {
         if (active) {
@@ -109,6 +111,7 @@ const PublicUploadPage = () => {
 
     setUploading(true);
     setGlobalError("");
+    let queueToken = activeUploadToken || token;
 
     for (const item of items) {
       if (item.status === "success") {
@@ -130,7 +133,7 @@ const PublicUploadPage = () => {
           throw new Error(validation.error.issues[0]?.message || "Invalid upload payload");
         }
 
-        const initResult = await uploadApi.createPublicUpload(token, validation.data);
+        const initResult = await uploadApi.createPublicUpload(queueToken, validation.data);
 
         updateItem(item.id, { status: "uploading", message: "Uploading to secure storage..." });
 
@@ -140,7 +143,11 @@ const PublicUploadPage = () => {
 
         updateItem(item.id, { status: "confirming", message: "Confirming and queueing OCR...", progress: 100 });
 
-        await uploadApi.confirmPublicUpload(token, initResult.document_id);
+        const confirmResult = await uploadApi.confirmPublicUpload(queueToken, initResult.document_id);
+        if (confirmResult?.token_rotation?.uploadToken) {
+          queueToken = confirmResult.token_rotation.uploadToken;
+          setActiveUploadToken(queueToken);
+        }
 
         updateItem(item.id, { status: "success", message: "Upload completed", progress: 100 });
       } catch (error) {
@@ -273,6 +280,15 @@ const PublicUploadPage = () => {
             >
               {uploading ? "Uploading files..." : "Start upload"}
             </button>
+
+            {successCount > 0 && (
+              <a
+                className="mt-3 inline-flex text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                href={`/upload/${activeUploadToken || token}/status`}
+              >
+                View upload status &rarr;
+              </a>
+            )}
           </section>
         </>
       ) : null}

@@ -14,6 +14,9 @@ const firmRoutes = require("./routes/firms.routes");
 const userRoutes = require("./routes/users.routes");
 const auditRoutes = require("./routes/audit.routes");
 const toolsRoutes = require("./routes/tools.routes");
+const complianceRoutes = require("./routes/compliance.routes");
+const notificationRoutes = require("./routes/notifications.routes");
+const scheduledRequestRoutes = require("./routes/scheduled-requests.routes");
 const env = require("./config/env");
 const { notFoundHandler, errorHandler } = require("./middlewares/error.middleware");
 
@@ -49,6 +52,9 @@ app.use("/api/firms", firmRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api/tools", toolsRoutes);
+app.use("/api/compliance", complianceRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/scheduled-requests", scheduledRequestRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -2,10 +2,12 @@ const express = require("express");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const ApiError = require("../utils/api-error");
 const {
   generateTallyExport,
+  generateBulkTallyExport,
+  generateTallyExportPreview,
   listExportHistory,
   getExportDownload
 } = require("../services/exports.service");
@@ -28,6 +30,43 @@ const generateExportSchema = Joi.object({
   "any.invalid": "date_from must be earlier than or equal to date_to"
 });
 
+const bulkExportSchema = Joi.object({
+  clientId: uuidSchema.required(),
+  fromDate: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  toDate: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+}).custom((value, helpers) => {
+  if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
+    return helpers.error("any.invalid");
+  }
+  return value;
+}, "date range validation").messages({
+  "any.invalid": "fromDate must be earlier than or equal to toDate",
+  "string.pattern.base": "Dates must be in YYYY-MM-DD format"
+});
+
+const previewExportSchema = Joi.object({
+  clientId: uuidSchema.required(),
+  documentIds: Joi.array().items(uuidSchema).min(1).max(200).optional(),
+  fromDate: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  toDate: Joi.string()
+    .pattern(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+}).custom((value, helpers) => {
+  if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
+    return helpers.error("any.invalid");
+  }
+  return value;
+}, "date range validation").messages({
+  "any.invalid": "fromDate must be earlier than or equal to toDate",
+  "string.pattern.base": "Dates must be in YYYY-MM-DD format"
+});
+
 const historyQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),
@@ -43,6 +82,7 @@ router.use(requireAuth);
 
 router.post(
   "/tally",
+  requireAdmin,
   validate(generateExportSchema),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>
@@ -59,6 +99,44 @@ router.post(
     if (result.status === "failed") {
       throw new ApiError(502, result.error || "Failed to generate tally export", "EXPORT_FAILED");
     }
+
+    res.status(200).json(result);
+  })
+);
+
+router.post(
+  "/bulk",
+  requireAdmin,
+  validate(bulkExportSchema),
+  asyncHandler(async (req, res) => {
+    const result = await req.withTenantTransaction((db) =>
+      generateBulkTallyExport(db, {
+        firmId: req.user.firmId,
+        userId: req.user.userId,
+        clientId: req.body.clientId,
+        fromDate: req.body.fromDate ?? null,
+        toDate: req.body.toDate ?? null
+      })
+    );
+
+    res.status(200).json(result);
+  })
+);
+
+router.post(
+  "/preview",
+  requireAdmin,
+  validate(previewExportSchema),
+  asyncHandler(async (req, res) => {
+    const result = await req.withTenantTransaction((db) =>
+      generateTallyExportPreview(db, {
+        firmId: req.user.firmId,
+        clientId: req.body.clientId,
+        documentIds: req.body.documentIds ?? null,
+        fromDate: req.body.fromDate ?? null,
+        toDate: req.body.toDate ?? null
+      })
+    );
 
     res.status(200).json(result);
   })

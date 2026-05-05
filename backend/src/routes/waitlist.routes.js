@@ -1,10 +1,23 @@
 const express = require("express");
 const Joi = require("joi");
+const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { addToWaitlist } = require("../services/waitlist.service");
 
 const router = express.Router();
+
+const waitlistRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "RATE_LIMIT_EXCEEDED",
+    message: "Too many waitlist attempts. Please try again later.",
+    statusCode: 429
+  }
+});
 
 const waitlistSchema = Joi.object({
   email: Joi.string().email().required().custom((value, helpers) => {
@@ -17,6 +30,7 @@ const waitlistSchema = Joi.object({
 
 router.post(
   "/join",
+  waitlistRateLimiter,
   validate(waitlistSchema),
   asyncHandler(async (req, res) => {
     const { email } = req.body;

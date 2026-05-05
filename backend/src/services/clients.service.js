@@ -1,6 +1,11 @@
 const crypto = require("crypto");
 const ApiError = require("../utils/api-error");
 const env = require("../config/env");
+const { sendEmail } = require("./email.service");
+const {
+  clientMagicLinkSubject,
+  clientMagicLinkTemplate
+} = require("../templates/clientMagicLink.template");
 
 const ALLOWED_STATUSES = new Set(["active", "inactive", "pending"]);
 
@@ -19,6 +24,25 @@ const toClientResponse = (row) => ({
 });
 
 const createUploadToken = () => crypto.randomBytes(32).toString("hex");
+
+const DEFAULT_REQUESTED_DOCUMENT_TYPES = [
+  "Invoices",
+  "Bills",
+  "Bank statements",
+  "Supporting documents"
+];
+
+const DOCUMENT_TYPE_LABELS = {
+  invoice: "Invoices",
+  bill: "Bills",
+  bank_statement: "Bank statements",
+  other: "Supporting documents"
+};
+
+const toRequestedDocumentLabels = (documentTypes) =>
+  Array.isArray(documentTypes) && documentTypes.length > 0
+    ? documentTypes.map((type) => DOCUMENT_TYPE_LABELS[type] || type)
+    : DEFAULT_REQUESTED_DOCUMENT_TYPES;
 
 const insertAuditLog = async (db, { firmId, userId, action, entityType, entityId, metadata }) => {
   await db.query(
@@ -295,14 +319,16 @@ const deleteClient = async (db, { firmId, clientId, actorUserId }) => {
   });
 };
 
-const requestClientDocuments = async (db, { firmId, clientId, actorUserId }) => {
+const requestClientDocuments = async (db, { firmId, clientId, actorUserId, documentTypes }) => {
   const clientResult = await db.query(
     `
-      SELECT id, name, email, status
-      FROM clients
-      WHERE id = $1
-        AND firm_id = $2
-        AND deleted_at IS NULL
+      SELECT c.id, c.name, c.email, c.status, f.name AS firm_name
+      FROM clients c
+      JOIN firms f ON f.id = c.firm_id
+      WHERE c.id = $1
+        AND c.firm_id = $2
+        AND c.deleted_at IS NULL
+        AND f.deleted_at IS NULL
       LIMIT 1
     `,
     [clientId, firmId]
@@ -373,6 +399,37 @@ const requestClientDocuments = async (db, { firmId, clientId, actorUserId }) => 
       email: client.email
     }
   });
+
+  if (client.email) {
+    const uploadToken = requestResult.rows[0].upload_token;
+    const uploadTokenExpiresAt = requestResult.rows[0].upload_token_expires_at;
+    const uploadLink = `${env.FRONTEND_URL}/upload/${uploadToken}`;
+    const emailResult = await sendEmail({
+      to: client.email,
+      subject: clientMagicLinkSubject({ firmName: client.firm_name }),
+      html: clientMagicLinkTemplate({
+        uploadLink,
+        firmName: client.firm_name,
+        clientName: client.name,
+        documentTypes: toRequestedDocumentLabels(documentTypes),
+        expiryDate: uploadTokenExpiresAt
+      })
+    });
+
+    await insertAuditLog(db, {
+      firmId,
+      userId: actorUserId,
+      action: "client_magic_link_emailed",
+      entityType: "client",
+      entityId: clientId,
+      metadata: {
+        email: client.email,
+        sent: Boolean(emailResult.sent),
+        provider: env.EMAIL_PROVIDER,
+        error: emailResult.error ?? null
+      }
+    });
+  }
 
   return {
     message: "Document request queued",

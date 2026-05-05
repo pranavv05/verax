@@ -7,7 +7,9 @@ import StatusBadge from "../components/ui/StatusBadge";
 import { clientsApi } from "../api/clients-api";
 import { documentsApi } from "../api/documents-api";
 import { exportsApi } from "../api/exports-api";
+import { useAuth } from "../contexts/AuthContext";
 import { formatDateTime, parseApiError } from "../lib/utils";
+import { isAdmin } from "../utils/permissions";
 
 const exportSchema = z
   .object({
@@ -42,7 +44,15 @@ const DocTypeBadge = ({ docType }) => {
   );
 };
 
+const formatCurrency = (value) =>
+  `₹${Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+
 const ExportPage = () => {
+  const { user } = useAuth();
+  const canAdmin = isAdmin(user);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [clients, setClients] = useState([]);
@@ -52,6 +62,12 @@ const ExportPage = () => {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [latestExport, setLatestExport] = useState(null);
+  const [exportPreview, setExportPreview] = useState(null);
+  const [showExportPreview, setShowExportPreview] = useState(false);
+  const [showPreviewWarnings, setShowPreviewWarnings] = useState(false);
+  const [previewExportPayload, setPreviewExportPayload] = useState(null);
+  const [confirmingExport, setConfirmingExport] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const [form, setForm] = useState({
     client_id: "",
     date_from: "",
@@ -143,15 +159,46 @@ const ExportPage = () => {
     }
 
     try {
-      const result = await exportsApi.generateTally(validation.data);
-      setLatestExport(result);
-      setToast("Tally XML generated successfully.");
-      const refreshedHistory = await exportsApi.history({ page: 1, limit: 20 });
-      setHistory(refreshedHistory.data || []);
-    } catch (generateError) {
-      setError(parseApiError(generateError, "Unable to generate export"));
+      const preview = await exportsApi.preview({
+        clientId: validation.data.client_id,
+        documentIds: validation.data.document_ids,
+        fromDate: validation.data.date_from,
+        toDate: validation.data.date_to
+      });
+      setPreviewExportPayload(validation.data);
+      setExportPreview(preview);
+      setPreviewError("");
+      setShowPreviewWarnings(false);
+      setShowExportPreview(true);
+    } catch (previewRequestError) {
+      setError(parseApiError(previewRequestError, "Unable to preview export"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onConfirmExport = async () => {
+    if (!previewExportPayload) return;
+    setConfirmingExport(true);
+    setPreviewError("");
+    setToast("");
+    try {
+      const result = await exportsApi.generateTally(previewExportPayload);
+      setLatestExport(result);
+      setShowExportPreview(false);
+      setExportPreview(null);
+      setPreviewExportPayload(null);
+      setToast("Tally XML generated successfully.");
+      if (result.download_url) {
+        window.open(result.download_url, "_blank", "noopener,noreferrer");
+      }
+      const refreshedHistory = await exportsApi.history({ page: 1, limit: 20 });
+      setHistory(refreshedHistory.data || []);
+      await loadClientDocuments(form.client_id);
+    } catch (generateError) {
+      setPreviewError(parseApiError(generateError, "Unable to generate export"));
+    } finally {
+      setConfirmingExport(false);
     }
   };
 
@@ -169,6 +216,133 @@ const ExportPage = () => {
 
   return (
     <AppShell title="Tally Export" subtitle="Select approved documents and generate TallyPrime-compatible XML.">
+      {canAdmin && showExportPreview && exportPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 px-4 py-6 backdrop-blur-sm">
+          <div className="panel flex max-h-[90vh] w-full max-w-4xl flex-col p-0">
+            <div className="border-b border-[#eadfcf] px-5 py-4">
+              <h3 className="text-lg font-bold text-ink-900">
+                Export Preview - {clients.find((client) => client.id === form.client_id)?.name || "Client"}
+              </h3>
+              <p className="mt-1 text-sm text-[#607086]">
+                {exportPreview.documentCount} documents · {exportPreview.vouchers?.length || 0} vouchers will be sent to TallyPrime
+              </p>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              {exportPreview.hasWarnings ? (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="font-semibold">
+                      {exportPreview.warnings.length} line items have unresolved Tally item name mappings.
+                      These items will export with their original names.
+                    </p>
+                    <button
+                      type="button"
+                      className="text-xs font-bold text-amber-900 underline"
+                      onClick={() => setShowPreviewWarnings((prev) => !prev)}
+                    >
+                      {showPreviewWarnings ? "Hide details" : "Show details"}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs">Review mappings before exporting for best results.</p>
+                  {showPreviewWarnings ? (
+                    <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-amber-200 bg-white">
+                      <table className="min-w-full text-left text-xs">
+                        <thead className="bg-amber-100 text-amber-900">
+                          <tr>
+                            <th className="px-3 py-2">Invoice No.</th>
+                            <th className="px-3 py-2">Item Name</th>
+                            <th className="px-3 py-2">Issue</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {exportPreview.warnings.map((warning, index) => (
+                            <tr key={`${warning.documentId}-${warning.itemName}-${index}`} className="border-t border-amber-100">
+                              <td className="px-3 py-2">{warning.invoiceNumber || "-"}</td>
+                              <td className="px-3 py-2">{warning.itemName}</td>
+                              <td className="px-3 py-2">Unresolved mapping</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {previewError ? (
+                <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {previewError}
+                </div>
+              ) : null}
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-0">
+                  <thead>
+                    <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
+                      <th className="rounded-l-lg px-3 py-3">Voucher Type</th>
+                      <th className="px-3 py-3">Date</th>
+                      <th className="px-3 py-3">Party</th>
+                      <th className="px-3 py-3">Line Items</th>
+                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="rounded-r-lg px-3 py-3 text-right">GST</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(exportPreview.vouchers || []).slice(0, 20).map((voucher, index) => (
+                      <tr key={`${voucher.voucherType}-${voucher.voucherDate}-${index}`} className="border-t border-[#eadfcf]">
+                        <td className="px-3 py-3 text-sm font-semibold text-ink-800">{voucher.voucherType}</td>
+                        <td className="px-3 py-3 text-sm text-[#5f6f84]">{voucher.voucherDate || "-"}</td>
+                        <td className="px-3 py-3 text-sm text-[#5f6f84]">{voucher.partyName || "-"}</td>
+                        <td className="px-3 py-3 text-sm text-[#5f6f84]">{voucher.lineItemCount || 0}</td>
+                        <td className="px-3 py-3 text-right text-sm font-semibold text-ink-800">
+                          {formatCurrency(voucher.totalAmount)}
+                        </td>
+                        <td className="px-3 py-3 text-right text-sm text-[#5f6f84]">
+                          {formatCurrency(voucher.gstAmount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {(exportPreview.vouchers?.length || 0) > 20 ? (
+                <p className="text-sm text-[#607086]">
+                  ...and {exportPreview.vouchers.length - 20} more vouchers
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap gap-3 border-t border-[#eadfcf] px-5 py-4">
+              <button
+                type="button"
+                className="btn-secondary flex-1"
+                disabled={confirmingExport}
+                onClick={() => {
+                  setShowExportPreview(false);
+                  setPreviewError("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                disabled={confirmingExport}
+                onClick={onConfirmExport}
+              >
+                {confirmingExport
+                  ? "Exporting..."
+                  : exportPreview.hasWarnings
+                  ? "Export Anyway"
+                  : "Confirm Export"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? <ExportSkeleton /> : (
       <>
       {error ? (
@@ -183,7 +357,8 @@ const ExportPage = () => {
         </div>
       ) : null}
 
-      <section className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+      <section className={`grid gap-4 ${canAdmin ? "lg:grid-cols-[1.15fr_0.85fr]" : ""}`}>
+        {canAdmin ? (
         <article className="panel p-5">
           <h2 className="text-lg font-bold text-ink-900">Generate XML</h2>
 
@@ -252,11 +427,13 @@ const ExportPage = () => {
             </div>
 
             <button type="submit" className="btn-primary w-full" disabled={saving}>
-              {saving ? "Generating..." : "Generate Tally XML"}
+              {saving ? "Preparing preview..." : "Preview Tally XML"}
             </button>
           </form>
         </article>
+        ) : null}
 
+        {canAdmin && (
         <article className="panel p-5">
           <h2 className="text-lg font-bold text-ink-900">Latest export</h2>
           {!latestExport ? (
@@ -277,6 +454,7 @@ const ExportPage = () => {
             </div>
           )}
         </article>
+        )}
       </section>
 
       <section className="panel mt-6 p-5">
@@ -308,7 +486,21 @@ const ExportPage = () => {
                     <td className="px-3 py-3 text-sm text-[#5f6f84]">
                       {clients.find((c) => c.id === row.clientId)?.name || row.clientId?.slice(0, 8)}
                     </td>
-                    <td className="px-3 py-3 text-sm text-[#5f6f84]">{(row.documentIds || []).length}</td>
+                    <td className="px-3 py-3 text-sm text-[#5f6f84]">
+                      <div className="flex items-center gap-2">
+                        {row.exportType === "bulk" && (
+                          <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-xs font-bold text-indigo-700">
+                            BULK
+                          </span>
+                        )}
+                        <span>
+                          {row.documentCount ?? (row.documentIds || []).length}{" "}
+                          {(row.documentCount ?? (row.documentIds || []).length) === 1
+                            ? "document"
+                            : "documents"}
+                        </span>
+                      </div>
+                    </td>
                     <td className="px-3 py-3"><StatusBadge status={row.status} /></td>
                     <td className="px-3 py-3 text-xs text-[#6f8097]">{formatDateTime(row.exportedAt || row.createdAt)}</td>
                     <td className="px-3 py-3 text-right">

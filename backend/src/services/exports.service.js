@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const ApiError = require("../utils/api-error");
 const { buildTallyXml } = require("./tally-xml.service");
 const { uploadTextObject, createDownloadUrl } = require("./s3.service");
+const { createNotification } = require("./notifications.service");
 const env = require("../config/env");
 
 const EXPORT_STATUSES = new Set(["generated", "downloaded", "failed"]);
@@ -11,6 +12,11 @@ const buildExportS3Key = ({ firmId, clientId, exportId }) => {
   const year = String(now.getUTCFullYear());
   const month = String(now.getUTCMonth() + 1).padStart(2, "0");
   return `firms/${firmId}/clients/${clientId}/exports/tally/${year}/${month}/${exportId}.xml`;
+};
+
+const buildBulkExportS3Key = ({ firmId, clientId }) => {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
+  return `exports/${firmId}/${clientId}/bulk_${timestamp}.xml`;
 };
 
 const insertAuditLog = async (db, { firmId, userId, action, entityType, entityId, metadata }) => {
@@ -32,7 +38,7 @@ const insertAuditLog = async (db, { firmId, userId, action, entityType, entityId
 const assertClientExists = async (db, { firmId, clientId }) => {
   const result = await db.query(
     `
-      SELECT id
+      SELECT id, name
       FROM clients
       WHERE id = $1
         AND firm_id = $2
@@ -44,6 +50,7 @@ const assertClientExists = async (db, { firmId, clientId }) => {
   if (result.rowCount === 0) {
     throw ApiError.notFound("Client not found");
   }
+  return result.rows[0];
 };
 
 const fetchApprovedDocuments = async (
@@ -111,9 +118,248 @@ const fetchApprovedDocuments = async (
   return result.rows;
 };
 
+const getDocumentDate = (document) => {
+  const extraction = document.structured_data || {};
+  const candidates = [
+    extraction.document_date,
+    extraction.invoice_date,
+    extraction.date,
+    document.created_at,
+    document.uploaded_at
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const parsed = new Date(candidate);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date(document.created_at || document.uploaded_at);
+};
+
+const fetchBulkReviewedDocuments = async (db, { firmId, clientId, fromDate, toDate }) => {
+  const result = await db.query(
+    `
+      SELECT
+        d.id,
+        d.client_id,
+        d.firm_id,
+        d.file_name,
+        d.doc_type,
+        d.uploaded_at,
+        d.created_at,
+        d.status,
+        e.structured_data
+      FROM documents d
+      LEFT JOIN extractions e ON e.document_id = d.id AND e.deleted_at IS NULL
+      WHERE d.firm_id = $1
+        AND d.client_id = $2
+        AND d.status = 'reviewed'
+        AND d.deleted_at IS NULL
+      ORDER BY d.uploaded_at ASC
+    `,
+    [firmId, clientId]
+  );
+
+  const fromTime = fromDate ? new Date(`${fromDate}T00:00:00.000Z`).getTime() : null;
+  const toTime = toDate ? new Date(`${toDate}T23:59:59.999Z`).getTime() : null;
+
+  return result.rows.filter((document) => {
+    const documentTime = getDocumentDate(document).getTime();
+    if (fromTime !== null && documentTime < fromTime) return false;
+    if (toTime !== null && documentTime > toTime) return false;
+    return true;
+  });
+};
+
+const fetchPreviewDocumentsByIds = async (db, { firmId, clientId, documentIds }) => {
+  const result = await db.query(
+    `
+      SELECT
+        d.id,
+        d.client_id,
+        d.firm_id,
+        d.file_name,
+        d.doc_type,
+        d.uploaded_at,
+        d.created_at,
+        d.status,
+        e.structured_data
+      FROM documents d
+      LEFT JOIN extractions e ON e.document_id = d.id AND e.deleted_at IS NULL
+      WHERE d.firm_id = $1
+        AND d.client_id = $2
+        AND d.id = ANY($3::uuid[])
+        AND d.status = 'reviewed'
+        AND d.deleted_at IS NULL
+      ORDER BY d.uploaded_at ASC
+    `,
+    [firmId, clientId, documentIds]
+  );
+
+  const returnedIds = new Set(result.rows.map((row) => row.id));
+  const missing = documentIds.filter((id) => !returnedIds.has(id));
+  if (missing.length > 0) {
+    throw ApiError.badRequest(
+      `Some documents are missing or not reviewed for preview: ${missing.join(", ")}`
+    );
+  }
+
+  return result.rows;
+};
+
+const decodeXml = (value) =>
+  String(value || "")
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+
+const parseXmlAmount = (value) => {
+  const parsed = Number(String(value || "").replace(/,/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const extractFirstTag = (source, tagName) => {
+  const match = source.match(new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i"));
+  return match ? decodeXml(match[1].trim()) : "";
+};
+
+const parseTallyXmlPreview = (xmlPayload) => {
+  const vouchers = [];
+  const voucherRegex = /<VOUCHER\b([^>]*)>([\s\S]*?)<\/VOUCHER>/gi;
+  let voucherMatch;
+
+  while ((voucherMatch = voucherRegex.exec(xmlPayload)) !== null) {
+    const attrs = voucherMatch[1] || "";
+    const body = voucherMatch[2] || "";
+    const typeMatch = attrs.match(/VCHTYPE="([^"]*)"/i);
+    const ledgerBlocks = Array.from(
+      body.matchAll(/<ALLLEDGERENTRIES\.LIST>([\s\S]*?)<\/ALLLEDGERENTRIES\.LIST>/gi)
+    ).map((match) => match[1] || "");
+    const inventoryBlocks = Array.from(
+      body.matchAll(/<ALLINVENTORYENTRIES\.LIST>([\s\S]*?)<\/ALLINVENTORYENTRIES\.LIST>/gi)
+    );
+    const allAmounts = Array.from(body.matchAll(/<AMOUNT>([\s\S]*?)<\/AMOUNT>/gi)).map(
+      (match) => Math.abs(parseXmlAmount(match[1]))
+    );
+    const gstAmount = ledgerBlocks.reduce((sum, block) => {
+      const ledgerName = extractFirstTag(block, "LEDGERNAME").toUpperCase();
+      if (!["CGST", "SGST", "IGST"].includes(ledgerName)) return sum;
+      return sum + Math.abs(parseXmlAmount(extractFirstTag(block, "AMOUNT")));
+    }, 0);
+
+    vouchers.push({
+      voucherType: decodeXml(typeMatch?.[1] || "Journal"),
+      voucherDate: extractFirstTag(body, "DATE"),
+      partyName: extractFirstTag(body, "PARTYLEDGERNAME") || "Unknown Party",
+      narration: extractFirstTag(body, "NARRATION"),
+      totalAmount: allAmounts.length > 0 ? Math.max(...allAmounts) : 0,
+      gstAmount,
+      lineItemCount: inventoryBlocks.length || ledgerBlocks.length
+    });
+  }
+
+  return vouchers;
+};
+
+const normaliseItemName = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const getInvoiceNumber = (document) => {
+  const extraction = document.structured_data || {};
+  return (
+    extraction.invoice_number ||
+    extraction.invoiceNumber ||
+    extraction.reference_number ||
+    document.file_name ||
+    document.id
+  );
+};
+
+const getLineItemRawName = (item) =>
+  item.description || item.item_name || item.name || item.product_name || item.service_name || "";
+
+const getUnresolvedMappingWarnings = async (db, { firmId, documents }) => {
+  const result = await db.query(
+    `
+      SELECT vendor_raw, tally_name
+      FROM item_name_mappings
+      WHERE firm_id = $1
+    `,
+    [firmId]
+  );
+  const mappings = new Map(
+    result.rows.map((row) => [normaliseItemName(row.vendor_raw), String(row.tally_name || "").trim()])
+  );
+  const warnings = [];
+
+  for (const document of documents) {
+    const extraction = document.structured_data || {};
+    const lineItems = Array.isArray(extraction.line_items) ? extraction.line_items : [];
+    for (const item of lineItems) {
+      const rawName = getLineItemRawName(item);
+      const rawKey = normaliseItemName(rawName);
+      const explicitTallyName = String(item.tally_item_name || "").trim();
+      const mappedTallyName = rawKey ? mappings.get(rawKey) : "";
+      if (explicitTallyName || mappedTallyName) continue;
+
+      warnings.push({
+        documentId: document.id,
+        invoiceNumber: getInvoiceNumber(document),
+        itemName: rawName || "Unnamed item",
+        issue: "unresolved_mapping"
+      });
+    }
+  }
+
+  return warnings;
+};
+
+const generateTallyExportPreview = async (
+  db,
+  { firmId, clientId, documentIds = null, fromDate = null, toDate = null }
+) => {
+  await assertClientExists(db, { firmId, clientId });
+
+  const previewDocuments =
+    Array.isArray(documentIds) && documentIds.length > 0
+      ? await fetchPreviewDocumentsByIds(db, { firmId, clientId, documentIds })
+      : await fetchBulkReviewedDocuments(db, { firmId, clientId, fromDate, toDate });
+
+  if (previewDocuments.length === 0) {
+    throw ApiError.badRequest("No reviewed documents to preview");
+  }
+
+  if (previewDocuments.length > 200) {
+    throw ApiError.badRequest("Too many documents. Please use a narrower date range.");
+  }
+
+  const xmlPayload = buildTallyXml({ documents: previewDocuments });
+  const vouchers = parseTallyXmlPreview(xmlPayload);
+  const warnings = await getUnresolvedMappingWarnings(db, {
+    firmId,
+    documents: previewDocuments
+  });
+
+  return {
+    documentCount: previewDocuments.length,
+    vouchers,
+    warnings,
+    hasWarnings: warnings.length > 0
+  };
+};
+
 const persistGeneratedExport = async (
   db,
-  { exportId, firmId, clientId, documentIds, xmlS3Key, userId }
+  { exportId, firmId, clientId, documentIds, xmlS3Key, userId, exportType = "single", fromDate = null, toDate = null }
 ) => {
   await db.query(
     `
@@ -124,11 +370,27 @@ const persistGeneratedExport = async (
         document_ids,
         xml_s3_key,
         exported_by,
+        created_by,
         exported_at,
-        status
-      ) VALUES ($1, $2, $3, $4::uuid[], $5, $6, NOW(), 'generated')
+        status,
+        export_type,
+        document_count,
+        from_date,
+        to_date
+      ) VALUES ($1, $2, $3, $4::uuid[], $5, $6, $6, NOW(), 'generated', $7, $8, $9, $10)
     `,
-    [exportId, firmId, clientId, documentIds, xmlS3Key, userId]
+    [
+      exportId,
+      firmId,
+      clientId,
+      documentIds,
+      xmlS3Key,
+      userId,
+      exportType,
+      documentIds.length,
+      fromDate,
+      toDate
+    ]
   );
 
   await db.query(
@@ -194,7 +456,7 @@ const generateTallyExport = async (
   db,
   { firmId, userId, clientId, documentIds, dateFrom, dateTo }
 ) => {
-  await assertClientExists(db, { firmId, clientId });
+  const client = await assertClientExists(db, { firmId, clientId });
 
   const approvedDocuments = await fetchApprovedDocuments(db, {
     firmId,
@@ -230,6 +492,20 @@ const generateTallyExport = async (
       xmlS3Key,
       userId
     });
+
+    try {
+      await createNotification({
+        firmId,
+        userId,
+        type: "export_ready",
+        title: "Export ready for download",
+        message: `Your Tally export for ${client.name} (${normalizedDocumentIds.length} document${normalizedDocumentIds.length > 1 ? "s" : ""}) is ready.`,
+        entityType: "export",
+        entityId: exportId
+      });
+    } catch (notificationError) {
+      console.error("Export notification failed:", notificationError.message || notificationError);
+    }
   } catch (error) {
     await persistFailedExport(db, {
       exportId,
@@ -264,6 +540,89 @@ const generateTallyExport = async (
     download_url: download.url,
     expires_in: download.expiresIn,
     status: "generated"
+  };
+};
+
+const generateBulkTallyExport = async (
+  db,
+  { firmId, userId, clientId, fromDate = null, toDate = null }
+) => {
+  const client = await assertClientExists(db, { firmId, clientId });
+
+  const reviewedDocuments = await fetchBulkReviewedDocuments(db, {
+    firmId,
+    clientId,
+    fromDate,
+    toDate
+  });
+
+  if (reviewedDocuments.length === 0) {
+    throw ApiError.badRequest("No reviewed documents found for this client in the selected range");
+  }
+
+  if (reviewedDocuments.length > 200) {
+    throw ApiError.badRequest("Too many documents. Please use a narrower date range.");
+  }
+
+  const exportId = crypto.randomUUID();
+  const documentIds = reviewedDocuments.map((document) => document.id);
+  const xmlS3Key = buildBulkExportS3Key({ firmId, clientId });
+  const xmlPayload = buildTallyXml({ documents: reviewedDocuments });
+
+  await uploadTextObject({
+    key: xmlS3Key,
+    body: xmlPayload,
+    contentType: "application/xml"
+  });
+
+  await persistGeneratedExport(db, {
+    exportId,
+    firmId,
+    clientId,
+    documentIds,
+    xmlS3Key,
+    userId,
+    exportType: "bulk",
+    fromDate,
+    toDate
+  });
+
+  await insertAuditLog(db, {
+    firmId,
+    userId,
+    action: "bulk_export_generated",
+    entityType: "export",
+    entityId: exportId,
+    metadata: {
+      documentCount: documentIds.length,
+      clientId
+    }
+  });
+
+  try {
+    await createNotification({
+      firmId,
+      userId,
+      type: "export_ready",
+      title: "Export ready for download",
+      message: `Your Tally export for ${client.name} (${documentIds.length} document${documentIds.length > 1 ? "s" : ""}) is ready.`,
+      entityType: "export",
+      entityId: exportId
+    });
+  } catch (notificationError) {
+    console.error("Bulk export notification failed:", notificationError.message || notificationError);
+  }
+
+  const download = await createDownloadUrl({
+    key: xmlS3Key,
+    expiresIn: env.TALLY_EXPORT_URL_EXPIRY_SECONDS
+  });
+
+  return {
+    exportId,
+    documentCount: documentIds.length,
+    downloadUrl: download.url,
+    expiresAt: new Date(Date.now() + download.expiresIn * 1000).toISOString()
   };
 };
 
@@ -307,6 +666,10 @@ const listExportHistory = async (db, { firmId, page, limit, clientId, status }) 
         firm_id,
         client_id,
         document_ids,
+        export_type,
+        document_count,
+        from_date,
+        to_date,
         xml_s3_key,
         exported_by,
         exported_at,
@@ -328,6 +691,11 @@ const listExportHistory = async (db, { firmId, page, limit, clientId, status }) 
       firmId: row.firm_id,
       clientId: row.client_id,
       documentIds: row.document_ids || [],
+      exportType: row.export_type || "single",
+      documentCount:
+        row.document_count ?? (Array.isArray(row.document_ids) ? row.document_ids.length : 0),
+      fromDate: row.from_date,
+      toDate: row.to_date,
       xmlS3Key: row.xml_s3_key,
       exportedBy: row.exported_by,
       exportedAt: row.exported_at,
@@ -414,6 +782,8 @@ const getExportDownload = async (db, { firmId, userId, exportId }) => {
 
 module.exports = {
   generateTallyExport,
+  generateBulkTallyExport,
+  generateTallyExportPreview,
   listExportHistory,
   getExportDownload
 };

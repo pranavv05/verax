@@ -1,7 +1,9 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { notificationsApi } from "../../api/notifications-api";
 import { cn } from "../../lib/utils";
+import { isAdmin } from "../../utils/permissions";
 
 const navItems = [
   {
@@ -75,11 +77,96 @@ const AppShell = ({ title, subtitle, children }) => {
   const navigate = useNavigate();
   const [loggingOut, setLoggingOut] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const loadNotifications = async () => {
+    setNotificationsLoading(true);
+    try {
+      const result = await notificationsApi.list({ unreadOnly: false });
+      setNotifications(result.notifications || []);
+      setUnreadCount(Number(result.unreadCount || 0));
+    } catch {
+      setNotifications([]);
+      setUnreadCount(0);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    const fetchNotifications = async () => {
+      if (!active) return;
+      await loadNotifications();
+    };
+
+    fetchNotifications();
+    const intervalId = window.setInterval(fetchNotifications, 30000);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const onLogout = async () => {
     setLoggingOut(true);
     await logout();
     navigate("/login", { replace: true });
+  };
+
+  const relativeTime = (value) => {
+    const timestamp = new Date(value).getTime();
+    if (!Number.isFinite(timestamp)) return "";
+    const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+    if (seconds < 60) return "Just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? "" : "s"} ago`;
+  };
+
+  const notificationPath = (notification) => {
+    if (notification.entityType === "document" && notification.entityId) {
+      return `/documents/${notification.entityId}/review`;
+    }
+    if (notification.entityType === "export") {
+      return "/export";
+    }
+    if (notification.entityType === "client" && notification.entityId) {
+      return `/clients/${notification.entityId}`;
+    }
+    return null;
+  };
+
+  const onNotificationClick = async (notification) => {
+    try {
+      await notificationsApi.markRead(notification.id);
+    } catch {
+      // Notification clicks should still navigate even if marking read fails.
+    }
+
+    setNotificationsOpen(false);
+    await loadNotifications();
+
+    const path = notificationPath(notification);
+    if (path) {
+      navigate(path);
+    }
+  };
+
+  const onMarkAllRead = async () => {
+    try {
+      await notificationsApi.markAllRead();
+      await loadNotifications();
+    } catch {
+      // Keep the dropdown usable if the refresh fails.
+    }
   };
 
   const initials = (user?.name || "U")
@@ -88,6 +175,7 @@ const AppShell = ({ title, subtitle, children }) => {
     .join("")
     .toUpperCase()
     .slice(0, 2);
+  const visibleNavItems = navItems.filter((item) => item.to !== "/audit-logs" || isAdmin(user));
 
   return (
     <div className="min-h-screen bg-[#f5f0e8]/40">
@@ -104,7 +192,7 @@ const AppShell = ({ title, subtitle, children }) => {
 
             {/* Desktop Nav */}
             <nav className="hidden gap-1 lg:flex">
-              {navItems.map((item) => (
+              {visibleNavItems.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
@@ -125,6 +213,74 @@ const AppShell = ({ title, subtitle, children }) => {
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="relative">
+              <button
+                type="button"
+                className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-[#e2d6c4] bg-white text-ink-700 transition hover:bg-sand-100"
+                aria-label="Notifications"
+                onClick={() => setNotificationsOpen((prev) => !prev)}
+              >
+                <svg width="19" height="19" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a3 3 0 11-5.714 0" />
+                </svg>
+                {unreadCount > 0 && (
+                  <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {notificationsOpen && (
+                <div className="absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-xl border border-[#e2d6c4] bg-white shadow-elevated">
+                  <div className="flex items-center justify-between border-b border-[#eadfcf] px-4 py-3">
+                    <h2 className="text-sm font-bold text-ink-900">Notifications</h2>
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                        onClick={onMarkAllRead}
+                      >
+                        Mark all as read
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-96 overflow-y-auto">
+                    {notificationsLoading && notifications.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-sm text-[#6b7c92]">Loading...</div>
+                    ) : notifications.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-sm text-[#6b7c92]">
+                        No notifications yet
+                      </div>
+                    ) : (
+                      notifications.map((notification) => (
+                        <button
+                          key={notification.id}
+                          type="button"
+                          className={cn(
+                            "block w-full border-b border-[#f0e7d9] px-4 py-3 text-left transition last:border-b-0 hover:bg-sand-50",
+                            !notification.read ? "bg-mint-500/5" : "bg-white"
+                          )}
+                          onClick={() => onNotificationClick(notification)}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-sm font-bold text-ink-900">{notification.title}</p>
+                            {!notification.read && (
+                              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-rose-500" />
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-[#617189]">{notification.message}</p>
+                          <p className="mt-1 text-[11px] font-semibold text-[#8a98a9]">
+                            {relativeTime(notification.createdAt)}
+                          </p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* User Info */}
             <div className="hidden items-center gap-3 sm:flex">
               <div className="text-right">
@@ -170,7 +326,7 @@ const AppShell = ({ title, subtitle, children }) => {
         {mobileOpen && (
           <div className="border-t border-[#e7dcc8]/60 bg-white/95 backdrop-blur-xl px-4 py-3 lg:hidden">
             <nav className="flex flex-col gap-1">
-              {navItems.map((item) => (
+              {visibleNavItems.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}

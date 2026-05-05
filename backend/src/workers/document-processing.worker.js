@@ -4,16 +4,27 @@ const env = require("../config/env");
 const { DOCUMENT_PROCESSING_QUEUE } = require("../constants/queues");
 const { withTenantTransaction } = require("../db/tenant-context");
 const { processDocumentWithAiService } = require("../services/ai.service");
+const { sendEmail } = require("../services/email.service");
+const { createNotification } = require("../services/notifications.service");
 const {
   parseAiResponse,
   markDocumentProcessingStarted,
   markDocumentProcessingSucceeded,
-  markDocumentProcessingFailed
+  markDocumentProcessingFailed,
+  getDocumentReadyEmailContext,
+  recordDocumentReadyEmailAudit
 } = require("../services/document-processing.service");
+const {
+  documentReadySubject,
+  documentReadyTemplate
+} = require("../templates/documentReady.template");
+const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.job");
 
 const redisConnection = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null
 });
+const scheduledRequestsWorker = createScheduledRequestsWorker();
+const CONFIDENCE_THRESHOLD = 0.4;
 
 const validateJobPayload = (data) => {
   const documentId = data && typeof data.document_id === "string" ? data.document_id : null;
@@ -55,6 +66,14 @@ const worker = new Worker(
         firmId: payload.firmId
       });
       const aiParsed = parseAiResponse(aiRawResponse);
+      const confidence = aiParsed.confidenceScore ?? 0;
+      const documentTypeDetected = aiParsed.documentTypeDetected;
+      const requiresReview =
+        confidence < CONFIDENCE_THRESHOLD || documentTypeDetected === "unknown";
+      const status = requiresReview ? "review_required" : "extracted";
+      const logMessage = requiresReview
+        ? `Low confidence (${confidence}) or wrong document type — flagged for review`
+        : `Extracted with confidence ${confidence}`;
 
       await withTenantTransaction({ firmId: payload.firmId }, (db) =>
         markDocumentProcessingSucceeded(db, {
@@ -62,13 +81,74 @@ const worker = new Worker(
           documentId: payload.documentId,
           structuredData: aiParsed.structuredData,
           rawText: aiParsed.rawText,
-          confidenceScore: aiParsed.confidenceScore
+          confidenceScore: aiParsed.confidenceScore,
+          status,
+          logMessage,
+          auditMetadata: {
+            confidence,
+            documentTypeDetected
+          }
         })
       );
 
+      const emailContext = await withTenantTransaction({ firmId: payload.firmId }, (db) =>
+        getDocumentReadyEmailContext(db, {
+          firmId: payload.firmId,
+          documentId: payload.documentId
+        })
+      );
+
+      if (emailContext && emailContext.admins.length > 0) {
+        const reviewUrl = `${env.FRONTEND_URL}/review/${payload.documentId}`;
+        for (const admin of emailContext.admins) {
+          const emailResult = await sendEmail({
+            to: admin.email,
+            subject: documentReadySubject({
+              documentName: emailContext.document.file_name
+            }),
+            html: documentReadyTemplate({
+              firmName: emailContext.document.firm_name,
+              clientName: emailContext.document.client_name,
+              documentName: emailContext.document.file_name,
+              reviewUrl
+            })
+          });
+
+          await withTenantTransaction({ firmId: payload.firmId }, (db) =>
+            recordDocumentReadyEmailAudit(db, {
+              firmId: payload.firmId,
+              userId: admin.id,
+              documentId: payload.documentId,
+              email: admin.email,
+              emailResult
+            })
+          );
+        }
+      }
+
+      if (emailContext && emailContext.admins.length > 0) {
+        for (const admin of emailContext.admins) {
+          try {
+            await createNotification({
+              firmId: payload.firmId,
+              userId: admin.id,
+              type: "document_ready",
+              title: "Document ready for review",
+              message: `${emailContext.document.file_name} from ${emailContext.document.client_name} has been processed and is ready to review.`,
+              entityType: "document",
+              entityId: payload.documentId
+            });
+          } catch (notificationError) {
+            process.stderr.write(
+              `Notification failed for document ${payload.documentId}: ${String(notificationError.message || notificationError)}\n`
+            );
+          }
+        }
+      }
+
       return {
         document_id: payload.documentId,
-        status: "extracted"
+        status
       };
     } catch (error) {
       const normalizedError = String(error && error.message ? error.message : error);
@@ -121,6 +201,8 @@ worker.on("error", (error) => {
 const shutdown = async () => {
   process.stdout.write("Shutting down document worker...\n");
   await worker.close();
+  await scheduledRequestsWorker.worker.close();
+  await scheduledRequestsWorker.connection.quit();
   await redisConnection.quit();
   process.exit(0);
 };

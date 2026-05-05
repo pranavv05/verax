@@ -3,16 +3,21 @@ const Joi = require("joi");
 const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const {
   initiateUploadForFirm,
   confirmUploadForFirm,
   markDocumentQueued,
   markDocumentQueueFailure,
   listDocuments,
-  getDocumentById
+  getDocumentById,
+  deleteDocument
 } = require("../services/documents.service");
 const { enqueueDocumentProcessingJob } = require("../services/document-queue.service");
+const {
+  getVersionsForDocument,
+  getVersionDetail
+} = require("../services/document-versions.service");
 
 const router = express.Router();
 
@@ -40,9 +45,20 @@ const confirmSchema = Joi.object({
   document_id: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).required()
 });
 
+const documentIdParamSchema = Joi.object({
+  id: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).required()
+});
+
+const versionParamSchema = Joi.object({
+  id: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).required(),
+  versionId: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).required()
+});
+
 const listQuerySchema = Joi.object({
   client_id: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).optional(),
-  status: Joi.string().valid("uploaded", "processing", "extracted", "reviewed", "exported").optional(),
+  status: Joi.string()
+    .valid("uploaded", "processing", "extracted", "review_required", "reviewed", "exported")
+    .optional(),
   doc_type: Joi.string().valid("invoice", "bank_statement", "bill", "other").optional(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(200).default(50)
@@ -70,6 +86,7 @@ router.get(
 
 router.get(
   "/:id",
+  validate(documentIdParamSchema, "params"),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>
       getDocumentById(db, {
@@ -78,6 +95,49 @@ router.get(
       })
     );
     res.status(200).json(result);
+  })
+);
+
+router.get(
+  "/:id/versions",
+  validate(documentIdParamSchema, "params"),
+  asyncHandler(async (req, res) => {
+    const versions = await getVersionsForDocument({
+      firmId: req.user.firmId,
+      documentId: req.params.id
+    });
+
+    res.status(200).json({ versions });
+  })
+);
+
+router.get(
+  "/:id/versions/:versionId",
+  validate(versionParamSchema, "params"),
+  asyncHandler(async (req, res) => {
+    const version = await getVersionDetail({
+      firmId: req.user.firmId,
+      documentId: req.params.id,
+      versionId: req.params.versionId
+    });
+
+    res.status(200).json(version);
+  })
+);
+
+router.delete(
+  "/:id",
+  requireAdmin,
+  validate(documentIdParamSchema, "params"),
+  asyncHandler(async (req, res) => {
+    await req.withTenantTransaction((db) =>
+      deleteDocument(db, {
+        firmId: req.user.firmId,
+        userId: req.user.userId,
+        documentId: req.params.id
+      })
+    );
+    res.status(204).send();
   })
 );
 

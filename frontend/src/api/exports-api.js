@@ -18,6 +18,18 @@ export const exportsApi = {
       body: payload
     });
   },
+  generateBulk(payload) {
+    return request("/api/export/bulk", {
+      method: "POST",
+      body: payload
+    });
+  },
+  preview(payload) {
+    return request("/api/export/preview", {
+      method: "POST",
+      body: payload
+    });
+  },
   history(params) {
     return request(`/api/export/history${toQuery(params)}`);
   },

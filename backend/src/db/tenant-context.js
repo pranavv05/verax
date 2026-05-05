@@ -15,6 +15,11 @@ const withTenantTransaction = async (context, handler) => {
     await setLocalConfig(client, "app.auth_context", resolvedContext.authContext ?? "");
     await setLocalConfig(client, "app.auth_email", resolvedContext.authEmail ?? "");
     await setLocalConfig(client, "app.upload_token", resolvedContext.uploadToken ?? "");
+    await setLocalConfig(
+      client,
+      "app.password_reset_token_hash",
+      resolvedContext.passwordResetTokenHash ?? ""
+    );
 
     const result = await resolvedHandler(client);
     await client.query("COMMIT");

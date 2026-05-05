@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hmac
 import logging
 
+import pandas as pd
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import File
+from fastapi import Header
 from fastapi import HTTPException
 from fastapi import UploadFile
 from fastapi.responses import Response
@@ -31,6 +35,31 @@ llm_service: LLMService | None = None
 persistence_service: PersistenceService | None = None
 
 
+def require_service_token(x_ai_service_token: str | None = Header(default=None)) -> None:
+    if not hmac.compare_digest(x_ai_service_token or "", settings.ai_service_api_key):
+        raise HTTPException(status_code=401, detail="Invalid AI service token")
+
+
+async def read_upload_file_limited(file: UploadFile) -> bytes:
+    max_bytes = settings.max_tool_upload_mb * 1024 * 1024
+    chunks: list[bytes] = []
+    total = 0
+
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Tool uploads must be {settings.max_tool_upload_mb}MB or smaller",
+            )
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     global s3_service
@@ -38,6 +67,9 @@ def on_startup() -> None:
     global ocr_service
     global llm_service
     global persistence_service
+
+    _ = pd.DataFrame()
+    print(f"pandas {pd.__version__} OK")
 
     settings.validate()
     s3_service = S3Service()
@@ -53,7 +85,11 @@ def health_check() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/process", response_model=ProcessResponse)
+@app.post(
+    "/process",
+    response_model=ProcessResponse,
+    dependencies=[Depends(require_service_token)],
+)
 def process_document(request: ProcessRequest) -> ProcessResponse:
     if not s3_service or not preprocess_service or not ocr_service or not llm_service:
         raise HTTPException(status_code=500, detail="Service not initialized")
@@ -98,13 +134,13 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
 
-@app.post("/tools/register-clean")
+@app.post("/tools/register-clean", dependencies=[Depends(require_service_token)])
 async def register_clean(file: UploadFile = File(...)) -> Response:
     """Accept an Excel file, return a cleaned Excel file."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are accepted")
     try:
-        raw_bytes = await file.read()
+        raw_bytes = await read_upload_file_limited(file)
         cleaned_bytes = clean_register_bytes(raw_bytes)
         safe_name = file.filename.rsplit(".", 1)[0] + "_cleaned.xlsx"
         return Response(
@@ -121,25 +157,20 @@ async def register_clean(file: UploadFile = File(...)) -> Response:
 
 @app.post("/tools/bank-statement-xml")
 async def bank_statement_xml(
+    _: None = Depends(require_service_token),
     file: UploadFile = File(...),
     company_name: str = "My Company",
     bank_ledger: str = "Bank Account",
-) -> Response:
-    """Accept a bank statement PDF, return a TallyPrime-compatible XML file."""
+) -> dict:
+    """Accept a bank statement PDF, return TallyPrime XML plus warnings."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
     try:
-        raw_bytes = await file.read()
-        xml_bytes = bank_statement_to_xml(
+        raw_bytes = await read_upload_file_limited(file)
+        return bank_statement_to_xml(
             raw_bytes,
             company_name=company_name,
             bank_ledger=bank_ledger,
-        )
-        safe_name = file.filename.rsplit(".", 1)[0] + "_tally.xml"
-        return Response(
-            content=xml_bytes,
-            media_type="application/xml",
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
         )
     except HTTPException:
         raise

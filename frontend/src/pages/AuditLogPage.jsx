@@ -3,7 +3,9 @@ import AppShell from "../components/layout/AppShell";
 import { TableRowsSkeleton } from "../components/ui/skeletons";
 import EmptyState from "../components/ui/EmptyState";
 import { auditApi } from "../api/audit-api";
+import { useAuth } from "../contexts/AuthContext";
 import { formatDateTime, parseApiError } from "../lib/utils";
+import { isAdmin } from "../utils/permissions";
 
 const ENTITY_TYPES = ["firm", "client", "document", "extraction", "user"];
 
@@ -44,6 +46,8 @@ const MetaDetails = ({ metadata }) => {
 };
 
 const AuditLogPage = () => {
+  const { user } = useAuth();
+  const canAdmin = isAdmin(user);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]);
@@ -75,8 +79,12 @@ const AuditLogPage = () => {
   };
 
   useEffect(() => {
+    if (!canAdmin) {
+      setLoading(false);
+      return;
+    }
     loadLogs(filters);
-  }, [filters.page, filters.action, filters.entityType]);
+  }, [filters.page, filters.action, filters.entityType, canAdmin]);
 
   const onActionChange = (event) => {
     setFilters((prev) => ({ ...prev, page: 1, action: event.target.value }));
@@ -91,6 +99,14 @@ const AuditLogPage = () => {
 
   return (
     <AppShell title="Audit Log" subtitle="Track all critical operations and changes across your firm.">
+      {!canAdmin ? (
+        <article className="panel p-6">
+          <h2 className="text-lg font-bold text-ink-900">Admin access required</h2>
+          <p className="mt-2 text-sm text-ink-500">
+            Audit logs are available to firm admins only.
+          </p>
+        </article>
+      ) : (
       <article className="panel p-5">
         {/* Filter bar */}
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -230,6 +246,7 @@ const AuditLogPage = () => {
           </div>
         )}
       </article>
+      )}
     </AppShell>
   );
 };

@@ -1,5 +1,8 @@
 const bcrypt = require("bcryptjs");
 const ApiError = require("../utils/api-error");
+const env = require("../config/env");
+const { sendEmail } = require("./email.service");
+const { userInviteSubject, userInviteTemplate } = require("../templates/userInvite.template");
 
 const SALT_ROUNDS = 12;
 
@@ -44,6 +47,26 @@ const inviteUser = async (db, { firmId, actorUserId, name, email, password, role
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
+  const firmResult = await db.query(
+    `
+      SELECT f.name AS firm_name,
+             inviter.name AS inviter_name
+      FROM firms f
+      LEFT JOIN users inviter
+        ON inviter.id = $2
+       AND inviter.firm_id = f.id
+       AND inviter.deleted_at IS NULL
+      WHERE f.id = $1
+        AND f.deleted_at IS NULL
+      LIMIT 1
+    `,
+    [firmId, actorUserId ?? null]
+  );
+
+  const firmContext = firmResult.rows[0] || {};
+  const firmName = firmContext.firm_name || "your firm";
+  const inviterName = firmContext.inviter_name || "An admin";
+
   const insertResult = await db.query(
     `
       INSERT INTO users (firm_id, name, email, password_hash, role)
@@ -54,6 +77,16 @@ const inviteUser = async (db, { firmId, actorUserId, name, email, password, role
   );
 
   const newUser = insertResult.rows[0];
+  const emailResult = await sendEmail({
+    to: newUser.email,
+    subject: userInviteSubject({ firmName }),
+    html: userInviteTemplate({
+      inviterName,
+      firmName,
+      loginUrl: `${env.FRONTEND_URL}/login`,
+      tempPassword: password
+    })
+  });
 
   await db.query(
     `
@@ -67,6 +100,26 @@ const inviteUser = async (db, { firmId, actorUserId, name, email, password, role
       "user",
       newUser.id,
       JSON.stringify({ email: newUser.email, role: newUser.role })
+    ]
+  );
+
+  await db.query(
+    `
+      INSERT INTO audit_logs (firm_id, user_id, action, entity_type, entity_id, metadata)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `,
+    [
+      firmId,
+      actorUserId ?? null,
+      "user_invite_emailed",
+      "user",
+      newUser.id,
+      JSON.stringify({
+        email: newUser.email,
+        sent: Boolean(emailResult.sent),
+        provider: env.EMAIL_PROVIDER,
+        error: emailResult.error ?? null
+      })
     ]
   );
 

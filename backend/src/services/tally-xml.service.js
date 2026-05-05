@@ -23,10 +23,25 @@ const toNumber = (value) => {
   return null;
 };
 
+const parseDateValue = (value) => {
+  if (value instanceof Date) return value;
+  if (typeof value === "string" && value.trim()) {
+    const trimmed = value.trim();
+    const yyyymmdd = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (yyyymmdd) {
+      return new Date(Date.UTC(Number(yyyymmdd[1]), Number(yyyymmdd[2]) - 1, Number(yyyymmdd[3])));
+    }
+    return new Date(trimmed);
+  }
+  return null;
+};
+
 const formatTallyDate = (inputDate, fallbackDate = new Date()) => {
-  const source =
-    typeof inputDate === "string" && inputDate.trim() ? new Date(inputDate) : fallbackDate;
-  const d = Number.isNaN(source.getTime()) ? new Date(fallbackDate) : source;
+  const parsedInput = parseDateValue(inputDate);
+  const fallbackCandidate = parseDateValue(fallbackDate);
+  const parsedFallback =
+    fallbackCandidate && !Number.isNaN(fallbackCandidate.getTime()) ? fallbackCandidate : new Date();
+  const d = parsedInput && !Number.isNaN(parsedInput.getTime()) ? parsedInput : parsedFallback;
   return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(
     d.getUTCDate()
   ).padStart(2, "0")}`;
@@ -51,10 +66,19 @@ const inferVoucherType = ({ docType, extraction }) => {
 
 const getPartyLedgerName = (extraction) =>
   extraction.vendor_name ||
+  extraction.supplierName ||
+  extraction.supplier_name ||
   extraction.party_ledger ||
   extraction.customer_name ||
   extraction.client_name ||
   "Unknown Party";
+
+const getPurchaseLedgerName = (extraction) =>
+  extraction.purchase_ledger ||
+  extraction.expense_ledger ||
+  extraction.ledger_name ||
+  extraction.tally_ledger_name ||
+  "Purchase";
 
 const buildTaxLedgerEntries = (extraction) => {
   const entries = [];
@@ -117,48 +141,45 @@ const buildInvoiceVoucherXml = (document) => {
   const safeVoucherType = ALLOWED_VOUCHER_TYPES.has(voucherType) ? voucherType : "Journal";
   const partyLedgerName = getPartyLedgerName(extraction);
   const voucherDate = formatTallyDate(
-    extraction.invoice_date || extraction.date || extraction.document_date,
+    extraction.invoice_date || extraction.invoiceDate || extraction.date || extraction.document_date,
     document.uploaded_at
   );
 
   const narrationParts = [];
-  if (extraction.invoice_number) narrationParts.push(`Invoice ${extraction.invoice_number}`);
+  const invoiceNumber = extraction.invoice_number || extraction.invoiceNumber;
+  if (invoiceNumber) narrationParts.push(`Invoice ${invoiceNumber}`);
   if (document.file_name) narrationParts.push(`File ${document.file_name}`);
   const narration = narrationParts.join(" | ") || "Imported from Verax";
 
-  const totalAmount = toNumber(extraction.total_amount) ?? 0;
-  const taxableAmount = toNumber(extraction.taxable_amount ?? extraction.subtotal) ?? totalAmount;
+  const totalAmount = toNumber(extraction.total_amount ?? extraction.totalAmount) ?? 0;
+  const cgst = toNumber(extraction.cgst) ?? 0;
+  const sgst = toNumber(extraction.sgst) ?? 0;
+  const igst = toNumber(extraction.igst) ?? 0;
+  const taxAmount = cgst + sgst + igst;
+  const taxableAmount =
+    toNumber(extraction.taxable_amount ?? extraction.subtotal) ?? Math.max(totalAmount - taxAmount, 0);
+  const purchaseLedgerName = getPurchaseLedgerName(extraction);
 
-  const gstinRef = extraction.vendor_gstin
-    ? `\n            <PARTYGSTIN>${escapeXml(extraction.vendor_gstin)}</PARTYGSTIN>`
+  const gstin = extraction.vendor_gstin || extraction.supplierGSTIN || extraction.supplier_gstin;
+  const gstinRef = gstin
+    ? `\n            <PARTYGSTIN>${escapeXml(gstin)}</PARTYGSTIN>`
     : "";
-  const invoiceRef = extraction.invoice_number
-    ? `\n            <REFERENCE>${escapeXml(extraction.invoice_number)}</REFERENCE>`
+  const invoiceRef = invoiceNumber
+    ? `\n            <REFERENCE>${escapeXml(invoiceNumber)}</REFERENCE>`
     : "";
 
   const inventoryXml = buildInventoryEntries(extraction, safeVoucherType);
-  const hasInventory = inventoryXml.length > 0;
-
-  let ledgerXml;
-  if (hasInventory && (safeVoucherType === "Purchase" || safeVoucherType === "Sales")) {
-    const partyEntry = `
+  const partyEntry = `
               <ALLLEDGERENTRIES.LIST>
                 <LEDGERNAME>${escapeXml(partyLedgerName)}</LEDGERNAME>
                 <AMOUNT>${safeVoucherType === "Purchase" ? "" : "-"}${escapeXml(totalAmount.toFixed(2))}</AMOUNT>
               </ALLLEDGERENTRIES.LIST>`;
-    const purchaseEntry = `
+  const purchaseEntry = `
               <ALLLEDGERENTRIES.LIST>
-                <LEDGERNAME>Purchase Account</LEDGERNAME>
+                <LEDGERNAME>${escapeXml(purchaseLedgerName)}</LEDGERNAME>
                 <AMOUNT>-${escapeXml(taxableAmount.toFixed(2))}</AMOUNT>
               </ALLLEDGERENTRIES.LIST>`;
-    ledgerXml = partyEntry + purchaseEntry + buildTaxLedgerEntries(extraction);
-  } else {
-    ledgerXml = `
-              <ALLLEDGERENTRIES.LIST>
-                <LEDGERNAME>${escapeXml(partyLedgerName)}</LEDGERNAME>
-                <AMOUNT>${escapeXml(totalAmount.toFixed(2))}</AMOUNT>
-              </ALLLEDGERENTRIES.LIST>`;
-  }
+  const ledgerXml = partyEntry + purchaseEntry + buildTaxLedgerEntries(extraction);
 
   return `
         <TALLYMESSAGE>
@@ -279,3 +300,45 @@ const buildTallyXml = ({ documents }) => {
 module.exports = {
   buildTallyXml
 };
+
+if (require.main === module) {
+  const testInvoice = {
+    doc_type: "invoice",
+    file_name: "test-invoice.pdf",
+    uploaded_at: "2025-04-16",
+    structured_data: {
+      invoiceNumber: "INV-TEST-001",
+      invoiceDate: "2025-04-15",
+      supplierName: "Test Supplier",
+      supplierGSTIN: "29ABCDE1234F1Z5",
+      line_items: [
+        {
+          description: "Office Supplies",
+          quantity: 10,
+          unit_price: 500,
+          total: 5000
+        }
+      ],
+      cgst: 450,
+      sgst: 450,
+      totalAmount: 5900
+    }
+  };
+  const xml = buildTallyXml({ documents: [testInvoice] });
+  const ledgerAmounts = Array.from(
+    xml.matchAll(/<ALLLEDGERENTRIES\.LIST>[\s\S]*?<AMOUNT>(-?\d+(?:\.\d+)?)<\/AMOUNT>[\s\S]*?<\/ALLLEDGERENTRIES\.LIST>/g)
+  ).map((match) => Number(match[1]));
+  const debitTotal = ledgerAmounts.filter((amount) => amount > 0).reduce((sum, amount) => sum + amount, 0);
+  const creditTotal = Math.abs(
+    ledgerAmounts.filter((amount) => amount < 0).reduce((sum, amount) => sum + amount, 0)
+  );
+
+  console.log(xml);
+  console.log({
+    hasCgstLedger: xml.includes("<LEDGERNAME>CGST</LEDGERNAME>"),
+    hasSgstLedger: xml.includes("<LEDGERNAME>SGST</LEDGERNAME>"),
+    debitTotal,
+    creditTotal,
+    isBalanced: debitTotal === creditTotal
+  });
+}

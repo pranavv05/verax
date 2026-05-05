@@ -10,10 +10,14 @@ import ClientsPage from "./pages/ClientsPage";
 import DashboardPage from "./pages/DashboardPage";
 import ExportPage from "./pages/ExportPage";
 import FeaturesPage from "./pages/FeaturesPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import GSTReconciliationPage from "./pages/GSTReconciliationPage";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import PublicUploadPage from "./pages/PublicUploadPage";
+import PublicUploadStatusPage from "./pages/PublicUploadStatusPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import ReviewPage from "./pages/ReviewPage";
 import SettingsPage from "./pages/SettingsPage";
 import SignupPage from "./pages/SignupPage";
@@ -32,7 +36,10 @@ const App = () => (
     <Route path="/security" element={<SecurityPage />} />
     <Route path="/login" element={<LoginPage />} />
     <Route path="/signup" element={<SignupPage />} />
+    <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+    <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
     <Route path="/upload/:token" element={<PublicUploadPage />} />
+    <Route path="/upload/:token/status" element={<PublicUploadStatusPage />} />
 
     {/* Protected dashboard pages */}
     <Route
@@ -63,10 +70,28 @@ const App = () => (
     />
 
     <Route
+      path="/clients/:clientId/gst-reconciliation"
+      element={
+        <Protected>
+          <GSTReconciliationPage />
+        </Protected>
+      }
+    />
+
+    <Route
       path="/clients/:id/documents"
       element={
         <Protected>
           <ClientDocumentsPage />
+        </Protected>
+      }
+    />
+
+    <Route
+      path="/documents/:doc_id/review"
+      element={
+        <Protected>
+          <ReviewPage />
         </Protected>
       }
     />

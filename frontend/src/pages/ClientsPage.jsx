@@ -6,7 +6,10 @@ import EmptyState from "../components/ui/EmptyState";
 import { TableRowsSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { clientsApi } from "../api/clients-api";
+import { complianceApi } from "../api/compliance-api";
+import { useAuth } from "../contexts/AuthContext";
 import { formatDateTime, parseApiError } from "../lib/utils";
+import { isAdmin } from "../utils/permissions";
 
 const clientSchema = z.object({
   name: z.string().min(2, "Client name is required").max(255),
@@ -29,8 +32,11 @@ const clientSchema = z.object({
 });
 
 const emptyForm = { name: "", email: "", phone: "", gstin: "", status: "active" };
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 const ClientsPage = () => {
+  const { user } = useAuth();
+  const canAdmin = isAdmin(user);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState("");
@@ -43,6 +49,7 @@ const ClientsPage = () => {
   const [form, setForm] = useState(emptyForm);
   const [editingClient, setEditingClient] = useState(null); // null = add mode, object = edit mode
   const [confirmDeleteId, setConfirmDeleteId] = useState(""); // id to confirm delete
+  const [gstLookup, setGstLookup] = useState({ status: "idle", message: "", legalName: "" });
 
   const loadClients = async () => {
     setLoading(true);
@@ -62,6 +69,52 @@ const ClientsPage = () => {
     loadClients();
   }, [filters.page, filters.status, filters.search]);
 
+  useEffect(() => {
+    const gstin = String(form.gstin || "").trim().toUpperCase();
+    if (!gstin) {
+      setGstLookup({ status: "idle", message: "", legalName: "" });
+      return undefined;
+    }
+    if (gstin.length !== 15 || !GSTIN_PATTERN.test(gstin)) {
+      setGstLookup({ status: "idle", message: "", legalName: "" });
+      return undefined;
+    }
+
+    setGstLookup({ status: "loading", message: "Checking GST portal...", legalName: "" });
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const result = await complianceApi.verifyGstin(gstin);
+        if (result.source === "local_fallback") {
+          setGstLookup({
+            status: "fallback",
+            message: result.valid ? "Format valid (GST portal unreachable)" : result.message || "GSTIN could not be verified",
+            legalName: ""
+          });
+        } else if (result.valid) {
+          setGstLookup({
+            status: "valid",
+            message: result.legalName || result.tradeName || "GSTIN verified",
+            legalName: result.legalName || result.tradeName || ""
+          });
+        } else {
+          setGstLookup({
+            status: "invalid",
+            message: `${result.registrationStatus || "Invalid"}${result.legalName ? ` - ${result.legalName}` : ""}`,
+            legalName: result.legalName || ""
+          });
+        }
+      } catch (lookupError) {
+        setGstLookup({
+          status: "error",
+          message: parseApiError(lookupError, "Unable to verify GSTIN"),
+          legalName: ""
+        });
+      }
+    }, 800);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [form.gstin]);
+
   const startEdit = (client) => {
     setEditingClient(client);
     setForm({
@@ -73,12 +126,14 @@ const ClientsPage = () => {
     });
     setError("");
     setToast("");
+    setGstLookup({ status: "idle", message: "", legalName: "" });
   };
 
   const cancelEdit = () => {
     setEditingClient(null);
     setForm(emptyForm);
     setError("");
+    setGstLookup({ status: "idle", message: "", legalName: "" });
   };
 
   const onSubmit = async (event) => {
@@ -180,34 +235,40 @@ const ClientsPage = () => {
             <Link className="btn-secondary px-2 py-1.5 text-xs" to={`/clients/${client.id}/documents`}>
               Docs
             </Link>
-            <button
-              type="button"
-              className="btn-secondary px-2 py-1.5 text-xs"
-              onClick={() => startEdit(client)}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              className="px-2 py-1.5 text-xs rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
-              disabled={deletingId === client.id}
-              onClick={() => setConfirmDeleteId(client.id)}
-            >
-              {deletingId === client.id ? "..." : "Delete"}
-            </button>
-            <button
-              type="button"
-              className="btn-primary px-2 py-1.5 text-xs"
-              disabled={requestingId === client.id}
-              onClick={() => onRequestDocs(client.id)}
-            >
-              {requestingId === client.id ? "..." : "Request docs"}
-            </button>
+            {canAdmin && (
+              <button
+                type="button"
+                className="btn-secondary px-2 py-1.5 text-xs"
+                onClick={() => startEdit(client)}
+              >
+                Edit
+              </button>
+            )}
+            {canAdmin && (
+              <button
+                type="button"
+                className="px-2 py-1.5 text-xs rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
+                disabled={deletingId === client.id}
+                onClick={() => setConfirmDeleteId(client.id)}
+              >
+                {deletingId === client.id ? "..." : "Delete"}
+              </button>
+            )}
+            {canAdmin && (
+              <button
+                type="button"
+                className="btn-primary px-2 py-1.5 text-xs"
+                disabled={requestingId === client.id}
+                onClick={() => onRequestDocs(client.id)}
+              >
+                {requestingId === client.id ? "..." : "Request docs"}
+              </button>
+            )}
           </div>
         </td>
       </tr>
     ));
-  }, [rows, editingClient, deletingId, requestingId]);
+  }, [rows, editingClient, deletingId, requestingId, canAdmin]);
 
   return (
     <AppShell title="Clients" subtitle="Search, filter, and manage clients across your firm.">
@@ -239,7 +300,7 @@ const ClientsPage = () => {
         </div>
       )}
 
-      <section className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+      <section className={`grid gap-4 ${canAdmin ? "lg:grid-cols-[1fr_0.9fr]" : ""}`}>
         {/* Client table */}
         <article className="panel p-4">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -308,6 +369,7 @@ const ClientsPage = () => {
         </article>
 
         {/* Add / Edit panel */}
+        {canAdmin && (
         <article className="panel p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -370,9 +432,27 @@ const ClientsPage = () => {
                 <input
                   className="field uppercase"
                   value={form.gstin}
-                  onChange={(e) => setForm((prev) => ({ ...prev, gstin: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, gstin: e.target.value.toUpperCase() }))
+                  }
                   placeholder="22AAAAA0000A1Z5"
                 />
+                {gstLookup.status !== "idle" && gstLookup.message && (
+                  <p
+                    className={`mt-1 text-xs font-semibold ${
+                      gstLookup.status === "valid"
+                        ? "text-mint-700"
+                        : gstLookup.status === "fallback"
+                        ? "text-slate-500"
+                        : gstLookup.status === "loading"
+                        ? "text-[#607086]"
+                        : "text-rose-600"
+                    }`}
+                  >
+                    {gstLookup.status === "valid" ? "GST verified: " : ""}
+                    {gstLookup.message}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="label">Status</label>
@@ -407,6 +487,7 @@ const ClientsPage = () => {
             </button>
           </form>
         </article>
+        )}
       </section>
     </AppShell>
   );

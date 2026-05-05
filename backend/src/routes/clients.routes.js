@@ -2,7 +2,7 @@ const express = require("express");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const {
   listClients,
   createClient,
@@ -18,7 +18,7 @@ const uuidSchema = Joi.string().uuid({ version: ["uuidv4", "uuidv5"] });
 
 const listClientsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
+  limit: Joi.number().integer().min(1).max(200).default(20),
   status: Joi.string().valid("active", "inactive", "pending").optional(),
   search: Joi.string().trim().max(255).optional()
 });
@@ -64,6 +64,7 @@ router.get(
 
 router.post(
   "/",
+  requireAdmin,
   validate(createClientBodySchema),
   asyncHandler(async (req, res) => {
     const client = await req.withTenantTransaction((db) =>
@@ -93,6 +94,7 @@ router.get(
 
 router.put(
   "/:id",
+  requireAdmin,
   validate(clientIdParamSchema, "params"),
   validate(updateClientBodySchema),
   asyncHandler(async (req, res) => {
@@ -110,6 +112,7 @@ router.put(
 
 router.delete(
   "/:id",
+  requireAdmin,
   validate(clientIdParamSchema, "params"),
   asyncHandler(async (req, res) => {
     await req.withTenantTransaction((db) =>
@@ -125,6 +128,7 @@ router.delete(
 
 router.post(
   "/:id/request-docs",
+  requireAdmin,
   validate(clientIdParamSchema, "params"),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>

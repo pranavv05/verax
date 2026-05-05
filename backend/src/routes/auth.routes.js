@@ -9,6 +9,9 @@ const {
   refreshAccessToken,
   logoutSession,
   validateMagicToken,
+  requestPasswordReset,
+  validatePasswordResetToken,
+  resetPassword,
   getRefreshCookieOptions
 } = require("../services/auth.service");
 const { getCurrentUser } = require("../services/firms.service");
@@ -43,6 +46,19 @@ const loginSchema = Joi.object({
 
 const magicTokenSchema = Joi.object({
   token: Joi.string().pattern(/^[a-zA-Z0-9]{32,128}$/).required()
+});
+
+const forgotPasswordSchema = Joi.object({
+  email: Joi.string().email().required()
+});
+
+const resetPasswordParamSchema = Joi.object({
+  token: Joi.string().pattern(/^[a-zA-Z0-9]{32,128}$/).required()
+});
+
+const resetPasswordSchema = Joi.object({
+  token: Joi.string().pattern(/^[a-zA-Z0-9]{32,128}$/).required(),
+  password: Joi.string().min(8).max(128).required()
 });
 
 router.post(
@@ -122,6 +138,45 @@ router.post(
     await logoutSession({ refreshToken });
     res.clearCookie(env.REFRESH_COOKIE_NAME, getRefreshCookieOptions());
     res.status(200).json({ success: true });
+  })
+);
+
+router.post(
+  "/forgot-password",
+  authRateLimiter,
+  validate(forgotPasswordSchema),
+  asyncHandler(async (req, res) => {
+    const result = await requestPasswordReset({
+      email: req.body.email,
+      userAgent: req.headers["user-agent"],
+      ipAddress: req.ip
+    });
+
+    res.status(200).json(result);
+  })
+);
+
+router.get(
+  "/reset-password/:token",
+  authRateLimiter,
+  validate(resetPasswordParamSchema, "params"),
+  asyncHandler(async (req, res) => {
+    const result = await validatePasswordResetToken({ token: req.params.token });
+    res.status(200).json(result);
+  })
+);
+
+router.post(
+  "/reset-password",
+  authRateLimiter,
+  validate(resetPasswordSchema),
+  asyncHandler(async (req, res) => {
+    const result = await resetPassword({
+      token: req.body.token,
+      password: req.body.password
+    });
+
+    res.status(200).json(result);
   })
 );
 

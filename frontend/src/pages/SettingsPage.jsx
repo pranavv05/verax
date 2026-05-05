@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
 import { SettingsSkeleton } from "../components/ui/skeletons";
 import { firmsApi } from "../api/firms-api";
 import { parseApiError } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
+import { isAdmin } from "../utils/permissions";
 
 const firmSchema = z.object({
   name: z.string().min(2, "Firm name must be at least 2 characters").max(255, "Firm name is too long")
@@ -50,8 +51,59 @@ const RoleBadge = ({ role }) => {
   );
 };
 
+const permissionSections = [
+  {
+    title: "Documents",
+    rows: [
+      ["Upload documents", true],
+      ["View documents / clients", true],
+      ["Edit extracted fields", true],
+      ["Approve / mark reviewed", false],
+      ["Reprocess document", false],
+      ["View document version history", true]
+    ]
+  },
+  {
+    title: "Clients",
+    rows: [
+      ["Create client", false],
+      ["Update client details", false],
+      ["Delete / soft-delete client", false],
+      ["Request documents from client", false],
+      ["Schedule recurring requests", false],
+      ["GST reconciliation view", true],
+      ["GST reconciliation export", false]
+    ]
+  },
+  {
+    title: "Exports",
+    rows: [
+      ["Export to Tally", false],
+      ["Bulk export", false],
+      ["Bulk export preview", false],
+      ["View export history", true]
+    ]
+  },
+  {
+    title: "Team & Settings",
+    rows: [
+      ["View notifications", true],
+      ["View audit logs", false],
+      ["Manage team", false],
+      ["Update firm settings", false]
+    ]
+  }
+];
+
+const AccessMark = ({ allowed }) => (
+  <span className={allowed ? "font-bold text-mint-700" : "font-bold text-slate-400"}>
+    {allowed ? "✓" : "—"}
+  </span>
+);
+
 const SettingsPage = () => {
   const { user } = useAuth();
+  const canAdmin = isAdmin(user);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -113,6 +165,7 @@ const SettingsPage = () => {
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Firm Settings */}
+          {canAdmin && (
           <article className="panel p-6">
             <div className="mb-5 flex items-start justify-between">
               <div>
@@ -175,6 +228,7 @@ const SettingsPage = () => {
               </button>
             </form>
           </article>
+          )}
 
           {/* My Profile */}
           <article className="panel p-6">
@@ -234,6 +288,46 @@ const SettingsPage = () => {
               </p>
             </div>
           </article>
+          {canAdmin && (
+            <article className="panel p-6 lg:col-span-2">
+              <div className="mb-5">
+                <h2 className="text-lg font-bold text-ink-900">Permissions</h2>
+                <p className="mt-0.5 text-sm text-ink-500">
+                  Read-only reference for admin and staff access boundaries.
+                </p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-0">
+                  <thead>
+                    <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
+                      <th className="rounded-l-lg px-3 py-3">Action</th>
+                      <th className="px-3 py-3 text-center">Admin</th>
+                      <th className="rounded-r-lg px-3 py-3 text-center">Staff</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {permissionSections.map((section) => (
+                      <Fragment key={section.title}>
+                        <tr>
+                          <td colSpan={3} className="px-3 pb-1 pt-4 text-xs font-bold uppercase tracking-wide text-ink-500">
+                            {section.title}
+                          </td>
+                        </tr>
+                        {section.rows.map(([action, staffAllowed]) => (
+                          <tr key={action} className="border-t border-[#eadfcf]">
+                            <td className="px-3 py-3 text-sm font-semibold text-ink-800">{action}</td>
+                            <td className="px-3 py-3 text-center"><AccessMark allowed /></td>
+                            <td className="px-3 py-3 text-center"><AccessMark allowed={staffAllowed} /></td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          )}
         </div>
       )}
     </AppShell>

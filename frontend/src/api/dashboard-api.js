@@ -4,9 +4,10 @@ import { exportsApi } from "./exports-api";
 
 export const dashboardApi = {
   async getOverview() {
-    const [clientsResult, pendingDocsResult, reviewedDocsResult, exportsResult] =
+    const [clientsResult, reviewRequiredDocsResult, pendingDocsResult, reviewedDocsResult, exportsResult] =
       await Promise.allSettled([
         clientsApi.list({ page: 1, limit: 1 }),
+        documentsApi.list({ page: 1, limit: 1, status: "review_required" }),
         documentsApi.list({ page: 1, limit: 1, status: "extracted" }),
         documentsApi.list({ page: 1, limit: 1, status: "reviewed" }),
         exportsApi.history({ page: 1, limit: 20 })
@@ -17,10 +18,16 @@ export const dashboardApi = {
         ? clientsResult.value?.pagination?.total ?? clientsResult.value?.data?.length ?? 0
         : 0;
 
-    const pendingDocs =
+    const reviewRequiredDocs =
+      reviewRequiredDocsResult.status === "fulfilled"
+        ? reviewRequiredDocsResult.value?.pagination?.total ?? reviewRequiredDocsResult.value?.data?.length ?? 0
+        : 0;
+
+    const extractedDocs =
       pendingDocsResult.status === "fulfilled"
         ? pendingDocsResult.value?.pagination?.total ?? pendingDocsResult.value?.data?.length ?? 0
         : 0;
+    const pendingDocs = extractedDocs + reviewRequiredDocs;
 
     const reviewedDocs =
       reviewedDocsResult.status === "fulfilled"

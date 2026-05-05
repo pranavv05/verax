@@ -2,7 +2,7 @@ const express = require("express");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const {
   getExtraction,
   updateExtraction,
@@ -114,14 +114,15 @@ router.put(
   "/:documentId",
   validate(updateSchema),
   asyncHandler(async (req, res) => {
-    const { firmId } = req.user;
+    const { firmId, userId } = req.user;
     const { documentId } = req.params;
 
     await req.withTenantTransaction((db) =>
       updateExtraction(db, {
         firmId,
         documentId,
-        structuredData: req.body
+        structuredData: req.body,
+        userId
       })
     );
 
@@ -132,6 +133,7 @@ router.put(
 // POST /api/extractions/:documentId/approve
 router.post(
   "/:documentId/approve",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { firmId, userId } = req.user;
     const { documentId } = req.params;
@@ -152,6 +154,7 @@ router.post(
 // POST /api/extractions/:documentId/reprocess
 router.post(
   "/:documentId/reprocess",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { firmId, userId } = req.user;
     const { documentId } = req.params;

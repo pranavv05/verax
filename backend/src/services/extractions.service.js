@@ -1,5 +1,6 @@
 const ApiError = require("../utils/api-error");
 const { enqueueDocumentProcessingJob } = require("./document-queue.service");
+const { snapshotDocument } = require("./document-versions.service");
 
 const insertAuditLog = async (db, { firmId, userId, action, entityType, entityId, metadata }) => {
   await db.query(
@@ -59,12 +60,48 @@ const getExtraction = async (db, { firmId, documentId }) => {
   };
 };
 
-const updateExtraction = async (db, { firmId, documentId, structuredData }) => {
+const snapshotCurrentExtraction = async (db, { documentId, snapshotReason, createdBy }) => {
+  try {
+    const result = await db.query(
+      `
+        SELECT structured_data
+        FROM extractions
+        WHERE document_id = $1
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+      [documentId]
+    );
+
+    if (result.rowCount > 0) {
+      await snapshotDocument({
+        documentId,
+        extractedData: result.rows[0].structured_data || {},
+        snapshotReason,
+        createdBy,
+        trx: db
+      });
+    }
+  } catch (error) {
+    console.error(
+      `Failed to snapshot document ${documentId} (${snapshotReason}):`,
+      error.message || error
+    );
+  }
+};
+
+const updateExtraction = async (db, { firmId, documentId, structuredData, userId = null }) => {
   const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId });
 
   if (doc.status === "exported") {
     throw ApiError.badRequest("Cannot edit an extraction that has already been exported");
   }
+
+  await snapshotCurrentExtraction(db, {
+    documentId,
+    snapshotReason: "pre_edit",
+    createdBy: userId
+  });
 
   const result = await db.query(
     `UPDATE extractions
@@ -85,11 +122,17 @@ const updateExtraction = async (db, { firmId, documentId, structuredData }) => {
 const approveExtraction = async (db, { firmId, documentId, userId, nameMappingService }) => {
   const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId });
 
-  if (!["extracted", "reviewed"].includes(doc.status)) {
+  if (!["extracted", "review_required", "reviewed"].includes(doc.status)) {
     throw ApiError.badRequest(
-      `Cannot approve a document with status '${doc.status}'. Document must be in 'extracted' state.`
+      `Cannot approve a document with status '${doc.status}'. Document must be in 'extracted' or 'review_required' state.`
     );
   }
+
+  await snapshotCurrentExtraction(db, {
+    documentId,
+    snapshotReason: "pre_approval",
+    createdBy: userId
+  });
 
   const extractionResult = await db.query(
     `UPDATE extractions
@@ -142,6 +185,12 @@ const reprocessDocument = async (db, { firmId, documentId, userId }) => {
   if (doc.status === "exported") {
     throw ApiError.badRequest("Cannot reprocess a document that has already been exported");
   }
+
+  await snapshotCurrentExtraction(db, {
+    documentId,
+    snapshotReason: "reprocess",
+    createdBy: userId
+  });
 
   await db.query(
     `UPDATE documents
