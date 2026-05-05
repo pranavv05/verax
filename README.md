@@ -1,81 +1,104 @@
-# Verax
+# Verax TallyOCR
 
-Multi-tenant SaaS platform for Chartered Accountant firms in India.
+Multi-tenant SaaS platform for Chartered Accountant firms in India. Verax TallyOCR handles client document intake, OCR extraction, CA review, compliance checks, and TallyPrime XML export.
 
 ## Overview
 
 This monorepo contains:
-- `frontend`: React 18 + Vite + Tailwind web app
-- `backend`: Node.js + Express API (JWT auth, tenant isolation, S3 upload flow, queue producer, Tally export)
-- `ai-service`: Python FastAPI microservice (OCR + LLM extraction pipeline)
-- `docker-compose.yml`: local multi-service environment (Postgres, Redis, backend, worker, frontend, ai-service)
+
+- `frontend/`: React 18 + Vite + Tailwind web app
+- `backend/`: JavaScript Express API, PostgreSQL/Knex migrations, BullMQ worker, S3 upload flow, and Tally XML export
+- `ai-service/`: Python 3.12 FastAPI service for preprocessing, OCR, LLM extraction, and standalone tools
+- `docker-compose.yml`: local development stack with Postgres, Redis, backend, worker, frontend, and AI service
 
 Core capabilities:
+
 - Firm-level tenant isolation with PostgreSQL RLS
-- JWT auth (short-lived access token + refresh cookie)
-- Client magic-link document uploads
+- JWT authentication with refresh-token cookie flow
+- Client magic-link uploads and public upload status
 - S3 pre-signed uploads/downloads
-- Async document processing with BullMQ + Redis
-- OCR pipeline (AWS Textract primary, Tesseract fallback)
-- TallyPrime XML generation and export history
+- Async document processing with Redis + BullMQ
+- OCR pipeline with AWS Textract primary and tuned Tesseract fallback
+- LLM extraction for Indian invoices and bills with wrong-document detection
+- Confidence gating: low-confidence or unknown documents become `review_required`
+- Review workflow with edit history, confidence indicators, warnings, and approval
+- TallyPrime XML exports
+- Standalone tools:
+  - Bank Statement to Tally XML
+  - Excel Register Cleaner
+
+## Tech Stack
+
+- Frontend: React 18, Vite, TailwindCSS, Zod
+- Backend: Node.js, Express, PostgreSQL 15, Knex, BullMQ, Redis
+- AI Service: Python 3.12, FastAPI, OpenCV, PyMuPDF, pdfplumber, pdf2image, Tesseract, AWS Textract, OpenAI
+- Storage: AWS S3
+- Email: SMTP or Resend
 
 ## Project Structure
 
 ```text
 /
-|-- frontend/
-|-- backend/
-|-- ai-service/
+|-- ai-service/        # Python FastAPI OCR + extraction service
+|-- backend/           # Express API, migrations, workers, services
+|-- frontend/          # React/Vite client app
+|-- tests/             # Local test scripts and fixtures
 |-- docker-compose.yml
-`-- .env.example
+|-- docker-compose.prod.yml
+|-- .env.example
+`-- README.md
 ```
 
-## Tech Stack
+## Quick Start With Docker
 
-- Frontend: React 18, Vite, TailwindCSS, Zod
-- Backend: Node.js, Express.js, PostgreSQL 15, Joi
-- AI Service: Python FastAPI, OpenCV, Textract, Tesseract, OpenAI
-- Queue: Redis + BullMQ
-- Storage: AWS S3
-
-## Quick Start (Docker)
-
-### 1) Configure environment
-
-Create `.env` at repo root from `.env.example` and fill required values:
+1. Create a local environment file:
 
 ```bash
 cp .env.example .env
-# PowerShell:
-# Copy-Item .env.example .env
 ```
 
-Required minimum:
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. Fill required values in `.env`:
+
 - `DATABASE_URL`
 - `REDIS_URL`
 - `AWS_REGION`
 - `AWS_S3_BUCKET`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
 - `JWT_SECRET`
 - `JWT_REFRESH_SECRET`
 - `OPENAI_API_KEY`
-- `AI_SERVICE_URL`
+- `AI_SERVICE_API_KEY`
 - `FRONTEND_URL`
+- `VITE_API_BASE_URL`
 
-### 2) Start services
+3. Start the stack:
 
 ```bash
 docker compose up --build
 ```
 
-### 3) Run migrations (backend container)
+4. Run backend migrations:
 
 ```bash
 docker compose exec backend npm run migrate:latest
 ```
 
-## Local Development (Without Docker)
+5. Seed an admin user if needed:
 
-### Backend
+```bash
+docker compose exec backend npm run seed:admin
+```
+
+## Local Development Without Docker
+
+Backend:
 
 ```bash
 cd backend
@@ -84,14 +107,14 @@ npm run migrate:latest
 npm run dev
 ```
 
-### Document Worker
+Document worker:
 
 ```bash
 cd backend
 npm run worker:documents
 ```
 
-### Frontend
+Frontend:
 
 ```bash
 cd frontend
@@ -99,15 +122,23 @@ npm install
 npm run dev
 ```
 
-### AI Service
+AI service:
 
 ```bash
 cd ai-service
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-## Service URLs (Default)
+On Linux/macOS, activate the venv with:
+
+```bash
+source .venv/bin/activate
+```
+
+## Service URLs
 
 - Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:3000`
@@ -115,15 +146,98 @@ uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 - Postgres: `localhost:5432`
 - Redis: `localhost:6379`
 
-## API Highlights
+## Document Processing Flow
+
+1. Frontend requests a pre-signed upload URL from the backend.
+2. Browser uploads the file directly to S3.
+3. Frontend confirms the upload.
+4. Backend enqueues a BullMQ document-processing job.
+5. Worker marks the document `processing`.
+6. Worker calls AI service `/process`.
+7. AI service downloads from S3, preprocesses pages, runs OCR, extracts structured data, and returns confidence.
+8. Worker stores raw text, structured data, and confidence.
+9. Worker sets status:
+   - `extracted` when confidence is at least `0.4` and document type is known
+   - `review_required` when confidence is below `0.4` or document type is `unknown`
+10. CA reviews, edits, and approves the extraction.
+11. Approved documents can be exported to TallyPrime XML.
+
+## OCR And AI Notes
+
+- Textract is the primary OCR engine.
+- Tesseract is the fallback when Textract fails or returns too little text.
+- Docker installs English and Hindi Tesseract language packs.
+- PDF fallback rendering supports up to 15 pages and skips blank pages.
+- LLM extraction prompt is tuned for Indian invoices, bills, GST, TDS, HSN, OCR corrections, and wrong-document detection.
+- Server-side confidence adjustment caps confidence for missing critical fields, invalid GSTIN, and tax math mismatch.
+
+## Standalone Tools
+
+Bank Statement to Tally XML:
+
+- Endpoint: `POST /api/tools/bank-statement-xml`
+- Accepts bank statement PDFs.
+- Uses digital table extraction when possible and OCR fallback for scanned statements.
+- Returns structured JSON containing XML, voucher count, skipped row count, scanned/digital flag, and row warnings.
+
+Excel Register Cleaner:
+
+- Endpoint: `POST /api/tools/register-clean`
+- Accepts `.xlsx` and `.xls`.
+- Cleans and standardizes purchase register Excel files.
+- Downloads a formatted `.xlsx`; it does not produce Tally XML.
+
+## Useful Commands
+
+Backend syntax check:
+
+```bash
+cd backend
+node --check src/workers/document-processing.worker.js
+```
+
+Frontend production build:
+
+```bash
+cd frontend
+npm run build
+```
+
+AI service compile checks:
+
+```bash
+cd ai-service
+python -m py_compile app/services/ocr_service.py
+python -m py_compile app/services/llm_service.py
+python -m py_compile app/services/preprocess_service.py
+python -m py_compile app/main.py
+```
+
+Run migrations:
+
+```bash
+cd backend
+npm run migrate:latest
+```
+
+Rollback latest migration:
+
+```bash
+cd backend
+npm run migrate:rollback
+```
+
+## Important API Areas
 
 Auth:
+
 - `POST /api/auth/login`
 - `POST /api/auth/refresh`
 - `POST /api/auth/logout`
 - `GET /api/auth/magic/:token`
 
 Clients:
+
 - `GET /api/clients`
 - `POST /api/clients`
 - `GET /api/clients/:id`
@@ -132,15 +246,33 @@ Clients:
 - `POST /api/clients/:id/request-docs`
 
 Documents:
+
 - `POST /api/documents/upload`
 - `POST /api/documents/confirm`
+- `GET /api/documents/:id`
 - Public upload: `POST /api/upload/:token/documents/upload`
 - Public confirm: `POST /api/upload/:token/documents/confirm`
 
+Review and extraction:
+
+- `GET /api/extractions/:documentId`
+- `PUT /api/extractions/:documentId`
+- `POST /api/extractions/:documentId/approve`
+- `POST /api/extractions/:documentId/reprocess`
+- `GET /api/documents/:documentId/versions`
+
 Exports:
+
 - `POST /api/export/tally`
+- `POST /api/export/bulk`
+- `POST /api/export/preview`
 - `GET /api/export/history`
 - `GET /api/export/:id/download`
+
+Tools:
+
+- `POST /api/tools/bank-statement-xml`
+- `POST /api/tools/register-clean`
 
 ## Frontend Routes
 
@@ -151,39 +283,23 @@ Exports:
 - `/clients/:id/documents`
 - `/review/:doc_id`
 - `/export`
-- `/upload/:token` (public, no login)
-
-## Upload + Processing Flow
-
-1. Frontend requests pre-signed URL from backend
-2. Browser uploads file directly to S3
-3. Frontend confirms upload
-4. Backend enqueues BullMQ job
-5. Worker calls AI service `/process`
-6. Extraction is persisted and document status updated
+- `/tools`
+- `/upload/:token`
+- `/upload/status/:token`
+- `/gst-reconciliation`
+- `/settings`
+- `/team`
 
 ## Security Notes
 
-- Tenant isolation enforced with PostgreSQL RLS and firm context
-- JWT required for protected routes
-- Refresh token stored as `httpOnly` cookie
-- Upload URLs expire (default 15 minutes)
-- Upload route rate limits applied
-- Audit logs captured for critical actions
+- Tenant isolation is enforced with PostgreSQL RLS and firm context.
+- Protected backend routes require JWT authentication.
+- Refresh tokens are stored as `httpOnly` cookies.
+- AI service calls are protected with `X-AI-Service-Token`.
+- Upload URLs expire.
+- Tool upload sizes are capped by `MAX_TOOL_UPLOAD_MB`.
+- Audit logs are written for critical document and extraction actions.
 
-## Build Check
+## Git Hygiene
 
-Frontend production build can be verified with:
-
-```bash
-cd frontend
-npm run build
-```
-
-## Next Recommended Repo Hygiene
-
-Before pushing to GitHub, ensure a `.gitignore` exists for:
-- `node_modules/`
-- `dist/`
-- `.env`
-- Python cache files
+The root `.gitignore` excludes local dependencies, virtual environments, build outputs, logs, caches, temp files, and environment files. Keep `.env.example` committed, but never commit real `.env` files or secrets.
