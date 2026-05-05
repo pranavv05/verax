@@ -2,16 +2,23 @@
 .env
 .env.local
 .env.*.local
+*.env
+!.env.example
 
 # Dependency directories
 node_modules/
 jspm_packages/
+.venv/
+venv/
+env/
 
 # Build outputs
 dist/
 build/
 .next/
 out/
+coverage/
+htmlcov/
 
 # IDE files
 .vscode/
@@ -22,11 +29,33 @@ out/
 # OS files
 .DS_Store
 Thumbs.db
+ehthumbs.db
 
 # Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 logs/
 *.log
 .claude/
+
+# Python caches and tooling
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.coverage
+.coverage.*
+
+# Vite / frontend caches
+.vite/
+
+# Local runtime artifacts
+uploads/
+tmp/
+temp/
+*.tmp
