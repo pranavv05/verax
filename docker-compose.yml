@@ -95,6 +95,9 @@
     build:
       context: ./ai-service
       dockerfile: Dockerfile
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     image: ca-ai-service:dev
     container_name: ca-ai-service
     restart: unless-stopped
