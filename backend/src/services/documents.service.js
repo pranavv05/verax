@@ -38,6 +38,14 @@ const buildS3Key = ({ firmId, clientId, documentId, fileName }) => {
   return `firms/${firmId}/clients/${clientId}/documents/${year}/${month}/${documentId}/${safeName}`;
 };
 
+const buildStorageKey = ({ firmId, clientId, documentId, fileName }) => {
+  const safeName = normalizeFileNameForKey(path.basename(fileName));
+  if (env.LOCAL_STORAGE) {
+    return `${documentId}-${safeName}`;
+  }
+  return buildS3Key({ firmId, clientId, documentId, fileName: safeName });
+};
+
 const getClientForFirm = async (db, { firmId, clientId }) => {
   const result = await db.query(
     `
@@ -104,7 +112,7 @@ const createUploadSession = async (
 
   const safeFileName = assertAllowedFile({ fileName, fileType, fileSize });
   const documentId = crypto.randomUUID();
-  const s3Key = buildS3Key({
+  const s3Key = buildStorageKey({
     firmId,
     clientId,
     documentId,

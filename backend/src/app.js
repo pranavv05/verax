@@ -19,6 +19,7 @@ const notificationRoutes = require("./routes/notifications.routes");
 const scheduledRequestRoutes = require("./routes/scheduled-requests.routes");
 const env = require("./config/env");
 const { notFoundHandler, errorHandler } = require("./middlewares/error.middleware");
+const localUploadRoutes = env.LOCAL_STORAGE ? require("./routes/local-upload.routes") : null;
 
 const app = express();
 
@@ -55,6 +56,9 @@ app.use("/api/tools", toolsRoutes);
 app.use("/api/compliance", complianceRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/scheduled-requests", scheduledRequestRoutes);
+if (env.LOCAL_STORAGE) {
+  app.use("/api", localUploadRoutes);
+}
 
 app.use(notFoundHandler);
 app.use(errorHandler);

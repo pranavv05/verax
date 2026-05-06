@@ -1,5 +1,6 @@
 import os
-
+from dotenv import load_dotenv
+load_dotenv()
 
 def _as_bool(value: str, default: bool = False) -> bool:
     if value is None:
@@ -10,6 +11,8 @@ def _as_bool(value: str, default: bool = False) -> bool:
 class Settings:
     def __init__(self) -> None:
         self.database_url = os.getenv("DATABASE_URL", "").strip()
+        self.local_storage = _as_bool(os.getenv("LOCAL_STORAGE", "false"))
+        self.local_storage_path = os.getenv("LOCAL_STORAGE_PATH", "").strip()
         self.aws_region = os.getenv("AWS_REGION", "ap-south-1").strip()
         self.aws_s3_bucket = os.getenv("AWS_S3_BUCKET", "").strip()
         self.aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID", "").strip() or None

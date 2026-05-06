@@ -10,8 +10,13 @@ const envSchema = Joi.object({
   PORT: Joi.number().port().default(3000),
   DATABASE_URL: Joi.string().uri().required(),
   REDIS_URL: Joi.string().uri().required(),
+  LOCAL_STORAGE: Joi.boolean().truthy("true").falsy("false").default(false),
   AWS_REGION: Joi.string().default("ap-south-1"),
-  AWS_S3_BUCKET: Joi.string().required(),
+  AWS_S3_BUCKET: Joi.when("LOCAL_STORAGE", {
+    is: true,
+    then: Joi.string().allow("").optional(),
+    otherwise: Joi.string().required()
+  }),
   AWS_ACCESS_KEY_ID: Joi.string().allow("").optional(),
   AWS_SECRET_ACCESS_KEY: Joi.string().allow("").optional(),
   AI_SERVICE_URL: Joi.string().uri().required(),
@@ -62,6 +67,7 @@ module.exports = Object.freeze({
   PORT: value.PORT,
   DATABASE_URL: value.DATABASE_URL,
   REDIS_URL: value.REDIS_URL,
+  LOCAL_STORAGE: value.LOCAL_STORAGE,
   AWS_REGION: value.AWS_REGION,
   AWS_S3_BUCKET: value.AWS_S3_BUCKET,
   AWS_ACCESS_KEY_ID: value.AWS_ACCESS_KEY_ID,
