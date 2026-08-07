@@ -1,7 +1,9 @@
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 boto3==1.35.80
-openai==1.57.4
+groq==0.11.0
+paddlepaddle==2.6.1
+paddleocr==2.7.3
 opencv-python-headless==4.9.0.80
 numpy==1.26.4
 pytesseract==0.3.13
@@ -11,4 +13,5 @@ pandas==2.1.4
 openpyxl==3.1.5
 pdfplumber==0.11.4
 pdf2image==1.17.0
-python-multipart 
+python-multipart==0.0.9
+python-dotenv==1.0.1

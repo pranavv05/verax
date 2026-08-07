@@ -19,6 +19,8 @@ const envSchema = Joi.object({
   }),
   AWS_ACCESS_KEY_ID: Joi.string().allow("").optional(),
   AWS_SECRET_ACCESS_KEY: Joi.string().allow("").optional(),
+  // AI_SERVICE_URL/AI_SERVICE_API_KEY are the only AI-service-related vars the backend
+  // needs — OCR/LLM provider config (e.g. GROQ_API_KEY) lives entirely in ai-service's own env.
   AI_SERVICE_URL: Joi.string().uri().required(),
   AI_SERVICE_API_KEY: Joi.when("NODE_ENV", {
     is: "production",
