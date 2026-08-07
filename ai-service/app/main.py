@@ -99,9 +99,7 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
     try:
         file_bytes = s3_service.download_file_bytes(request.s3_key)
         preprocessed = preprocess_service.preprocess(file_bytes)
-        raw_text, ocr_engine = ocr_service.extract_text(
-            request.s3_key, preprocessed.processed_images
-        )
+        raw_text, ocr_engine = ocr_service.extract_text(preprocessed.processed_images)
         structured_data = llm_service.extract_structured_data(raw_text, doc_type=request.doc_type)
         confidence_score = llm_service.calculate_confidence(structured_data, doc_type=request.doc_type)
 

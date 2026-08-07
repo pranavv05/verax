@@ -16,7 +16,7 @@ import pytesseract
 from fastapi import HTTPException
 from pdf2image import convert_from_path
 
-from app.services.ocr_service import OCRService
+from app.services.ocr_service import run_paddle_ocr
 from app.services.preprocess_service import PreprocessService
 
 logger = logging.getLogger(__name__)
@@ -289,19 +289,6 @@ def _pil_to_png_bytes(image) -> bytes:
     return buffer.getvalue()
 
 
-def _textract_image_text(ocr_service: OCRService, image_bytes: bytes) -> str:
-    response = ocr_service._textract.analyze_document(  # noqa: SLF001
-        Document={"Bytes": image_bytes},
-        FeatureTypes=["TABLES"],
-    )
-    lines = [
-        block.get("Text", "")
-        for block in response.get("Blocks", [])
-        if block.get("BlockType") == "LINE"
-    ]
-    return OCRService._normalize_whitespace("\n".join(lines))  # noqa: SLF001
-
-
 def _tesseract_image_text(image: np.ndarray) -> str:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return pytesseract.image_to_string(gray, lang="eng", config="--psm 6 --oem 1").strip()
@@ -318,7 +305,6 @@ def should_skip_row(narration: str, debit: float, credit: float, date_val) -> bo
 
 def _ocr_scanned_pdf_text(pdf_bytes: bytes) -> str:
     preprocess_service = PreprocessService()
-    ocr_service = OCRService()
     page_texts: list[str] = []
 
     with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp_pdf:
@@ -332,16 +318,13 @@ def _ocr_scanned_pdf_text(pdf_bytes: bytes) -> str:
             deskewed = preprocess_service._deskew(raw_image)  # noqa: SLF001
             processed = preprocess_service._denoise_and_boost(deskewed)  # noqa: SLF001
 
-            ok, encoded = cv2.imencode(".png", processed)
-            processed_png = encoded.tobytes() if ok else original_png
-
             try:
-                text = _textract_image_text(ocr_service, processed_png)
+                text = run_paddle_ocr(processed)
                 if len(text) >= 50:
                     page_texts.append(text)
                     continue
             except Exception as error:  # noqa: BLE001
-                logger.warning("Textract failed for scanned bank statement page: %s", error)
+                logger.warning("PaddleOCR failed for scanned bank statement page: %s", error)
 
             fallback_text = _tesseract_image_text(processed)
             if fallback_text:

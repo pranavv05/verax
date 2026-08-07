@@ -1,12 +1,48 @@
 from __future__ import annotations
 
+import logging
+
 import cv2
 import numpy as np
 import pytesseract
-import boto3
+from paddleocr import PaddleOCR
 from PIL import Image
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_paddle_ocr: PaddleOCR | None = None
+
+
+def get_paddle_ocr() -> PaddleOCR:
+    global _paddle_ocr
+    if _paddle_ocr is None:
+        _paddle_ocr = PaddleOCR(
+            use_angle_cls=True,
+            lang="en",
+            use_gpu=False,
+            show_log=False,
+        )
+    return _paddle_ocr
+
+
+def run_paddle_ocr(image: np.ndarray) -> str:
+    try:
+        ocr = get_paddle_ocr()
+        result = ocr.ocr(image, cls=True)
+        lines: list[str] = []
+        if result and result[0]:
+            for line in result[0]:
+                if line and len(line) >= 2:
+                    text = line[1][0]
+                    confidence = line[1][1]
+                    if confidence > 0.5:
+                        lines.append(text)
+        return "\n".join(lines)
+    except Exception as error:  # noqa: BLE001
+        logger.error("PaddleOCR failed: %s", error)
+        return ""
 
 
 def preprocess_for_invoice(image: Image.Image) -> Image.Image:
@@ -77,7 +113,7 @@ def run_tesseract_invoice(image: Image.Image) -> str:
 
 
 def detect_script(text: str) -> str:
-    devanagari_chars = sum(1 for char in text if "\u0900" <= char <= "\u097F")
+    devanagari_chars = sum(1 for char in text if "ऀ" <= char <= "ॿ")
     if devanagari_chars > 5:
         return "hin"
     return "eng"
@@ -98,11 +134,6 @@ def run_tesseract_multilingual(image: Image.Image) -> str:
 
 class OCRService:
     def __init__(self) -> None:
-        kwargs: dict = {"region_name": settings.aws_region}
-        if settings.aws_access_key_id and settings.aws_secret_access_key:
-            kwargs["aws_access_key_id"] = settings.aws_access_key_id
-            kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
-        self._textract = boto3.client("textract", **kwargs)
         if settings.tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
 
@@ -110,21 +141,14 @@ class OCRService:
     def _normalize_whitespace(text: str) -> str:
         return "\n".join(line.strip() for line in text.splitlines() if line.strip())
 
-    def _ocr_with_textract(self, s3_key: str) -> str:
-        response = self._textract.detect_document_text(
-            Document={
-                "S3Object": {
-                    "Bucket": settings.aws_s3_bucket,
-                    "Name": s3_key
-                }
-            }
-        )
-        lines = [
-            block.get("Text", "")
-            for block in response.get("Blocks", [])
-            if block.get("BlockType") == "LINE"
-        ]
-        return self._normalize_whitespace("\n".join(lines))
+    @staticmethod
+    def _ocr_with_paddle(images: list[np.ndarray]) -> str:
+        all_text: list[str] = []
+        for image in images:
+            text = run_paddle_ocr(image)
+            if text:
+                all_text.append(text)
+        return "\n".join(all_text).strip()
 
     @staticmethod
     def _ocr_with_tesseract(images: list[np.ndarray]) -> str:
@@ -136,19 +160,16 @@ class OCRService:
                 all_text.append(text)
         return "\n".join(all_text).strip()
 
-    def extract_text(self, s3_key: str, processed_images: list[np.ndarray]) -> tuple[str, str]:
-        textract_error = None
-        try:
-            textract_text = self._ocr_with_textract(s3_key)
-            if len(textract_text) >= 50:
-                return textract_text, "textract"
-        except Exception as error:  # noqa: BLE001
-            textract_error = error
+    def extract_text(self, processed_images: list[np.ndarray]) -> tuple[str, str]:
+        paddle_text = self._ocr_with_paddle(processed_images)
+        if len(paddle_text) >= 50:
+            return self._normalize_whitespace(paddle_text), "paddleocr"
 
         fallback_text = self._ocr_with_tesseract(processed_images)
         if fallback_text:
             return self._normalize_whitespace(fallback_text), "tesseract"
 
-        if textract_error is not None:
-            raise RuntimeError(f"OCR failed with Textract and Tesseract fallback: {textract_error}")
+        if paddle_text:
+            return self._normalize_whitespace(paddle_text), "paddleocr"
+
         raise RuntimeError("OCR did not return usable text")
