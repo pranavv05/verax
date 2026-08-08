@@ -33,6 +33,12 @@ const clientSchema = z.object({
 
 const emptyForm = { name: "", email: "", phone: "", gstin: "", status: "active" };
 const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const requestDocsTypeOptions = [
+  ["invoice", "Invoices"],
+  ["bank_statement", "Bank Statements"],
+  ["bill", "Bills"],
+  ["other", "Other"]
+];
 
 const ClientsPage = () => {
   const { user } = useAuth();
@@ -40,7 +46,12 @@ const ClientsPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState("");
-  const [requestingId, setRequestingId] = useState("");
+  const [requestDocsClient, setRequestDocsClient] = useState(null);
+  const [requestDocsLoading, setRequestDocsLoading] = useState(false);
+  const [requestDocsTypes, setRequestDocsTypes] = useState(requestDocsTypeOptions.map(([value]) => value));
+  const [requestDocsError, setRequestDocsError] = useState("");
+  const [magicLink, setMagicLink] = useState(null);
+  const [copyFeedback, setCopyFeedback] = useState("");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [rows, setRows] = useState([]);
@@ -185,18 +196,46 @@ const ClientsPage = () => {
     }
   };
 
-  const onRequestDocs = async (clientId) => {
-    setRequestingId(clientId);
-    setError("");
-    setToast("");
+  const openRequestDocsModal = (client) => {
+    setRequestDocsClient(client);
+    setRequestDocsTypes(requestDocsTypeOptions.map(([value]) => value));
+    setRequestDocsError("");
+    setMagicLink(null);
+    setCopyFeedback("");
+  };
+
+  const closeRequestDocsModal = () => {
+    setRequestDocsClient(null);
+    setRequestDocsLoading(false);
+    setRequestDocsError("");
+    setMagicLink(null);
+    setCopyFeedback("");
+  };
+
+  const onSendDocRequest = async () => {
+    if (!requestDocsClient || requestDocsTypes.length === 0) return;
+    setRequestDocsLoading(true);
+    setRequestDocsError("");
     try {
-      const result = await clientsApi.requestDocuments(clientId);
-      setToast(`Upload link refreshed. Expires at ${formatDateTime(result.uploadTokenExpiresAt)}.`);
+      const result = await clientsApi.requestDocuments(requestDocsClient.id, {
+        documentTypes: requestDocsTypes
+      });
+      setMagicLink(`${window.location.origin}/upload/${result.uploadToken}`);
       await loadClients();
     } catch (requestError) {
-      setError(parseApiError(requestError, "Unable to request documents"));
+      setRequestDocsError(parseApiError(requestError, "Unable to request documents"));
     } finally {
-      setRequestingId("");
+      setRequestDocsLoading(false);
+    }
+  };
+
+  const onCopyMagicLink = async () => {
+    if (!magicLink) return;
+    try {
+      await navigator.clipboard.writeText(magicLink);
+      setCopyFeedback("Copied!");
+    } catch {
+      setCopyFeedback("Unable to copy — copy it manually.");
     }
   };
 
@@ -258,17 +297,16 @@ const ClientsPage = () => {
               <button
                 type="button"
                 className="btn-primary px-2 py-1.5 text-xs"
-                disabled={requestingId === client.id}
-                onClick={() => onRequestDocs(client.id)}
+                onClick={() => openRequestDocsModal(client)}
               >
-                {requestingId === client.id ? "..." : "Request docs"}
+                Request docs
               </button>
             )}
           </div>
         </td>
       </tr>
     ));
-  }, [rows, editingClient, deletingId, requestingId, canAdmin]);
+  }, [rows, editingClient, deletingId, canAdmin]);
 
   return (
     <AppShell title="Clients" subtitle="Search, filter, and manage clients across your firm.">
@@ -296,6 +334,94 @@ const ClientsPage = () => {
                 Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Request documents modal */}
+      {requestDocsClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
+          <div className="panel mx-4 w-full max-w-md p-6">
+            <h3 className="text-lg font-bold text-ink-900">
+              Request Documents from {requestDocsClient.name}
+            </h3>
+
+            {!magicLink ? (
+              <>
+                <div className="mt-4">
+                  <label className="label">Document types</label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {requestDocsTypeOptions.map(([value, label]) => (
+                      <label
+                        key={value}
+                        className="flex items-center gap-2 rounded-lg border border-[#e7dcc8] px-3 py-2 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={requestDocsTypes.includes(value)}
+                          onChange={(event) =>
+                            setRequestDocsTypes((prev) =>
+                              event.target.checked
+                                ? [...prev, value]
+                                : prev.filter((type) => type !== value)
+                            )
+                          }
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {requestDocsError ? (
+                  <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {requestDocsError}
+                  </div>
+                ) : null}
+
+                <div className="mt-5 flex gap-3">
+                  <button
+                    type="button"
+                    className="btn-secondary flex-1"
+                    disabled={requestDocsLoading}
+                    onClick={closeRequestDocsModal}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary flex-1"
+                    disabled={requestDocsLoading || requestDocsTypes.length === 0}
+                    onClick={onSendDocRequest}
+                  >
+                    {requestDocsLoading ? "Sending..." : "Send Request"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mt-3 text-sm text-mint-700">
+                  Request sent! Share this link with your client:
+                </p>
+                <p className="mt-2 break-all rounded-lg border border-[#e4d8c5] bg-sand-50 px-3 py-2 font-mono text-xs text-[#596a82]">
+                  {magicLink}
+                </p>
+                <div className="mt-3 flex items-center gap-3">
+                  <button type="button" className="btn-secondary px-3 py-1.5 text-xs" onClick={onCopyMagicLink}>
+                    Copy Link
+                  </button>
+                  {copyFeedback && (
+                    <span className="text-xs font-semibold text-mint-700">{copyFeedback}</span>
+                  )}
+                </div>
+
+                <div className="mt-5">
+                  <button type="button" className="btn-primary w-full" onClick={closeRequestDocsModal}>
+                    Close
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

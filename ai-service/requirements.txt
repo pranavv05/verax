@@ -1,8 +1,16 @@
+# paddle imports setuptools at runtime (paddle/utils/cpp_extension), and
+# python:3.12-slim no longer ships setuptools by default, so it must be explicit
+# or the AI service crashes on startup with ModuleNotFoundError: setuptools.
+setuptools==75.6.0
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 boto3==1.35.80
 groq==0.11.0
-paddlepaddle==2.6.1
+# groq 0.11.0 passes `proxies=` to httpx.Client, which httpx removed in 0.28.
+# Leaving httpx unpinned lets pip resolve 0.28+ and the AI service then dies at
+# startup with: TypeError: Client.__init__() got an unexpected keyword 'proxies'.
+httpx==0.27.2
+paddlepaddle==2.6.2
 paddleocr==2.7.3
 opencv-python-headless==4.9.0.80
 numpy==1.26.4
@@ -15,3 +23,8 @@ pdfplumber==0.11.4
 pdf2image==1.17.0
 python-multipart==0.0.9
 python-dotenv==1.0.1
+# This network's TLS-inspecting proxy issues certs that aren't in certifi's
+# bundle, so every outbound HTTPS call from Python (Groq API, PaddleOCR's model
+# download) fails with CERTIFICATE_VERIFY_FAILED. This patches ssl to trust the
+# Windows certificate store instead, matching what curl/the OS already trust.
+pip-system-certs==5.3

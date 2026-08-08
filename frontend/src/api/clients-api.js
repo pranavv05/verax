@@ -35,9 +35,16 @@ export const clientsApi = {
       method: "DELETE"
     });
   },
-  requestDocuments(id) {
+  requestDocuments(id, payload) {
     return request(`/api/clients/${id}/request-docs`, {
-      method: "POST"
+      method: "POST",
+      body: payload
+    });
+  },
+  enablePortal(id, payload) {
+    return request(`/api/clients/${id}/enable-portal`, {
+      method: "POST",
+      body: payload
     });
   }
 };

@@ -8,7 +8,7 @@ import { clientsApi } from "../api/clients-api";
 import { documentsApi } from "../api/documents-api";
 import { exportsApi } from "../api/exports-api";
 import { useAuth } from "../contexts/AuthContext";
-import { formatDateTime, parseApiError } from "../lib/utils";
+import { formatDateTime, parseApiError, triggerFileDownload } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 const exportSchema = z
@@ -190,7 +190,7 @@ const ExportPage = () => {
       setPreviewExportPayload(null);
       setToast("Tally XML generated successfully.");
       if (result.download_url) {
-        window.open(result.download_url, "_blank", "noopener,noreferrer");
+        triggerFileDownload(result.download_url, "tally-export.xml");
       }
       const refreshedHistory = await exportsApi.history({ page: 1, limit: 20 });
       setHistory(refreshedHistory.data || []);
@@ -206,7 +206,7 @@ const ExportPage = () => {
     setError("");
     try {
       const result = await exportsApi.download(exportId);
-      window.open(result.download_url, "_blank", "noopener,noreferrer");
+      triggerFileDownload(result.download_url, "tally-export.xml");
     } catch (downloadError) {
       setError(parseApiError(downloadError, "Unable to create download link"));
     }
@@ -447,7 +447,7 @@ const ExportPage = () => {
               <button
                 type="button"
                 className="btn-primary w-full"
-                onClick={() => window.open(latestExport.download_url, "_blank", "noopener,noreferrer")}
+                onClick={() => triggerFileDownload(latestExport.download_url, "tally-export.xml")}
               >
                 Download XML
               </button>

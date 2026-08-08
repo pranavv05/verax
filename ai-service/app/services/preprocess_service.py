@@ -52,11 +52,17 @@ class PreprocessService:
         if coords.size == 0:
             return image
 
-        angle = cv2.minAreaRect(coords)[-1]
-        if angle < -45:
-            angle = -(90 + angle)
-        else:
-            angle = -angle
+        # cv2.minAreaRect's angle convention differs across OpenCV versions:
+        # pre-4.5 returns angles in [-90, 0), 4.5+ returns [0, 90). Normalizing
+        # into (-45, 45] via modulo works for either convention, instead of the
+        # old `if angle < -45` correction which assumed the pre-4.5 range and,
+        # on 4.5+, was misreading an upright page's ~90 angle as a genuine skew
+        # and rotating the whole page 90 degrees, cropping content off the top.
+        raw_angle = cv2.minAreaRect(coords)[-1]
+        angle = raw_angle % 90
+        if angle > 45:
+            angle -= 90
+        angle = -angle
 
         if abs(angle) < 0.3:
             return image

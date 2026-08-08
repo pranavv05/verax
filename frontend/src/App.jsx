@@ -1,5 +1,12 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
+import ProtectedClientRoute from "./components/layout/ProtectedClientRoute";
+import { ClientPortalAuthProvider } from "./contexts/ClientPortalAuthContext";
+import ClientPortalDashboardPage from "./pages/ClientPortalDashboardPage";
+import ClientPortalDocumentsPage from "./pages/ClientPortalDocumentsPage";
+import ClientPortalLoginPage from "./pages/ClientPortalLoginPage";
+import ClientPortalReconciliationPage from "./pages/ClientPortalReconciliationPage";
+import ClientPortalSettingsPage from "./pages/ClientPortalSettingsPage";
 import AboutPage from "./pages/AboutPage";
 import AuditLogPage from "./pages/AuditLogPage";
 import PricingPage from "./pages/PricingPage";
@@ -25,6 +32,7 @@ import TeamPage from "./pages/TeamPage";
 import ToolsPage from "./pages/ToolsPage";
 
 const Protected = ({ children }) => <ProtectedRoute>{children}</ProtectedRoute>;
+const ProtectedClient = ({ children }) => <ProtectedClientRoute>{children}</ProtectedClientRoute>;
 
 const App = () => (
   <Routes>
@@ -149,6 +157,56 @@ const App = () => (
         </Protected>
       }
     />
+
+    {/*
+      Client portal — a separate world. The ClientPortalAuthProvider is mounted
+      only under this branch, so the firm AuthContext and the client session
+      never share state, and each portal's pages own their own shell.
+    */}
+    <Route
+      path="/client-portal"
+      element={
+        <ClientPortalAuthProvider>
+          <Outlet />
+        </ClientPortalAuthProvider>
+      }
+    >
+      <Route index element={<Navigate to="/client-portal/dashboard" replace />} />
+      <Route path="login" element={<ClientPortalLoginPage />} />
+      <Route
+        path="dashboard"
+        element={
+          <ProtectedClient>
+            <ClientPortalDashboardPage />
+          </ProtectedClient>
+        }
+      />
+      <Route
+        path="documents"
+        element={
+          <ProtectedClient>
+            <ClientPortalDocumentsPage />
+          </ProtectedClient>
+        }
+      />
+      <Route
+        path="reconciliation"
+        element={
+          <ProtectedClient>
+            <ClientPortalReconciliationPage />
+          </ProtectedClient>
+        }
+      />
+      <Route
+        path="settings"
+        element={
+          <ProtectedClient>
+            <ClientPortalSettingsPage />
+          </ProtectedClient>
+        }
+      />
+      <Route path="*" element={<Navigate to="/client-portal/dashboard" replace />} />
+    </Route>
 
     <Route path="*" element={<NotFoundPage />} />
   </Routes>

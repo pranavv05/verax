@@ -1,5 +1,5 @@
 # Verax TallyOCR — Feature Status
-Last updated: 2026-08-08
+Last updated: 2026-08-09
 Audited by: Claude Code (automated scan)
 
 ## Legend
@@ -35,11 +35,11 @@ Frontend: No dedicated page; implemented as header button in `components/layout/
 Notes: Confirmed working.
 
 ### JWT refresh
-Status: ✅ Production Ready
-Backend: `POST /api/auth/refresh` — `auth.routes.js:114-131` → `refreshAccessToken` (`auth.service.js:518-653`). Full chain rotation: verifies token hash, detects reuse and revokes the entire token family on mismatch (`:566-571`), marks old token `revoked_at`/`replaced_by_token_id` (`:606-614`), inserts new row (`:616-645`)
+Status: 🔧 Needs Fix
+Backend: `POST /api/auth/refresh` — `auth.routes.js:114-131` → `refreshAccessToken` (`auth.service.js:518-653`). Chain rotation: verifies token hash, marks old token `revoked_at`/`replaced_by_token_id`, inserts new row. Happy path is correct.
 Frontend: `lib/api-client.js:66-119` (`request()`) implements transparent 401→refresh→retry on every authenticated call except the two `ToolsPage.jsx` raw-`fetch` calls (see Standalone Tools)
 Migration: `20260311171500_auth_infra.js` (refresh_tokens table + RLS)
-Notes: Correctly implemented with reuse detection, a real security feature many SaaS apps skip.
+Notes: **Bug found 2026-08-09 while building the client portal (not introduced by it).** The advertised reuse detection does not actually persist. In `refreshAccessToken`, the token-hash-mismatch and already-revoked branches call `revokeRefreshTokenFamily(client, ...)` and then `throw` — but both statements run inside the same `withTenantTransaction` handler, and throwing there triggers the `ROLLBACK` in `tenant-context.js:27-29`, which discards the family revocation along with everything else. The caller still gets a correct 401, so the failure is invisible from the outside: a stolen refresh token that triggers reuse detection leaves every sibling token in the family still live. This is the identical trap already documented on the `loginUser` audit-log entry, whose fix was to return a sentinel from the handler and throw after the transaction commits. The same pattern was applied to the new `clientRefreshToken` (`client-auth.service.js`), where it is verified working by test; the firm-side function was deliberately left untouched because changing firm auth behaviour was outside the client-portal task's scope. **Recommended fix: mirror the sentinel pattern in `refreshAccessToken`.**
 
 ### Password reset (forgot password + reset flow)
 Status: ⚠️ Partial
@@ -179,10 +179,12 @@ Backend: `document-processing.worker.js` — marks `processing` (`:54-59`), call
 Status: ✅ Production Ready
 AI Service: `ai-service/app/services/ocr_service.py:163-175` — PaddleOCR primary (`_ocr_with_paddle`, `:144-151`), genuine try/except around the Paddle call (`:31-45`, returns `""` on failure rather than crashing), falls through to Tesseract (`_ocr_with_tesseract`, `:153-161`) if Paddle text `< 50` chars
 Notes: **Task description says "Textract primary" — this is stale.** Recent commits (`4992f08`, `571cd38`) replaced AWS Textract with PaddleOCR and OpenAI with Groq; current code and CLAUDE.md both accurately reflect PaddleOCR + Groq, no leftover Textract/OpenAI code found anywhere in `ai-service/app/`.
+**Operational caveat found 2026-08-08:** PaddleOCR downloads its detection/recognition/classification models from `paddleocr.bj.bcebos.com` on **first OCR call**, not at build time (~16MB across 3 archives). A first-run environment therefore needs egress to that host, and the download adds ~25s to the first document only. When it fails, `run_paddle_ocr`'s try/except returns `""` and the pipeline silently falls through to Tesseract — correct resilience, but the cause only appears in the AI-service log. Consider baking the models into the image for offline/air-gapped deploys.
 
 ### LLM structured extraction
 Status: ✅ Production Ready
-AI Service: `llm_service.py` — Groq `llama-3.1-70b-versatile` (still a hardcoded model string, not env-configurable — unchanged, not in scope), key from `settings.groq_api_key` (env-sourced)
+AI Service: `llm_service.py:407-412` — Groq `llama-3.3-70b-versatile`, now read from `os.getenv("GROQ_MODEL", ...)`, key from `settings.groq_api_key` (env-sourced)
+Notes: **Fixed 2026-08-08 (demo-prep pass), verified live end to end.** The pinned model `llama-3.1-70b-versatile` had been **decommissioned by Groq** and returned `400 model_decommissioned` on every call, so extraction silently produced `confidence: 0.0` and an empty result for every document — the graceful-degradation path added earlier masked this as `review_required` rather than an error, which is why it was not obvious. Replaced with `llama-3.3-70b-versatile` and made it overridable via a `GROQ_MODEL` env var so the next Groq deprecation needs no code change. Also pinned `httpx==0.27.2` in `requirements.txt`: `groq==0.11.0` passes `proxies=` to `httpx.Client`, removed in httpx 0.28, so an unpinned resolve crashed the service at startup with `TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`. Confirmed working: a live magic-link upload now returns `status=extracted`, `confidence≈0.85`, with correct `supplier_name` and `invoice_number`.
 Notes: **Fixed 2026-08-08.** `settings.llm_timeout_seconds` is now passed as `timeout=` on the `chat.completions.create(...)` call, so a hung Groq request no longer blocks a worker slot indefinitely. The call is now wrapped in its own `try/except`: on failure it logs `Groq extraction failed: {e}` and returns `{"document_type_detected": "unknown", "confidence": 0.0, "_llm_error": str(e)}` directly (same short-circuit shape as the existing `is_ocr_garbage` path) instead of propagating to `main.py`'s generic 500 handler — a Groq outage now degrades a single document to `review_required` rather than surfacing as a raw 500.
 
 ### Confidence score generation
@@ -643,6 +645,89 @@ Backend: `env.MAGIC_LINK_EXPIRY_HOURS` (default 24), enforced both at the query 
 
 ---
 
+## CLIENT PORTAL
+
+*Added 2026-08-09. A second, completely separate auth world for the SME clients of
+a CA firm. Two rules govern every entry below: a firm JWT must never work on
+`/api/client-portal/*`, and a client JWT must never work on `/api/*` firm routes.
+Both are enforced by construction (different signing key, different JWT
+issuer/audience, different middleware) and both are covered by tests.*
+
+### Client portal schema + RLS
+Status: ✅ Production Ready
+Migration: `20260516000000_client_portal_auth.js` — adds `portal_email` / `portal_password_hash` / `portal_enabled` / `portal_last_login_at` to `clients` (unique partial index `uq_clients_portal_email_active` on `lower(portal_email)` among live rows, matching the `uq_users_email_active` pattern); creates `client_refresh_tokens` (id, client_id CASCADE, token_hash, expires_at, revoked_at, created_at) with RLS enabled + forced; adds `app.current_client_id()` alongside the existing `app.current_firm_id()`.
+Notes: Two RLS decisions worth recording. (1) `client_refresh_tokens_isolation_policy` has **two** branches — `client_id = app.current_client_id()` for the client's own session, plus an `EXISTS` subquery through `clients.firm_id = app.current_firm_id()` so the owning CA firm can revoke a client's sessions when it resets that client's portal password. Without the firm branch, `enableClientPortal` (which runs in a firm-scoped transaction) would have silently revoked zero rows and left old sessions alive across a password reset. (2) `clients_isolation_policy` gains a third branch, `app.auth_context = 'client_portal_login'`, so an unauthenticated portal login can find its own row by `portal_email` before any firm context exists — the exact shape of the existing `login` hatch on `users` and `magic_link` hatch on `clients`. `tenant-context.js` now also sets `app.current_client_id` and `app.portal_email`.
+
+### Separate client JWT signing key
+Status: ✅ Production Ready
+Backend: `config/env.js` requires `CLIENT_JWT_SECRET` (min 32) and **refuses to boot if it equals `JWT_SECRET` or `JWT_REFRESH_SECRET`** (`Joi.invalid(Joi.ref(...))`). `CLIENT_JWT_EXPIRY` (default `15m`) and `CLIENT_REFRESH_TOKEN_EXPIRY_DAYS` (default 30) are env-driven. `utils/client-token-utils.js` signs with issuer `verax-client-portal` / audience `verax-clients` — distinct from the firm portal's `ca-saas-platform` / `ca-saas-users`, so the two token families are structurally incompatible even before the `role`/`type` claim checks.
+Env: added to root `.env.example`, root `.env`, `backend/.env`, and both `docker-compose.yml` and `docker-compose.prod.yml` (backend + worker services), since those enumerate env vars explicitly and the backend now fails validation without it.
+
+### Enable client portal (admin only)
+Status: ✅ Production Ready
+Backend: `POST /api/clients/:id/enable-portal` — `clients.routes.js`, `requireAdmin` + `enablePortalBodySchema` (Joi email) → `enableClientPortal` (`client-auth.service.js`). Generates a 12-char temp password via `crypto.randomInt` (guaranteed one letter + one digit, ambiguous glyphs `0/O/1/l/I` excluded because it gets read off a screen and typed by hand), hashes it bcrypt cost 12, revokes any existing client sessions, audit-logs `client_portal_enabled` and `client_portal_invite_emailed`, and emails the client from `templates/clientPortalInvite.template.js`. A duplicate `portal_email` surfaces as a 409, not a raw 23505.
+Frontend: `ClientDetailPage.jsx` — admin-gated "Client Portal" panel showing Enabled/Not enabled, the portal email, and last login; modal captures the email and then shows the temp password **once** with a copy button and the "will not be shown again" warning. `closeEnablePortalModal` clears the password from React state on close.
+Migration: `20260516000000_client_portal_auth.js`
+Notes: `getClientById` now returns a `portal: {enabled, email, lastLoginAt}` object. `portal_password_hash` is never selected by any read path — verified by test that the client-detail response body contains no hash field.
+
+### Client portal login
+Status: ✅ Production Ready
+Backend: `POST /api/client-portal/auth/login` — `client-auth.routes.js`, own `clientAuthRateLimiter` (10 per 15 min per IP, separate from the firm portal's budget), Joi-validated → `clientLogin`. Looks the client up by `portal_email` with `portal_enabled = true AND deleted_at IS NULL`, bcrypt-compares, mints a 15-min access token and a 30-day rotating refresh token, stamps `portal_last_login_at`, audit-logs `client_portal_login`.
+Frontend: `pages/ClientPortalLoginPage.jsx` — Zod validation, loading/error states, "Forgot password" reveals "Contact your CA firm to reset your password".
+Notes: Unknown email, wrong password, and inactive client all return the byte-identical generic `Invalid email or password` — verified by test that the unknown-email and wrong-password responses match exactly. Failures against a *known* client are audit-logged as `client_portal_login_failed` with a reason; an unknown email cannot be, for the same `audit_logs.firm_id NOT NULL` reason documented on the firm-side Login entry.
+
+### Client portal refresh with rotation + reuse detection
+Status: ✅ Production Ready
+Backend: `POST /api/client-portal/auth/refresh` → `clientRefreshToken`. The refresh JWT carries its `client_refresh_tokens` row id as its `jti`; the handler re-hashes the presented token, compares, rotates (new row + old row revoked), and on hash mismatch / already-revoked / portal-disabled revokes the **entire** token family.
+Frontend: `lib/client-portal-client.js` — its own module-scope token and its own 401→refresh→retry, deliberately not sharing `lib/api-client.js`'s `tokenStore`.
+Notes: The family revocation is applied via a **sentinel return, not a throw** — throwing inside the `withTenantTransaction` handler would `ROLLBACK` the revocation, which is exactly the live bug now recorded against the firm-side `JWT refresh` entry. Verified by test: replaying a rotated token 401s, and the token issued by that same rotation is then also dead.
+
+### Client portal logout + change password
+Status: ✅ Production Ready
+Backend: `POST /api/client-portal/auth/logout` (revokes the presented token, audit `client_portal_logout`, clears cookie) and `POST /api/client-portal/auth/change-password` (`requireClientAuth`, Joi min 8 on `newPassword`) → `clientChangePassword`, which verifies the current password, re-hashes bcrypt 12, revokes **all** sessions including the caller's, and audit-logs `client_portal_password_changed`.
+Frontend: `pages/ClientPortalSettingsPage.jsx` — change-password form with confirm field, then clears the session and redirects to the login page.
+Notes: Verified end to end — wrong current password 401s, a <8-char new password 400s, and after a successful change the old password stops working while the new one succeeds.
+
+### Client refresh cookie isolation
+Status: ✅ Production Ready
+Backend: `getClientRefreshCookieOptions` (`client-auth.service.js`) — `httpOnly`, `sameSite: strict`, `secure` in production, cookie name `verax_client_refresh_token`, **`path: /api/client-portal/auth`** so it is never sent to (and can never clobber) the firm cookie scoped at `/api/auth`.
+Notes: All four properties asserted by test against the real `Set-Cookie` header.
+
+### Client auth middleware / cross-world rejection
+Status: ✅ Production Ready
+Backend: `middlewares/client-auth.middleware.js` `requireClientAuth` — verifies with `CLIENT_JWT_SECRET` + client issuer/audience, requires `type === 'client_access'` and `role === 'client'`, sets `req.clientId` / `req.firmId`, and exposes `req.withClientTransaction` which opens a transaction with **both** `app.current_firm_id` and `app.current_client_id` set. Shares no code with `requireAuth`.
+Notes: Verified by test — a firm admin JWT on `GET /api/client-portal/me` returns 401, and a client JWT on both `GET /api/clients` and `GET /api/auth/me` returns 401.
+
+### Client portal dashboard + stats
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/stats` — `client-portal.routes.js`, returns `totalDocuments`, `processingCount`, `reviewCount`, `completedCount`, `thisMonthDocuments`, all scoped to `firm_id` **and** `client_id`.
+Frontend: `pages/ClientPortalDashboardPage.jsx` — greeting, 4 stat tiles, last-5 recent documents, quick links; loading/error/empty states.
+
+### Client portal document list, detail, download
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/documents` (Joi-validated `status`/`fromDate`/`toDate`/`page`/`limit`), `GET /documents/:id` (adds a plain-English `statusMessage`), `GET /documents/:id/download` (presigned URL for the original upload only).
+Frontend: `pages/ClientPortalDocumentsPage.jsx` — All/Processing/Under Review/Complete filter, card layout that reflows on mobile, per-row download button, `components/ui/ClientStatusBadge.jsx` (Processing→blue, Under Review→amber, Complete→green).
+Notes: **`extracted_data` is never returned** — the routes select only `file_name`, `doc_type`, `status`, timestamps, `confidence_score` and the upload `source`; `structured_data`, `raw_text` and `s3_key` appear nowhere in any response, asserted by test. Internal statuses are collapsed to the three client-facing labels, and the Joi enum accepts only the client-facing filter names, so `?status=reviewed` is a 400 rather than a leak of firm workflow vocabulary.
+
+### Client portal reconciliation + Excel export
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/reconciliation?period=MMYYYY` returns `{totalDocuments, matched, notFound, mismatched, totalITC}` (`mismatched` folds in `partial`, which reads as "doesn't agree" to a client); `GET /api/client-portal/reconciliation/export` streams the same xlsx the firm portal produces. Audit actions `client_portal_reconciliation_viewed` / `_exported`.
+Frontend: `pages/ClientPortalReconciliationPage.jsx` — month+year picker defaulting to last month, four summary cards, ITC total, Excel download, read-only.
+Notes: The matching logic was **extracted, not duplicated** — `getReconciliationData` / `writeReconciliationWorkbook` and their helpers moved from `compliance.routes.js` into the new `services/reconciliation.service.js`, which both route files now import; `compliance.routes.js` behaviour is unchanged. A client with no GSTIN on file gets a friendly `available: false` payload instead of the firm-facing 400.
+
+### Client portal exports history
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/exports` — `tally_exports` rows for this client only, exposing just `exportedAt`, `documentCount` and a human `period` label. `xml_s3_key` is never returned, so a client can see *that* a filing happened but can never fetch the Tally XML.
+Frontend: shown as "Filed to your accounts" on `ClientPortalSettingsPage.jsx`.
+
+### Client portal frontend shell + routing
+Status: ✅ Production Ready
+Frontend: `contexts/ClientPortalAuthContext.jsx` (bootstrap via refresh cookie, `login`/`logout`/`clearSession`, `isAuthenticated`/`isLoading`), `components/layout/ClientPortalShell.jsx` (header with logo + client name + sign out, horizontal nav, no sidebar, mobile-first `max-w-4xl` layout), `components/layout/ProtectedClientRoute.jsx` (loading spinner during bootstrap, redirect to `/client-portal/login` otherwise), `api/client-portal-api.js`.
+Routing: `App.jsx` mounts `/client-portal/*` under its own `ClientPortalAuthProvider` via an `Outlet` layout route, so the firm `AuthProvider` in `main.jsx` and the client session never share state. `/client-portal/login` is public; dashboard/documents/reconciliation/settings are wrapped in `ProtectedClientRoute`.
+Notes: The portal deliberately reuses the app's existing design tokens (`panel`, `field`, `btn-primary`, ink/sand/mint palette) at a larger base type size (`text-base`/`text-lg` rather than `text-sm`) with no AppShell, no sidebar, and no technical jargon.
+
+---
+
 ## ROLE PERMISSIONS
 
 ### requireAdmin on all admin-only routes
@@ -755,30 +840,60 @@ Frontend: `lib/token-store.js:1-27` — access token and user object kept in mod
 
 ---
 
+---
+
+## LOCAL / DEPLOY ENVIRONMENT
+
+*Added 2026-08-08 during a demo-prep verification pass. These are setup-and-packaging
+defects rather than feature gaps, but each one independently prevented the app from
+running at all on a clean machine, so they belong in this file.*
+
+### Reproducible local bring-up from a clean checkout
+Status: 🔧 Needs Fix
+Notes: A clean checkout could not be started. Every one of these had to be fixed by hand: (1) **no `.env` existed** and root `.env.example` is missing `LOCAL_STORAGE` entirely (the backend supports it via `env.js:13`, and it is required for S3-free local dev) — `ai-service/.env.example` does document `LOCAL_STORAGE`/`LOCAL_STORAGE_PATH` correctly; (2) `backend/package.json` declares `"seed:admin": "node scripts/seed-admin.js"` and CLAUDE.md documents `npm run seed:admin`, but **`backend/scripts/` did not exist at all** — the command fails outright, so there is no documented way to create a first admin except `POST /api/auth/signup`; (3) `ai-service/requirements.txt` pinned `paddlepaddle==2.6.1`, which **no longer exists on PyPI** (available versions start at 2.6.2), so the image could never build — now `2.6.2`; (4) `paddle` imports `setuptools` at runtime but `python:3.12-slim` stopped bundling it, so the container crashed on startup with `ModuleNotFoundError: setuptools` — now pinned explicitly in `requirements.txt`; (5) `httpx` was unpinned and incompatible with `groq==0.11.0` (see LLM structured extraction). Items 3–5 mean the AI service image was **unbuildable and unbootable as committed**, independent of any network issue.
+
+### docker-compose ai-service cannot read LOCAL_STORAGE uploads
+Status: ✅ Production Ready
+Notes: **Fixed 2026-08-08.** The backend writes uploads to a hardcoded `backend/local-storage/<key>` (`s3.service.js:28`), and the AI service reads `settings.local_storage_path + s3_key` (`s3_service.py:23-24`) — but `docker-compose.yml`'s `ai-service` block set **neither `LOCAL_STORAGE` nor `LOCAL_STORAGE_PATH`, and did not mount that directory**, so with `LOCAL_STORAGE=true` the containerised AI service could never see an uploaded file and every document failed. Added `LOCAL_STORAGE`, `LOCAL_STORAGE_PATH=/mnt/local-storage`, and a `./backend/local-storage:/mnt/local-storage` bind mount. Also pinned the container's `DATABASE_URL` to the compose-internal `postgres` hostname, since the root `.env` value points at `localhost` for the host-side backend/worker and would not resolve inside the container.
+
+### Verification tooling
+Status: ✅ Production Ready
+Notes: Added 2026-08-08: `backend/scripts/demo-smoke-test.js` walks the whole path (login → client → magic link → upload → confirm → processing → extraction → approve → Tally export → download, asserting the payload is real XML) and is idempotent so it can be re-run before a demo; `backend/scripts/make-test-invoice.js` generates a text-bearing invoice PDF (the repo had no PDF fixture); `backend/scripts/seed-demo-extraction.js` seeds a realistic extraction so review/approve/export can be exercised without a live OCR round trip. Local-only, git-ignored support files: `docker-compose.override.yml`, `ai-service/Dockerfile.local`, `ai-service/corp-ca.pem`.
+
+---
+
 ## Summary
 
 | Status | Count |
 |--------|-------|
-| ✅ Production Ready | 127 |
+| ✅ Production Ready | 142 |
 | ⚠️ Partial | 9 |
 | ❌ Not Built | 0 |
-| 🔧 Needs Fix | 4 |
-| **Total** | 140 |
+| 🔧 Needs Fix | 6 |
+| **Total** | 157 |
 
-*(Recounted directly from this file's `Status:` lines during the 2026-08-08 fix pass — the previous summary undercounted the true entry total. Net change from the 7 fixes applied 2026-08-08: 1 item moved ❌→✅, 9 items moved ⚠️→✅, 3 items moved 🔧→✅; one additional ⚠️→✅ correction was made to "Link from upload success page" after directly confirming it in code while implementing Fix 2.)*
+*(2026-08-09: +13 new ✅ entries for the CLIENT PORTAL section, and "JWT refresh" moved ✅→🔧 after a real rollback bug was found in its reuse detection while building the portal — see that entry. Previous pass, 2026-08-08: 1 item moved ❌→✅, 9 items ⚠️→✅, 3 items 🔧→✅.)*
 
 ## Top Gaps to Address
 
 *Updated 2026-08-08 — 7 items from the previous list were fixed in this pass (see each entry's "Fixed 2026-08-08" note for detail): permanent-failure notification/email, `gstr2b/match` admin gate, authenticated-upload UX (queue/progress/validation), `request-docs` `documentTypes`, LLM request timeout + Groq failure handling, `/api/tools/*` rate limiting + frontend 401-refresh, and signup/login audit logs. Remaining gaps, in priority order:*
 
+0. **Firm-side refresh-token reuse detection silently rolls back** (added 2026-08-09, now the highest-priority item) — `refreshAccessToken` revokes the token family and then throws inside the same transaction, so the `ROLLBACK` in `withTenantTransaction` discards the revocation. The caller still sees a correct 401, which is why this has gone unnoticed. Fix is mechanical: return a sentinel from the handler and throw after the commit, exactly as `loginUser` already does and as the new `clientRefreshToken` does. See the AUTH → JWT refresh entry.
 1. **Scheduled-requests cron worker has no standalone process** — it only runs because it happens to be instantiated inside the document-processing worker file; deploying the two workers separately (a natural scaling move) would silently break the 08:00 UTC daily job.
 2. **Staff cannot see the firm's plan** on Settings — likely an over-broad admin gate rather than intentional design; worth a quick product call.
 3. **No audit log on extraction edits** (only version snapshots exist) — reduces traceability for a compliance-positioned product; signup and login are now logged as of this pass, but field-level edits on `PUT /api/extractions/:documentId` still are not.
 4. **Login audit logging has one intentional blind spot**: a failed login against an email that doesn't exist in the system cannot be logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm. Known-user wrong-password attempts and all successful logins are logged; unknown-email attempts are not. Closing this fully would require a schema change (e.g. a nullable `firm_id` or a sentinel "system" firm), which was out of scope for this fix pass.
 5. **"Dropdown with last 20 notifications" limit was not independently re-verified** against `notifications.service.js`'s SQL `LIMIT` clause — carried over from the original audit, unaffected by this fix pass.
+6. **Clean-machine bring-up is broken** (added 2026-08-08) — see the new "Local / Deploy Environment" section. Highest-value items: restore the missing `backend/scripts/seed-admin.js` that `package.json` and CLAUDE.md both reference, and add `LOCAL_STORAGE` to root `.env.example`.
+7. **Third-party version drift is unguarded** (added 2026-08-08) — a decommissioned Groq model and an unpinned `httpx` each broke the AI service silently or fatally, and a since-removed `paddlepaddle` pin broke the image build. There is no CI step that builds `ai-service` or makes one live extraction call, so all three failed only at runtime on a clean environment. A single smoke job running `docker compose build ai-service` plus `scripts/demo-smoke-test.js` would have caught every one.
+8. **Tally XML has no `<?xml ?>` declaration** (added 2026-08-08) — `buildTallyXml` output begins directly with `<ENVELOPE>`. TallyPrime accepts this, so it is not a functional break, but any consumer or test asserting a leading `<?xml` will fail.
 
 ## What Can Be Piloted Today
 
 The core document lifecycle — magic-link and authenticated upload → OCR/LLM extraction with confidence gating → review/edit/approve → Tally XML export (single and bulk) — is fully wired end to end across all three services, with real RLS-backed multi-tenancy, working JWT refresh with reuse detection, and a genuinely complete PaddleOCR→Tesseract fallback plus Groq extraction pipeline (now with an enforced request timeout and graceful degradation on failure). GSTIN validation (local + live GSP), tax-math/TDS/duplicate-invoice compliance checks, GSTR-2B reconciliation with Excel export, item-name-mapping with fuzzy suggestions, full document version history with diff view, all four notification triggers (including permanent-failure alerting as of this pass), scheduled recurring document requests, team management, and audit logging (now including signup/login) are all built and connected. Both standalone tools (register cleaner, bank-statement-to-XML) are production-adapted with real edge-case handling and are now rate-limited with proper session-refresh behavior on the frontend.
 
-A CA firm can pilot the full upload → review → export workflow today, on either the authenticated staff-upload page or the client-facing magic-link page — both now have matching queue/progress/validation UX. The two items flagged in the previous audit as pre-pilot blockers (permanent-failure alerting and the authenticated-upload UX gap) are resolved. What remains is lower-priority operational hardening (the scheduled-requests worker's process-topology assumption, extraction-edit audit coverage) rather than anything blocking a pilot.
+A CA firm can pilot the full upload → review → export workflow today, on either the authenticated staff-upload page or the client-facing magic-link page — both now have matching queue/progress/validation UX. The two items flagged in the previous audit as pre-pilot blockers (permanent-failure alerting and the authenticated-upload UX gap) are resolved.
+
+As of 2026-08-09 the **client portal** is also pilot-ready: a firm admin can enable portal access for a client from the client detail page, hand over the one-time temp password, and that client can sign in at `/client-portal/login` to see their own documents in plain English, download their originals, check their GST reconciliation, download it as Excel, and change their password. The two worlds are provably separate — a firm JWT is rejected on every client-portal route and a client JWT on every firm route, verified by test, as is the rule that one client can never see a sibling client's documents even within the same firm.
+
+What remains is lower-priority operational hardening (the scheduled-requests worker's process-topology assumption, extraction-edit audit coverage) plus the one real bug this pass surfaced in the firm-side refresh-token reuse detection, which is listed first under Top Gaps.

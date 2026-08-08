@@ -60,3 +60,9 @@ tmp/
 temp/
 *.tmp
 backend/local-storage/
+
+# Local-only demo/dev environment support (added 2026-08-08)
+docker-compose.override.yml
+ai-service/Dockerfile.local
+ai-service/corp-ca.pem
+backend/local-storage/

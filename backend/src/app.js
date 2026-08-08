@@ -4,6 +4,8 @@ const cors = require("cors");
 const morgan = require("morgan");
 const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/auth.routes");
+const clientAuthRoutes = require("./routes/client-auth.routes");
+const clientPortalRoutes = require("./routes/client-portal.routes");
 const clientRoutes = require("./routes/clients.routes");
 const documentRoutes = require("./routes/documents.routes");
 const publicUploadRoutes = require("./routes/public-upload.routes");
@@ -24,7 +26,15 @@ const localUploadRoutes = env.LOCAL_STORAGE ? require("./routes/local-upload.rou
 const app = express();
 
 app.disable("x-powered-by");
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        frameAncestors: ["'self'", "http://localhost:5174"]
+      }
+    }
+  })
+);
 app.use(
   cors({
     origin: env.FRONTEND_URL,
@@ -43,6 +53,10 @@ app.get("/health", (req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+// Client portal — a separate auth world. Mounted before /api/clients so the
+// more specific prefix wins, and guarded exclusively by requireClientAuth.
+app.use("/api/client-portal/auth", clientAuthRoutes);
+app.use("/api/client-portal", clientPortalRoutes);
 app.use("/api/clients", clientRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/upload", publicUploadRoutes);

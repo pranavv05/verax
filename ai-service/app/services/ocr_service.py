@@ -32,14 +32,34 @@ def run_paddle_ocr(image: np.ndarray) -> str:
         ocr = get_paddle_ocr()
         result = ocr.ocr(image, cls=True)
         lines: list[str] = []
+        dropped = 0
         if result and result[0]:
             for line in result[0]:
                 if line and len(line) >= 2:
                     text = line[1][0]
                     confidence = line[1][1]
-                    if confidence > 0.5:
+                    # Clean, computer-rendered PDF pages score >0.9 almost
+                    # uniformly, but real camera photos (uneven lighting,
+                    # slight blur/angle) routinely produce legitimate text
+                    # in the 0.3-0.5 range. Filtering those out at 0.5 was
+                    # silently discarding real invoice text on photos while
+                    # never affecting PDFs, which then surfaced downstream
+                    # as "not enough text" / garbage-OCR on images only.
+                    # The downstream is_ocr_garbage() check is the real
+                    # safety net for genuinely unusable text, so keep this
+                    # threshold low and let that check decide.
+                    if confidence > 0.3:
                         lines.append(text)
-        return "\n".join(lines)
+                    else:
+                        dropped += 1
+        text_out = "\n".join(lines)
+        logger.info(
+            "PaddleOCR: kept %d line(s) (%d chars), dropped %d low-confidence line(s)",
+            len(lines),
+            len(text_out),
+            dropped,
+        )
+        return text_out
     except Exception as error:  # noqa: BLE001
         logger.error("PaddleOCR failed: %s", error)
         return ""
@@ -52,9 +72,14 @@ def preprocess_for_invoice(image: Image.Image) -> Image.Image:
 
         coords = np.column_stack(np.where(gray < 200))
         if len(coords) > 100:
-            angle = cv2.minAreaRect(coords)[-1]
-            if angle < -45:
-                angle = 90 + angle
+            # Same OpenCV minAreaRect angle-convention issue as
+            # preprocess_service._deskew: normalize into (-45, 45] instead of
+            # assuming the pre-4.5 [-90, 0) range, or an upright page's ~90
+            # angle gets misread as skew and rotated 90 degrees.
+            raw_angle = cv2.minAreaRect(coords)[-1]
+            angle = raw_angle % 90
+            if angle > 45:
+                angle -= 90
             if abs(angle) > 0.5:
                 h, w = gray.shape
                 center = (w // 2, h // 2)
@@ -161,15 +186,23 @@ class OCRService:
         return "\n".join(all_text).strip()
 
     def extract_text(self, processed_images: list[np.ndarray]) -> tuple[str, str]:
+        logger.info("OCR starting: %d preprocessed page(s), trying PaddleOCR first", len(processed_images))
         paddle_text = self._ocr_with_paddle(processed_images)
         if len(paddle_text) >= 50:
+            logger.info("OCR result: engine=paddleocr chars=%d", len(paddle_text))
             return self._normalize_whitespace(paddle_text), "paddleocr"
 
+        logger.info(
+            "PaddleOCR returned only %d char(s) (<50), falling back to Tesseract", len(paddle_text)
+        )
         fallback_text = self._ocr_with_tesseract(processed_images)
         if fallback_text:
+            logger.info("OCR result: engine=tesseract chars=%d", len(fallback_text))
             return self._normalize_whitespace(fallback_text), "tesseract"
 
         if paddle_text:
+            logger.info("OCR result: engine=paddleocr (fallback empty) chars=%d", len(paddle_text))
             return self._normalize_whitespace(paddle_text), "paddleocr"
 
+        logger.error("OCR produced no usable text from either PaddleOCR or Tesseract")
         raise RuntimeError("OCR did not return usable text")

@@ -1,0 +1,55 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 1774 >>
+stream
+BT /F1 24 Tf 70 740 Td (TAX INVOICE) Tj ET
+BT /F1 14 Tf 70 700 Td (Sharma Steel Traders) Tj ET
+BT /F1 11 Tf 70 682 Td (GSTIN: 27AAECS1234C1ZP) Tj ET
+BT /F1 10 Tf 70 666 Td (Plot 14, MIDC Industrial Area, Pune, Maharashtra 411019) Tj ET
+BT /F1 11 Tf 70 630 Td (Invoice No: INV-2026-0417) Tj ET
+BT /F1 11 Tf 70 614 Td (Invoice Date: 12/07/2026) Tj ET
+BT /F1 11 Tf 70 598 Td (Place of Supply: Maharashtra \(27\)) Tj ET
+BT /F1 11 Tf 70 566 Td (Bill To:) Tj ET
+BT /F1 11 Tf 70 550 Td (Test SME Client) Tj ET
+BT /F1 10 Tf 70 534 Td (GSTIN: 29ABCDE1234F1Z5) Tj ET
+BT /F1 10 Tf 70 494 Td (Description                 HSN      Qty    Rate      Amount) Tj ET
+BT /F1 10 Tf 70 476 Td (MS Angle 50x50x6mm          7216     120    850.00    102000.00) Tj ET
+BT /F1 10 Tf 70 460 Td (MS Flat Bar 40x6mm          7214      60    720.00     43200.00) Tj ET
+BT /F1 10 Tf 70 444 Td (TMT Bar Fe500D 12mm         7214      25    absent) Tj ET
+BT /F1 10 Tf 70 404 Td (Taxable Value                                        145200.00) Tj ET
+BT /F1 10 Tf 70 388 Td (CGST @ 9%                                             13068.00) Tj ET
+BT /F1 10 Tf 70 372 Td (SGST @ 9%                                             13068.00) Tj ET
+BT /F1 10 Tf 70 356 Td (IGST @ 0%                                                 0.00) Tj ET
+BT /F1 12 Tf 70 330 Td (Total Invoice Value                                  171336.00) Tj ET
+BT /F1 10 Tf 70 300 Td (Amount in words: One Lakh Seventy One Thousand Three Hundred) Tj ET
+BT /F1 10 Tf 70 286 Td (Thirty Six Rupees Only) Tj ET
+BT /F1 10 Tf 70 250 Td (Payment Terms: 30 days from invoice date) Tj ET
+BT /F1 10 Tf 70 234 Td (Bank: HDFC Bank, A/c 50200012345678, IFSC HDFC0001234) Tj ET
+BT /F1 10 Tf 70 190 Td (For Sharma Steel Traders \(Authorised Signatory\)) Tj ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000338 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2164
+%%EOF

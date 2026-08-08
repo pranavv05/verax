@@ -182,7 +182,8 @@ const createClient = async (db, { firmId, payload, actorUserId }) => {
 const getClientById = async (db, { firmId, clientId }) => {
   const clientResult = await db.query(
     `
-      SELECT id, firm_id, name, gstin, email, phone, upload_token, upload_token_expires_at, status, created_at, updated_at
+      SELECT id, firm_id, name, gstin, email, phone, upload_token, upload_token_expires_at, status,
+             portal_email, portal_enabled, portal_last_login_at, created_at, updated_at
       FROM clients
       WHERE id = $1
         AND firm_id = $2
@@ -214,11 +215,19 @@ const getClientById = async (db, { firmId, clientId }) => {
     [firmId, clientId]
   );
 
-  const client = toClientResponse(clientResult.rows[0]);
+  const clientRow = clientResult.rows[0];
+  const client = toClientResponse(clientRow);
   const summary = summaryResult.rows[0];
 
   return {
     ...client,
+    // Portal credentials themselves (portal_password_hash) are never selected
+    // or returned — only whether the portal is on, and for whom.
+    portal: {
+      enabled: Boolean(clientRow.portal_enabled),
+      email: clientRow.portal_email,
+      lastLoginAt: clientRow.portal_last_login_at
+    },
     documentSummary: {
       totalDocuments: summary.total_documents,
       uploadedDocuments: summary.uploaded_documents,

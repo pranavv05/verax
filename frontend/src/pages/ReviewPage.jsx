@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import { ReviewSkeleton } from "../components/ui/skeletons";
@@ -232,6 +232,9 @@ const ReviewPage = () => {
   const [selectedVersion, setSelectedVersion] = useState(null);
   const [versionLoading, setVersionLoading] = useState(false);
   const [versionError, setVersionError] = useState("");
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollError, setPollError] = useState("");
+  const pollingRef = useRef(null);
 
   const docType = document?.docType || document?.doc_type || "invoice";
   const isBankStatement = docType === "bank_statement";
@@ -336,6 +339,63 @@ const ReviewPage = () => {
     loadData();
   }, [loadData]);
 
+  /* ─── processing status polling ─── */
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (pollingRef.current) return;
+    const startTime = Date.now();
+    const MAX_POLL_TIME = 3 * 60 * 1000;
+
+    pollingRef.current = setInterval(async () => {
+      if (Date.now() - startTime > MAX_POLL_TIME) {
+        stopPolling();
+        setIsPolling(false);
+        setPollError("Processing is taking longer than expected. Please refresh the page.");
+        return;
+      }
+
+      try {
+        const doc = await documentsApi.getById(documentId);
+
+        if (doc.status === "extracted" || doc.status === "review_required") {
+          stopPolling();
+          setIsPolling(false);
+          setToast("Document reprocessed successfully.");
+          await loadData();
+          return;
+        }
+
+        if (doc.status === "failed") {
+          stopPolling();
+          setIsPolling(false);
+          setPollError("Processing failed. Please try again.");
+          setDocument(doc);
+          return;
+        }
+      } catch (pollErr) {
+        console.error("Poll error:", pollErr);
+      }
+    }, 3000);
+  }, [documentId, loadData, stopPolling]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  // Auto-start polling if the document is already processing on page load
+  useEffect(() => {
+    if (!loading && document?.status === "processing" && !pollingRef.current) {
+      setIsPolling(true);
+      setPollError("");
+      startPolling();
+    }
+  }, [loading, document?.status, startPolling]);
+
   /* ─── form helpers ─── */
 
   const onFieldChange = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -409,10 +469,11 @@ const ReviewPage = () => {
     setReprocessing(true);
     setToast("");
     setError("");
+    setPollError("");
     try {
       await extractionsApi.reprocess(documentId);
-      setToast("Reprocess request queued. Refresh in a moment.");
-      await loadData();
+      setIsPolling(true);
+      startPolling();
     } catch (reprocessError) {
       setError(parseApiError(reprocessError, "Unable to reprocess document"));
     } finally {
@@ -556,6 +617,12 @@ const ReviewPage = () => {
         </div>
       )}
 
+      {pollError && (
+        <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {pollError}
+        </div>
+      )}
+
       {historyOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-ink-900/40 backdrop-blur-sm">
           <aside className="h-full w-full max-w-5xl overflow-y-auto bg-white shadow-elevated">
@@ -666,8 +733,21 @@ const ReviewPage = () => {
         </div>
       )}
 
+      {/* Processing / polling state */}
+      {isPolling && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+          <div className="relative h-5 w-5 shrink-0">
+            <span className="absolute inset-0 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
+          </div>
+          <div>
+            <p>Processing document...</p>
+            <p className="mt-0.5 font-normal">This usually takes 30–60 seconds.</p>
+          </div>
+        </div>
+      )}
+
       {/* Not yet processed banner */}
-      {!loading && !error && !extractionReady && extractionMessage && (
+      {!loading && !error && !isPolling && !extractionReady && extractionMessage && (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
           {extractionMessage}
           {document && (["uploaded", "processing"].includes(document.status)) && (
@@ -765,8 +845,18 @@ const ReviewPage = () => {
             </div>
           )}
 
-          <div className="max-h-[58vh] space-y-3 overflow-y-auto pr-1">
-            {headerFields.map(([key, label]) => {
+          <div className="relative">
+            {isPolling && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg bg-white/80 backdrop-blur-sm">
+                <div className="relative h-8 w-8">
+                  <span className="absolute inset-0 animate-spin rounded-full border-2 border-ink-200 border-t-mint-500" />
+                </div>
+                <p className="text-sm font-semibold text-ink-700">Processing document...</p>
+                <p className="text-xs text-[#607086]">This usually takes 30–60 seconds</p>
+              </div>
+            )}
+            <div className={`max-h-[58vh] space-y-3 overflow-y-auto pr-1 ${isPolling ? "pointer-events-none opacity-40" : ""}`}>
+              {headerFields.map(([key, label]) => {
               const fv = getFieldValidation(validation, key);
               const isGstinField = key === "vendor_gstin";
               const gstBadge = getGstBadge(gstMatch?.matchStatus);
@@ -852,7 +942,8 @@ const ReviewPage = () => {
                   )}
                 </div>
               );
-            })}
+              })}
+            </div>
           </div>
 
           {versions.length > 0 && (
@@ -879,10 +970,10 @@ const ReviewPage = () => {
               <button
                 type="button"
                 className="btn-secondary"
-                disabled={reprocessing || isExported}
+                disabled={reprocessing || isPolling || isExported}
                 onClick={onReprocess}
               >
-                {reprocessing ? "Queueing..." : "Reprocess"}
+                {reprocessing ? "Queueing..." : isPolling ? "Processing..." : "Reprocess"}
               </button>
             )}
             {canAdmin && (

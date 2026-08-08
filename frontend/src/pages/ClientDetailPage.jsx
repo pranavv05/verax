@@ -11,7 +11,7 @@ import { complianceApi } from "../api/compliance-api";
 import { exportsApi } from "../api/exports-api";
 import { scheduledRequestsApi } from "../api/scheduled-requests-api";
 import { useAuth } from "../contexts/AuthContext";
-import { formatDateTime, parseApiError } from "../lib/utils";
+import { formatDateTime, parseApiError, triggerFileDownload } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 const editSchema = z.object({
@@ -60,6 +60,16 @@ const ClientDetailPage = () => {
   const [showExportPreview, setShowExportPreview] = useState(false);
   const [showPreviewWarnings, setShowPreviewWarnings] = useState(false);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [showRequestDocs, setShowRequestDocs] = useState(false);
+  const [showEnablePortal, setShowEnablePortal] = useState(false);
+  const [portalEmail, setPortalEmail] = useState("");
+  const [portalError, setPortalError] = useState("");
+  const [enablingPortal, setEnablingPortal] = useState(false);
+  const [tempPassword, setTempPassword] = useState("");
+  const [tempPasswordCopied, setTempPasswordCopied] = useState(false);
+  const [requestDocsTypes, setRequestDocsTypes] = useState(docTypeOptions.map(([value]) => value));
+  const [requestDocsError, setRequestDocsError] = useState("");
+  const [copyLinkFeedback, setCopyLinkFeedback] = useState("");
   const [client, setClient] = useState(null);
   const [schedule, setSchedule] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", gstin: "", status: "active" });
@@ -153,18 +163,85 @@ const ClientDetailPage = () => {
     return () => window.clearTimeout(timeoutId);
   }, [editForm.gstin, showEdit]);
 
-  const onRequestDocs = async () => {
+  const openRequestDocsModal = () => {
+    setRequestDocsTypes(docTypeOptions.map(([value]) => value));
+    setRequestDocsError("");
+    setCopyLinkFeedback("");
+    setShowRequestDocs(true);
+  };
+
+  const uploadLinkFor = (token) =>
+    token ? `${window.location.origin}/upload/${token}` : "";
+
+  const onCopyUploadLink = async () => {
+    const link = uploadLinkFor(client?.uploadToken);
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopyLinkFeedback("Link copied to clipboard.");
+    } catch {
+      setCopyLinkFeedback("Unable to copy link — copy it manually.");
+    }
+  };
+
+  const onSendDocRequest = async () => {
+    if (requestDocsTypes.length === 0) return;
     setRequesting(true);
+    setRequestDocsError("");
     setError("");
     setToast("");
     try {
-      const result = await clientsApi.requestDocuments(id);
-      setToast(`Upload link refreshed. Expires ${formatDateTime(result.uploadTokenExpiresAt)}.`);
+      await clientsApi.requestDocuments(id, { documentTypes: requestDocsTypes });
+      setShowRequestDocs(false);
+      setToast("Document request sent successfully.");
       await loadClient();
     } catch (requestError) {
-      setError(parseApiError(requestError, "Unable to request documents"));
+      setRequestDocsError(parseApiError(requestError, "Unable to request documents"));
     } finally {
       setRequesting(false);
+    }
+  };
+
+  const openEnablePortalModal = () => {
+    setPortalEmail(client?.portal?.email || client?.email || "");
+    setPortalError("");
+    setTempPassword("");
+    setTempPasswordCopied(false);
+    setShowEnablePortal(true);
+  };
+
+  const closeEnablePortalModal = () => {
+    setShowEnablePortal(false);
+    // The temp password is shown exactly once — never keep it in state after
+    // the modal closes.
+    setTempPassword("");
+    setTempPasswordCopied(false);
+    setPortalError("");
+  };
+
+  const onEnablePortal = async () => {
+    setEnablingPortal(true);
+    setPortalError("");
+    setToast("");
+    try {
+      const result = await clientsApi.enablePortal(id, { portalEmail });
+      setTempPassword(result.tempPassword);
+      setTempPasswordCopied(false);
+      await loadClient();
+    } catch (enableError) {
+      setPortalError(parseApiError(enableError, "Unable to enable the client portal"));
+    } finally {
+      setEnablingPortal(false);
+    }
+  };
+
+  const onCopyTempPassword = async () => {
+    if (!tempPassword) return;
+    try {
+      await navigator.clipboard.writeText(tempPassword);
+      setTempPasswordCopied(true);
+    } catch {
+      setPortalError("Unable to copy — please select and copy the password manually.");
     }
   };
 
@@ -240,7 +317,7 @@ const ClientDetailPage = () => {
       setBulkExportForm({ fromDate: "", toDate: "" });
       setToast(`${result.documentCount} documents exported successfully.`);
       if (result.downloadUrl) {
-        window.open(result.downloadUrl, "_blank", "noopener,noreferrer");
+        triggerFileDownload(result.downloadUrl, "tally-export.xml");
       }
       await loadClient();
     } catch (exportError) {
@@ -645,6 +722,187 @@ const ClientDetailPage = () => {
         </div>
       )}
 
+      {showRequestDocs && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
+          <div className="panel mx-4 w-full max-w-md p-6">
+            <h3 className="text-lg font-bold text-ink-900">Request Documents</h3>
+            <p className="mt-1 text-sm text-[#607086]">{client?.name}</p>
+
+            <div className="mt-4">
+              <label className="label">Document types</label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {docTypeOptions.map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-2 rounded-lg border border-[#e7dcc8] px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={requestDocsTypes.includes(value)}
+                      onChange={(event) =>
+                        setRequestDocsTypes((prev) =>
+                          event.target.checked
+                            ? [...prev, value]
+                            : prev.filter((type) => type !== value)
+                        )
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <p className="mt-3 text-xs text-[#6f8097]">
+              {client?.email
+                ? `${client.email} will be emailed a secure upload link automatically.`
+                : "This client has no email on file — share the link below manually."}
+            </p>
+
+            {client?.uploadToken && (
+              <div className="mt-3 rounded-lg border border-[#e4d8c5] bg-sand-50 p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-[#6a7b90]">Current upload link</p>
+                <p className="mt-1 break-all font-mono text-xs text-[#596a82]">
+                  {uploadLinkFor(client.uploadToken)}
+                </p>
+                <button
+                  type="button"
+                  className="btn-secondary mt-2 px-3 py-1.5 text-xs"
+                  onClick={onCopyUploadLink}
+                >
+                  Copy Link
+                </button>
+                {copyLinkFeedback && (
+                  <p className="mt-1 text-xs font-semibold text-mint-700">{copyLinkFeedback}</p>
+                )}
+              </div>
+            )}
+
+            {requestDocsError ? (
+              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {requestDocsError}
+              </div>
+            ) : null}
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                className="btn-secondary flex-1"
+                disabled={requesting}
+                onClick={() => setShowRequestDocs(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                disabled={requesting || requestDocsTypes.length === 0}
+                onClick={onSendDocRequest}
+              >
+                {requesting ? "Sending..." : "Send Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEnablePortal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 px-4 backdrop-blur-sm">
+          <div className="panel w-full max-w-md p-6">
+            <h3 className="text-lg font-bold text-ink-900">
+              {client?.portal?.enabled ? "Reset portal password" : "Enable client portal"}
+            </h3>
+            <p className="mt-1 text-sm text-[#607086]">{client?.name}</p>
+
+            {tempPassword ? (
+              <>
+                <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-amber-800">
+                    Temporary password
+                  </p>
+                  <p className="mt-2 break-all font-mono text-xl font-bold tracking-wide text-ink-900">
+                    {tempPassword}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-secondary mt-3 px-3 py-1.5 text-xs"
+                    onClick={onCopyTempPassword}
+                  >
+                    {tempPasswordCopied ? "Copied" : "Copy password"}
+                  </button>
+                  <p className="mt-3 text-sm font-semibold text-amber-900">
+                    Share this password with your client. It will not be shown again.
+                  </p>
+                </div>
+
+                <p className="mt-3 text-xs text-[#6f8097]">
+                  We also emailed these details to {portalEmail}. They can sign in at{" "}
+                  <span className="font-mono">/client-portal/login</span>.
+                </p>
+
+                {portalError ? (
+                  <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {portalError}
+                  </div>
+                ) : null}
+
+                <button
+                  type="button"
+                  className="btn-primary mt-5 w-full"
+                  onClick={closeEnablePortalModal}
+                >
+                  Done
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="mt-3 text-sm text-[#607086]">
+                  Your client will be able to sign in and see their own documents, status, and
+                  reconciliation reports. They can never see extracted data or Tally exports.
+                </p>
+
+                <div className="mt-4">
+                  <label className="label" htmlFor="portal-email">
+                    Client's email address
+                  </label>
+                  <input
+                    id="portal-email"
+                    className="field"
+                    type="email"
+                    autoComplete="off"
+                    value={portalEmail}
+                    onChange={(event) => setPortalEmail(event.target.value)}
+                    placeholder="owner@client.in"
+                  />
+                </div>
+
+                {portalError ? (
+                  <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {portalError}
+                  </div>
+                ) : null}
+
+                <div className="mt-5 flex gap-3">
+                  <button
+                    type="button"
+                    className="btn-secondary flex-1"
+                    disabled={enablingPortal}
+                    onClick={closeEnablePortalModal}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary flex-1"
+                    disabled={enablingPortal || !portalEmail.trim()}
+                    onClick={onEnablePortal}
+                  >
+                    {enablingPortal ? "Enabling..." : "Enable Portal"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {loading ? <ClientDetailSkeleton /> : null}
 
       {error ? (
@@ -790,8 +1048,8 @@ const ClientDetailPage = () => {
               <h2 className="text-lg font-bold text-ink-900">Actions</h2>
               <div className="mt-4 space-y-3">
                 {canAdmin && (
-                  <button type="button" className="btn-primary w-full" disabled={requesting} onClick={onRequestDocs}>
-                    {requesting ? "Refreshing link..." : "Request documents"}
+                  <button type="button" className="btn-primary w-full" onClick={openRequestDocsModal}>
+                    Request documents
                   </button>
                 )}
                 {canAdmin && reviewedCount > 0 && (
@@ -819,6 +1077,52 @@ const ClientDetailPage = () => {
                 </Link>
                 {canAdmin && (
                   <>
+                <hr className="border-[#e7dcc8]" />
+                <div className="rounded-xl border border-[#e4d8c5] bg-sand-50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-bold text-ink-900">Client Portal</h3>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                        client.portal?.enabled
+                          ? "bg-mint-500/15 text-mint-700"
+                          : "bg-sand-100 text-[#6a7b90]"
+                      }`}
+                    >
+                      {client.portal?.enabled ? "Enabled" : "Not enabled"}
+                    </span>
+                  </div>
+                  {client.portal?.enabled ? (
+                    <div className="mt-2 space-y-2 text-sm text-[#607086]">
+                      <p className="break-all">{client.portal.email}</p>
+                      <p>
+                        Last login:{" "}
+                        {client.portal.lastLoginAt
+                          ? formatDateTime(client.portal.lastLoginAt)
+                          : "Never"}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn-secondary px-3 py-1.5 text-xs"
+                        onClick={openEnablePortalModal}
+                      >
+                        Reset password
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="mt-2 text-sm text-[#607086]">
+                        Give this client a secure login to track their own documents.
+                      </p>
+                      <button
+                        type="button"
+                        className="btn-secondary mt-3 w-full"
+                        onClick={openEnablePortalModal}
+                      >
+                        Enable Client Portal
+                      </button>
+                    </>
+                  )}
+                </div>
                 <hr className="border-[#e7dcc8]" />
                 <div className="rounded-xl border border-[#e4d8c5] bg-sand-50 p-3">
                   <h3 className="text-sm font-bold text-ink-900">Schedule Recurring Requests</h3>

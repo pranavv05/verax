@@ -2,8 +2,11 @@ const path = require("path");
 const dotenv = require("dotenv");
 const Joi = require("joi");
 
+// Load backend/.env FIRST so it takes precedence: dotenv never overwrites a var
+// that is already set, so whichever file is loaded first wins. The repo-root .env
+// is loaded second and only fills in vars the backend-local file did not define.
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-dotenv.config();
 
 const envSchema = Joi.object({
   NODE_ENV: Joi.string().valid("development", "test", "production").default("development"),
@@ -30,6 +33,18 @@ const envSchema = Joi.object({
   AI_SERVICE_TIMEOUT_MS: Joi.number().integer().min(1000).default(120000),
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
+  // Client portal is a separate auth world — its own signing key, never JWT_SECRET.
+  CLIENT_JWT_SECRET: Joi.string()
+    .min(32)
+    .required()
+    .invalid(Joi.ref("JWT_SECRET"), Joi.ref("JWT_REFRESH_SECRET"))
+    .messages({
+      "any.invalid": "CLIENT_JWT_SECRET must differ from JWT_SECRET and JWT_REFRESH_SECRET"
+    }),
+  CLIENT_JWT_EXPIRY: Joi.string()
+    .pattern(/^\d+[smhd]$/)
+    .default("15m"),
+  CLIENT_REFRESH_TOKEN_EXPIRY_DAYS: Joi.number().integer().min(1).default(30),
   FRONTEND_URL: Joi.string().uri().required(),
   EMAIL_PROVIDER: Joi.string().valid("smtp", "resend").default("smtp"),
   RESEND_API_KEY: Joi.string().allow("").optional(),
@@ -79,6 +94,10 @@ module.exports = Object.freeze({
   AI_SERVICE_TIMEOUT_MS: value.AI_SERVICE_TIMEOUT_MS,
   JWT_SECRET: value.JWT_SECRET,
   JWT_REFRESH_SECRET: value.JWT_REFRESH_SECRET,
+  CLIENT_JWT_SECRET: value.CLIENT_JWT_SECRET,
+  CLIENT_JWT_EXPIRY: value.CLIENT_JWT_EXPIRY,
+  CLIENT_REFRESH_TOKEN_EXPIRY_DAYS: value.CLIENT_REFRESH_TOKEN_EXPIRY_DAYS,
+  CLIENT_REFRESH_TOKEN_TTL_SECONDS: value.CLIENT_REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60,
   FRONTEND_URL: value.FRONTEND_URL,
   EMAIL_PROVIDER: value.EMAIL_PROVIDER,
   RESEND_API_KEY: value.RESEND_API_KEY,
