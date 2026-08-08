@@ -799,15 +799,17 @@ const ReviewPage = () => {
                         >
                           {gstChecking ? "Checking..." : gstBadge.label}
                         </span>
-                        <button
-                          type="button"
-                          className="btn-secondary px-3 py-1.5 text-xs"
-                          disabled={gstChecking || isExported || !form.vendor_gstin}
-                          title={!form.vendor_gstin ? "No GSTIN found in document" : ""}
-                          onClick={onVerifyGst}
-                        >
-                          {gstChecking ? "Verifying..." : "Verify GST"}
-                        </button>
+                        {canAdmin && (
+                          <button
+                            type="button"
+                            className="btn-secondary px-3 py-1.5 text-xs"
+                            disabled={gstChecking || isExported || !form.vendor_gstin}
+                            title={!form.vendor_gstin ? "No GSTIN found in document" : ""}
+                            onClick={onVerifyGst}
+                          >
+                            {gstChecking ? "Verifying..." : "Verify GST"}
+                          </button>
+                        )}
                         {gstMatch?.mismatchFields?.length > 0 && (
                           <button
                             type="button"

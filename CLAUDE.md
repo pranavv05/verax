@@ -77,3 +77,42 @@ Copy `.env.example` to `.env`. Required: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRE
 ## Database
 
 PostgreSQL 15 with Knex migrations in `backend/migrations/`. Tables: `firms`, `users`, `clients`, `documents`, `extractions`, `tally_exports`, `audit_logs`, `refresh_tokens`, `document_upload_sessions`, `waitlist`, `item_name_mappings`. All have RLS enabled.
+
+## Feature Status Tracking
+
+A file `FEATURE_STATUS.md` exists in the repo root. It is the single 
+source of truth for what is built, partial, broken, or missing.
+
+### Rules for every task:
+
+BEFORE starting work:
+- Read FEATURE_STATUS.md to understand current state
+- Do NOT scan the full repo to re-derive what's already documented
+- Trust FEATURE_STATUS.md as accurate — it is updated after every change
+
+AFTER completing work:
+- Update FEATURE_STATUS.md to reflect the new state
+- If a feature moved from ⚠️ to ✅, update its entry with:
+  - New status
+  - Correct file references and line numbers
+  - Updated Notes field
+- If a new feature was built, add a new entry under the correct group
+- If a bug was introduced, add a 🔧 entry
+- Commit the FEATURE_STATUS.md update in the same PR as the feature work
+  — never leave it out of sync
+
+### Status meanings (do not deviate from these):
+- ✅ Production Ready — all layers complete and connected
+- ⚠️ Partial — built but missing something specific (always explain what)
+- ❌ Not Built — does not exist anywhere in the codebase
+- 🔧 Needs Fix — exists but has a confirmed bug or broken connection
+
+### What counts as Production Ready:
+A feature is only ✅ when ALL are true:
+- Backend route exists, mounted in app.js, with auth + validation
+- Service function handles the logic with proper error handling
+- Migration exists for all required DB changes
+- Frontend page/component exists with loading/error/empty states
+- API module function exists in frontend/src/api/
+- Data flows correctly end to end (not just file existence)
+- Audit log written for all mutations

@@ -15,18 +15,18 @@ Mount table confirmed in `backend/src/app.js:45-61`. No route files exist for "i
 ## AUTH
 
 ### Firm signup
-Status: 🔧 Needs Fix
-Backend: `POST /api/auth/signup` — `auth.routes.js:64-91`, `requireAuth` n/a (public), `authRateLimiter` applied, `signupSchema` (`auth.routes.js:35-40`) → `registerFirm` (`auth.service.js:394-451`)
+Status: ✅ Production Ready
+Backend: `POST /api/auth/signup` — `auth.routes.js:64-91`, `requireAuth` n/a (public), `authRateLimiter` applied, `signupSchema` (`auth.routes.js:35-40`) → `registerFirm` (`auth.service.js:394-460`)
 Frontend: `pages/SignupPage.jsx`, `api/auth-api.js:4-55` — Zod validation, loading/error states, redirects on success
 Migration: `20260311163000_initial_schema.js` (firms, users tables + RLS)
-Notes: Works end-to-end but **no `audit_logs` entry is written on signup** (`registerFirm` uses manual `pool.connect()`/BEGIN/COMMIT rather than the shared `withTenantTransaction` helper — functionally equivalent RLS context but structurally inconsistent with every other service). Password hashed bcrypt cost 12 (hardcoded, not env-configurable).
+Notes: **Fixed 2026-08-08** — `registerFirm` now writes a `firm_registered` audit log entry (`auth.service.js`, inside the same manual transaction, before `COMMIT`) with `metadata: {firmName, userEmail}`. Password hashed bcrypt cost 12 (hardcoded, not env-configurable) — unchanged, not in scope.
 
 ### Login
-Status: ⚠️ Partial
-Backend: `POST /api/auth/login` — `auth.routes.js:93-112`, `authRateLimiter`, `loginSchema` (`:42-45`) → `loginUser` (`auth.service.js:453-516`), tenant-scoped (`:456`)
+Status: ✅ Production Ready
+Backend: `POST /api/auth/login` — `auth.routes.js:93-112`, `authRateLimiter`, `loginSchema` (`:42-45`) → `loginUser` (`auth.service.js`), tenant-scoped
 Frontend: `pages/LoginPage.jsx` — Zod validation, loading/error states, redirect to `location.state.from`
 Migration: n/a (uses `users` table)
-Notes: **No audit log on login** — no record of successful/failed login attempts in `audit_logs`, a gap for a compliance-oriented product.
+Notes: **Fixed 2026-08-08** — `loginUser` now writes `login_success` on success and `login_failed` (`reason: "invalid_password"`) when a known user supplies the wrong password, both via the same transaction `client` (not a separate connection). The failure case returns an `{authFailed: true}` sentinel from the transaction handler instead of throwing inside it, since throwing there would have rolled back the audit insert along with everything else — the caller checks the sentinel and throws `ApiError.unauthorized` after the transaction commits. One deliberate gap remains: a login attempt against an **unknown email** cannot be audit-logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm — there is no firm to attribute the row to. This is a schema-level constraint, not an oversight.
 
 ### Logout
 Status: ✅ Production Ready
@@ -125,10 +125,10 @@ Notes: Lookup logic duplicated between the two pages rather than shared — work
 ## DOCUMENT UPLOADS
 
 ### Authenticated upload for firm users
-Status: ⚠️ Partial
+Status: ✅ Production Ready
 Backend: `POST /api/documents/upload` + `/confirm` — `documents.routes.js:144-214`, `uploadRateLimiter` (50/hr), Joi schemas (`:36-46`) → `initiateUploadForFirm`/`confirmUploadForFirm` (`documents.service.js:182-198,283-393`, audit `document_upload_initiated`/`document_upload_confirmed`)
-Frontend: `pages/ClientDocumentsPage.jsx` — single-file only
-Notes: **No multi-file queue, no client-side extension/size validation, and no upload-progress bar** on this page — `uploadFileToSignedUrl` is called without the `onProgress` callback (`:84`), only a static "Uploading..." label shows. This is asymmetric with the public magic-link upload page, which has all three. Functionally uploads succeed, but the UX checklist items (multi-file queue, progress tracking, client-side file validation) are missing here specifically.
+Frontend: `pages/ClientDocumentsPage.jsx` — rewritten 2026-08-08 to match `PublicUploadPage.jsx`'s pattern
+Notes: **Fixed 2026-08-08.** `ClientDocumentsPage.jsx` now supports multi-file selection (`<input type="file" multiple>`), a per-item queue state machine (`pending → preparing → uploading → confirming → success/error`, plus an `invalid` state for files rejected before upload), a per-file progress bar driven by `uploadApi.uploadFileToSignedUrl`'s existing `onProgress` callback, and client-side extension/size validation (same whitelist and 50MB cap as the public page) that shows an inline per-file error and never attempts to upload a rejected file. No backend or `upload-api.js` changes were needed — `uploadFileToSignedUrl` already accepted a progress callback.
 
 ### Public upload via magic link
 Status: ✅ Production Ready
@@ -147,17 +147,17 @@ Backend: `documents.service.js confirmUploadForFirm`/`confirmUploadWithMagicToke
 Frontend: both upload pages handle confirm step with success/error UI
 
 ### Multi-file upload queue
-Status: ⚠️ Partial
-Frontend: fully built on `PublicUploadPage.jsx` (`:60-162`); **absent** on `ClientDocumentsPage.jsx` (authenticated upload is single-file only)
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx` (`:60-162`) and, as of 2026-08-08, `ClientDocumentsPage.jsx` (same `pending/preparing/uploading/confirming/success/error/invalid` state machine, multi-select file input)
 
 ### Upload progress tracking
-Status: ⚠️ Partial
-Frontend: fully built on `PublicUploadPage.jsx` via `upload-api.js:9-13` XHR progress events; **absent** on `ClientDocumentsPage.jsx`
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx` via `upload-api.js:9-13` XHR progress events; as of 2026-08-08, `ClientDocumentsPage.jsx` passes the same `onProgress` callback into `uploadApi.uploadFileToSignedUrl` and renders a per-file progress bar
 
 ### File validation (extension, MIME, size)
-Status: ⚠️ Partial
-Frontend: `PublicUploadPage.jsx:8-9,69-77` — extension whitelist + 50MB cap, client-side; `ClientDocumentsPage.jsx:111` only sets an `accept` attribute, no JS-level validation before calling the API
-Backend: not confirmed whether the upload-init endpoints re-validate extension/MIME server-side (not explicitly traced by the research pass) — recommend verifying `documents.service.js createUploadSession` for server-side validation as defense-in-depth.
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx:8-9,69-77` and, as of 2026-08-08, `ClientDocumentsPage.jsx` — both apply the same extension whitelist and 50MB cap client-side, marking rejected files `invalid` with an inline per-file message and never attempting to upload them
+Backend: not confirmed whether the upload-init endpoints re-validate extension/MIME server-side (out of scope for this fix pass) — recommend verifying `documents.service.js createUploadSession` for server-side validation as defense-in-depth.
 
 ### Supported types: PDF, JPG, JPEG, PNG, XLSX
 Status: ✅ Production Ready
@@ -181,9 +181,9 @@ AI Service: `ai-service/app/services/ocr_service.py:163-175` — PaddleOCR prima
 Notes: **Task description says "Textract primary" — this is stale.** Recent commits (`4992f08`, `571cd38`) replaced AWS Textract with PaddleOCR and OpenAI with Groq; current code and CLAUDE.md both accurately reflect PaddleOCR + Groq, no leftover Textract/OpenAI code found anywhere in `ai-service/app/`.
 
 ### LLM structured extraction
-Status: ⚠️ Partial
-AI Service: `llm_service.py:403-418` — Groq `llama-3.1-70b-versatile` (hardcoded model string, not env-configurable), key from `settings.groq_api_key` (env-sourced, good)
-Notes: `settings.llm_timeout_seconds` (`config.py:25`, default 60s) exists but is **never actually applied** to the Groq client call — no request timeout is enforced. No try/except around the Groq call itself inside `llm_service.py`; failures propagate to `main.py`'s top-level handler which returns `HTTPException(500, detail=str(error))` — structured, but `str(error)` may leak internal SDK error text to the caller. No retry logic.
+Status: ✅ Production Ready
+AI Service: `llm_service.py` — Groq `llama-3.1-70b-versatile` (still a hardcoded model string, not env-configurable — unchanged, not in scope), key from `settings.groq_api_key` (env-sourced)
+Notes: **Fixed 2026-08-08.** `settings.llm_timeout_seconds` is now passed as `timeout=` on the `chat.completions.create(...)` call, so a hung Groq request no longer blocks a worker slot indefinitely. The call is now wrapped in its own `try/except`: on failure it logs `Groq extraction failed: {e}` and returns `{"document_type_detected": "unknown", "confidence": 0.0, "_llm_error": str(e)}` directly (same short-circuit shape as the existing `is_ocr_garbage` path) instead of propagating to `main.py`'s generic 500 handler — a Groq outage now degrades a single document to `review_required` rather than surfacing as a raw 500.
 
 ### Confidence score generation
 Status: ✅ Production Ready
@@ -207,9 +207,9 @@ Status: ✅ Production Ready
 Backend: `document-processing.service.js:115-176` (`markDocumentProcessingFailed`) increments `documents.processing_attempts`, writes `audit_logs` row `document_processing_failed` on every failure
 
 ### Permanent failure notification to admin
-Status: ❌ Not Built
-Backend: on `processing_attempts >= 3`, `document-processing.service.js:156-170` writes a second audit row `document_processing_alert` and the worker does `process.stderr.write(...)` (`document-processing.worker.js:164-168`) — **no email is sent and no `notifications` row is created**, unlike the other three notification triggers (document_ready, client_upload, export_ready) which all call `createNotification` + send an email. Document status resets to `'uploaded'` with nothing auto-retrying or paging anyone.
-Notes: This is the most concrete gap in the processing pipeline — a firm's admin has no way to learn a document permanently failed short of manually checking the audit log.
+Status: ✅ Production Ready
+Backend: on `processing_attempts >= 3`, `document-processing.service.js:156-170` writes the `document_processing_alert` audit row as before, and — as of 2026-08-08 — `document-processing.worker.js` (after the existing `process.stderr.write`) fetches the firm's admins via the existing `getDocumentReadyEmailContext` helper and, per admin, calls `createNotification({type: "document_failed", title: "Document processing failed", message: "A document failed to process after 3 attempts and needs manual review.", entityType: "document", entityId})` and sends an email built from the new `backend/src/templates/documentFailed.template.js` (subject "Document processing failed — manual review needed", includes document name, client name, failure reason, and a link to `/audit-logs`). A new `recordDocumentFailedEmailAudit` (`document-processing.service.js`) logs the email send outcome as `document_failed_emailed`. Both the notification call and the email call are individually wrapped in try/catch (mirroring the existing `document_ready` pattern) so a failure in either cannot affect the worker or the job's success/failure outcome.
+Notes: Closes the gap flagged in the original audit — an admin now receives both an in-app notification and an email when a document permanently fails, matching the other three notification triggers.
 
 ---
 
@@ -289,10 +289,10 @@ Status: ✅ Production Ready
 Backend: `compliance.service.js:173-204` `checkDuplicateInvoice` — matches `vendor_gstin` + `invoice_number` among prior reviewed extractions within the same firm
 
 ### GSTR-2B matching per document
-Status: 🔧 Needs Fix
-Backend: `POST /api/compliance/gstr2b/match` — `compliance.routes.js:427-495` → `gspService.matchGSTR2B` (`gsp.service.js:280-295`), audit `gstr2b_matched`
+Status: ✅ Production Ready
+Backend: `POST /api/compliance/gstr2b/match` — `compliance.routes.js:427-496` → `gspService.matchGSTR2B` (`gsp.service.js:280-295`), audit `gstr2b_matched`
 Migration: `20260507000000_gstr2b_match_columns.js` — adds `gstr2b_match_status`/`gstr2b_match_details` columns directly onto `documents` (no dedicated reconciliation table, so no history across repeated match attempts)
-Notes: **This route mutates document rows but only requires `requireAuth`, not `requireAdmin`** — inconsistent with the sibling `GET /gstr2b/reconciliation/export` route which does require admin. Worth confirming intended RBAC before shipping.
+Notes: **Fixed 2026-08-08** — `requireAdmin` added immediately after `requireAuth` on this route, matching the sibling `GET /gstr2b/reconciliation/export` route. The frontend "Verify GST" button on the review page (`ReviewPage.jsx`, near the GSTIN field) was previously visible to staff too; it is now wrapped in the same `canAdmin` check used for Approve/Reprocess, so staff no longer see a button that would 403.
 
 ### GST match status badge on review page
 Status: ✅ Production Ready
@@ -486,9 +486,9 @@ Status: ✅ Production Ready
 Frontend: `AppShell.jsx:107` `window.setInterval(fetchNotifications, 30000)`, cleanup via `clearInterval` (`:109-112`) plus an `active` flag guard against post-unmount state updates (`:99-106`)
 
 ### Triggers: document ready, client upload, export ready, document permanently failed
-Status: ⚠️ Partial
-Backend: `document_ready` — `document-processing.worker.js:132-140`; `client_upload` — `public-upload.routes.js:228-236`; `export_ready` — `exports.service.js:497-505` (single) and `:603-611` (bulk). **`document permanently failed` — NOT WIRED.** No `createNotification` call exists for the permanent-failure path (see Document Processing section above).
-Notes: 3 of 4 triggers are fully implemented; the 4th (permanent failure) is a genuine gap, not a partial implementation.
+Status: ✅ Production Ready
+Backend: `document_ready` — `document-processing.worker.js:132-140`; `client_upload` — `public-upload.routes.js:228-236`; `export_ready` — `exports.service.js:497-505` (single) and `:603-611` (bulk); `document_failed` — **added 2026-08-08**, `document-processing.worker.js` inside the `failure.alertTriggered` branch (after the existing stderr write), one `createNotification` call per firm admin.
+Notes: All 4 triggers are now wired. `document_failed` reuses the existing `getDocumentReadyEmailContext` helper to fetch admins and is individually try/catch-wrapped per admin, consistent with the other three trigger sites.
 
 ---
 
@@ -611,8 +611,9 @@ Status: ✅ Production Ready
 Frontend: same effect, cleanup via `window.clearInterval` (`:78`), correctly derives "terminal" from the same status-mapping as the backend
 
 ### Link from upload success page
-Status: ⚠️ Partial
-Notes: Not independently confirmed in this research pass whether `PublicUploadPage.jsx`'s success state links to `/upload/:token/status` — recommend a quick manual check of the post-upload success UI in `PublicUploadPage.jsx`.
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx:284-291` — confirmed while implementing Fix 2: once `successCount > 0`, a "View upload status →" link to `/upload/${activeUploadToken || token}/status` renders below the upload queue.
+Notes: Corrected from the original audit's "not independently confirmed" note — verified present on direct code read.
 
 ---
 
@@ -623,9 +624,9 @@ Status: ✅ Production Ready
 Backend: `clients.service.js:26` `createUploadToken()` — `crypto.randomBytes(32).toString("hex")` (64-char hex, confirmed)
 
 ### Request documents from client (admin only)
-Status: ⚠️ Partial
-Backend: `POST /api/clients/:id/request-docs` — `clients.routes.js:129-143`, `requireAdmin` → `requestClientDocuments` (`clients.service.js:322-440`, audit `client_request_docs` + `client_magic_link_emailed`)
-Notes: **No body schema is applied** — only `clientIdParamSchema` — so `documentTypes` is never actually read from `req.body`, meaning `requestClientDocuments` always falls back to `DEFAULT_REQUESTED_DOCUMENT_TYPES` (`clients.service.js:28-33`) regardless of what a caller sends. If the frontend or product intent is to let admins choose which document types to request, this is silently ignored today.
+Status: ✅ Production Ready
+Backend: `POST /api/clients/:id/request-docs` — `clients.routes.js:129-146`, `requireAdmin` + new `requestDocsBodySchema` → `requestClientDocuments` (`clients.service.js:322-440`, audit `client_request_docs` + `client_magic_link_emailed`)
+Notes: **Fixed 2026-08-08** — added `requestDocsBodySchema` (`documentTypes: Joi.array().items(Joi.string().valid("invoice","bank_statement","bill","other")).min(1).optional()`) and applied `validate(requestDocsBodySchema)` on the route; the route now passes `req.body.documentTypes` through to `requestClientDocuments`. The service function already accepted a `documentTypes` parameter and already fell back to `DEFAULT_REQUESTED_DOCUMENT_TYPES` via `toRequestedDocumentLabels` when it was absent (`clients.service.js:28-45`) — the only missing piece was the route never reading or forwarding the field, which is now fixed.
 
 ### Send magic link email
 Status: ✅ Production Ready
@@ -645,8 +646,8 @@ Backend: `env.MAGIC_LINK_EXPIRY_HOURS` (default 24), enforced both at the query 
 ## ROLE PERMISSIONS
 
 ### requireAdmin on all admin-only routes
-Status: 🔧 Needs Fix
-Backend: `requireAdmin` (`middlewares/auth.middleware.js:39-47`) confirmed applied correctly across 9 route files. **One confirmed gap**: `POST /api/compliance/gstr2b/match` (`compliance.routes.js:427-495`) mutates document rows with only `requireAuth`, missing `requireAdmin` unlike its sibling reconciliation-export route.
+Status: ✅ Production Ready
+Backend: `requireAdmin` (`middlewares/auth.middleware.js:39-47`) confirmed applied correctly across all route files, including `POST /api/compliance/gstr2b/match` as of the 2026-08-08 fix (see Compliance & Validation section).
 
 ### Staff can upload, view, edit fields
 Status: ✅ Production Ready
@@ -672,8 +673,8 @@ Frontend: `SettingsPage.jsx:291-330`, admin-only, purely informational checkmark
 ### Register cleaner (Excel → cleaned xlsx)
 Status: ✅ Production Ready
 AI Service: `ai-service/app/services/register_cleaner_service.py` (559 lines) — header-row detection via keyword scoring, multi-block extraction per sheet, per-block cleaning, cross-block column-name unification, styled xlsx output with SUM formulas. Entry point `process_bytes()` (`:526-559`)
-Backend: `POST /api/tools/register-clean` — `tools.routes.js:150-160`, `requireAuth`, proxies to AI service, streams xlsx back
-Frontend: `pages/ToolsPage.jsx:28-62` — `.xlsx`/`.xls` extension check, blob download
+Backend: `POST /api/tools/register-clean` — `tools.routes.js`, `requireAuth` + `toolsRateLimiter` (added 2026-08-08), proxies to AI service, streams xlsx back
+Frontend: `pages/ToolsPage.jsx` — `.xlsx`/`.xls` extension check, blob download via `lib/api-client.js`'s `request()` with `responseType: "blob"` (as of 2026-08-08)
 
 ### Bank statement PDF → Tally XML
 Status: ✅ Production Ready (all sub-items confirmed implemented)
@@ -685,9 +686,9 @@ AI Service: `ai-service/app/services/bank_statement_xml_service.py` (484 lines)
 - **Footer row filtering**: `SKIP_NARRATIONS` list (`:40-52`) + `should_skip_row`/`_is_summary_narration` (`:103-105,297-303`)
 - **Password protected PDF → 422 error**: `_open_pdf` (`:108-118`) catches the exception, inspects for "password"/"encrypted", raises `HTTPException(422, ...)`
 - **Structured JSON response with warnings**: `process_bytes()` (`:454-483`) returns `{xml, voucherCount, skippedRows, warnings, isScanned}`
-Backend: `POST /api/tools/bank-statement-xml` — `tools.routes.js:162-172`
-Frontend: `ToolsPage.jsx:140-272` — PDF-only check, company-name/bank-ledger inputs, surfaces `warnings`/`skippedRows`/`voucherCount`
-Notes: Both tools have smoke-test coverage (`tests/test-bank-statement.js`, `tests/test-excel-to-xml.js` at repo root). Two cross-cutting gaps apply to both: (1) `tools.routes.js` has no `express-rate-limit` guard, unlike auth/upload/waitlist routes; (2) `ToolsPage.jsx`'s raw-`fetch` calls (`:44-53,159-167`) don't implement the app-wide 401-refresh-retry pattern that `lib/api-client.js`'s `request()` provides everywhere else — a user whose access token expires mid-session will see a hard failure here instead of a silent refresh.
+Backend: `POST /api/tools/bank-statement-xml` — `tools.routes.js`, `requireAuth` + `toolsRateLimiter` (added 2026-08-08)
+Frontend: `ToolsPage.jsx` — PDF-only check, company-name/bank-ledger inputs, surfaces `warnings`/`skippedRows`/`voucherCount`, now calls `request()` instead of raw `fetch()` (as of 2026-08-08)
+Notes: Both tools have smoke-test coverage (`tests/test-bank-statement.js`, `tests/test-excel-to-xml.js` at repo root). **Fixed 2026-08-08** — both former gaps are closed: (1) `tools.routes.js` now applies a `toolsRateLimiter` (1hr window, max 20) to both routes; (2) `ToolsPage.jsx` no longer uses raw `fetch()` — both calls go through `lib/api-client.js`'s `request()`, which now supports a `responseType: "blob"` option (added specifically for the binary register-clean response) alongside its existing JSON handling (used as-is for the bank-statement-xml JSON response), so both tool calls now get the same 401-refresh-retry behavior as the rest of the app.
 
 ---
 
@@ -742,7 +743,7 @@ Backend: `auth.routes.js:23-33` — 15 min window, max 10, applied to all 8 auth
 ### Upload rate limiting
 Status: ✅ Production Ready
 Backend: `documents.routes.js:24-34` and `public-upload.routes.js:19-29` — 1 hr window, max 50, applied to both authenticated and magic-link upload/confirm endpoints
-Notes: `waitlist.routes.js` has its own 1hr/5 limiter. `/api/tools/*` has **no** rate limiting (see Standalone Tools).
+Notes: `waitlist.routes.js` has its own 1hr/5 limiter. `/api/tools/*` now has its own 1hr/20 `toolsRateLimiter` as of 2026-08-08 (see Standalone Tools).
 
 ### HttpOnly refresh cookies
 Status: ✅ Production Ready
@@ -758,26 +759,26 @@ Frontend: `lib/token-store.js:1-27` — access token and user object kept in mod
 
 | Status | Count |
 |--------|-------|
-| ✅ Production Ready | 96 |
-| ⚠️ Partial | 24 |
-| ❌ Not Built | 1 |
-| 🔧 Needs Fix | 8 |
-| **Total** | 129 |
+| ✅ Production Ready | 127 |
+| ⚠️ Partial | 9 |
+| ❌ Not Built | 0 |
+| 🔧 Needs Fix | 4 |
+| **Total** | 140 |
+
+*(Recounted directly from this file's `Status:` lines during the 2026-08-08 fix pass — the previous summary undercounted the true entry total. Net change from the 7 fixes applied 2026-08-08: 1 item moved ❌→✅, 9 items moved ⚠️→✅, 3 items moved 🔧→✅; one additional ⚠️→✅ correction was made to "Link from upload success page" after directly confirming it in code while implementing Fix 2.)*
 
 ## Top Gaps to Address
 
-1. **No notification/email on permanent document-processing failure** (❌ Not Built) — after 3 failed attempts, only an audit log row and a stderr line exist; no admin is actually alerted. This is the single clearest "not built" item and directly undermines operational reliability for a document pipeline.
-2. **`POST /api/compliance/gstr2b/match` missing `requireAdmin`** — mutates document state with only `requireAuth`, inconsistent with the rest of the compliance/export permission model.
-3. **Scheduled-requests cron worker has no standalone process** — it only runs because it happens to be instantiated inside the document-processing worker file; deploying the two workers separately (a natural scaling move) would silently break the 08:00 UTC daily job.
-4. **Authenticated (non-magic-link) document upload lacks progress tracking, multi-file queue, and client-side file validation** — a materially worse UX than the public upload page for the exact same underlying feature, and the primary upload path most staff will use day to day.
-5. **`request-docs` endpoint ignores caller-supplied `documentTypes`** — no Joi body schema is applied, so the field is silently dropped and the default document-type list is always used regardless of intent.
-6. **Staff cannot see the firm's plan** on Settings — likely an over-broad admin gate rather than intentional design; worth a quick product call.
-7. **LLM extraction has no request timeout enforced** (config value exists but is dead code) and no retry — a slow/hung Groq call will block a worker slot until the process-level default eventually errors.
-8. **`/api/tools/*` has no rate limiting and no 401-refresh-retry on the frontend** — both standalone tools are otherwise complete, but a firm heavily using them could hit unbounded request volume, and any user with an expired token will see a hard failure instead of a silent refresh.
-9. **No audit log on signup or login**, and no audit log on extraction edits (only version snapshots) — reduces traceability for a compliance-positioned product.
+*Updated 2026-08-08 — 7 items from the previous list were fixed in this pass (see each entry's "Fixed 2026-08-08" note for detail): permanent-failure notification/email, `gstr2b/match` admin gate, authenticated-upload UX (queue/progress/validation), `request-docs` `documentTypes`, LLM request timeout + Groq failure handling, `/api/tools/*` rate limiting + frontend 401-refresh, and signup/login audit logs. Remaining gaps, in priority order:*
+
+1. **Scheduled-requests cron worker has no standalone process** — it only runs because it happens to be instantiated inside the document-processing worker file; deploying the two workers separately (a natural scaling move) would silently break the 08:00 UTC daily job.
+2. **Staff cannot see the firm's plan** on Settings — likely an over-broad admin gate rather than intentional design; worth a quick product call.
+3. **No audit log on extraction edits** (only version snapshots exist) — reduces traceability for a compliance-positioned product; signup and login are now logged as of this pass, but field-level edits on `PUT /api/extractions/:documentId` still are not.
+4. **Login audit logging has one intentional blind spot**: a failed login against an email that doesn't exist in the system cannot be logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm. Known-user wrong-password attempts and all successful logins are logged; unknown-email attempts are not. Closing this fully would require a schema change (e.g. a nullable `firm_id` or a sentinel "system" firm), which was out of scope for this fix pass.
+5. **"Dropdown with last 20 notifications" limit was not independently re-verified** against `notifications.service.js`'s SQL `LIMIT` clause — carried over from the original audit, unaffected by this fix pass.
 
 ## What Can Be Piloted Today
 
-The core document lifecycle — magic-link and authenticated upload → OCR/LLM extraction with confidence gating → review/edit/approve → Tally XML export (single and bulk) — is fully wired end to end across all three services, with real RLS-backed multi-tenancy, working JWT refresh with reuse detection, and a genuinely complete PaddleOCR→Tesseract fallback plus Groq extraction pipeline. GSTIN validation (local + live GSP), tax-math/TDS/duplicate-invoice compliance checks, GSTR-2B reconciliation with Excel export, item-name-mapping with fuzzy suggestions, full document version history with diff view, notifications (except the failure-alert trigger), scheduled recurring document requests, team management, and audit logging are all built and connected. Both standalone tools (register cleaner, bank-statement-to-XML) are production-adapted with real edge-case handling (password-protected PDFs, scanned-vs-digital detection, footer filtering).
+The core document lifecycle — magic-link and authenticated upload → OCR/LLM extraction with confidence gating → review/edit/approve → Tally XML export (single and bulk) — is fully wired end to end across all three services, with real RLS-backed multi-tenancy, working JWT refresh with reuse detection, and a genuinely complete PaddleOCR→Tesseract fallback plus Groq extraction pipeline (now with an enforced request timeout and graceful degradation on failure). GSTIN validation (local + live GSP), tax-math/TDS/duplicate-invoice compliance checks, GSTR-2B reconciliation with Excel export, item-name-mapping with fuzzy suggestions, full document version history with diff view, all four notification triggers (including permanent-failure alerting as of this pass), scheduled recurring document requests, team management, and audit logging (now including signup/login) are all built and connected. Both standalone tools (register cleaner, bank-statement-to-XML) are production-adapted with real edge-case handling and are now rate-limited with proper session-refresh behavior on the frontend.
 
-A CA firm could pilot the full upload → review → export workflow today. The two things worth fixing before a pilot rather than during one: (1) permanent-failure alerting, so a stuck document doesn't sit invisible until someone manually checks, and (2) the authenticated-upload UX gap (progress/validation/multi-file), since that's the primary daily-use surface for firm staff rather than their clients.
+A CA firm can pilot the full upload → review → export workflow today, on either the authenticated staff-upload page or the client-facing magic-link page — both now have matching queue/progress/validation UX. The two items flagged in the previous audit as pre-pilot blockers (permanent-failure alerting and the authenticated-upload UX gap) are resolved. What remains is lower-priority operational hardening (the scheduled-requests worker's process-topology assumption, extraction-edit audit coverage) rather than anything blocking a pilot.

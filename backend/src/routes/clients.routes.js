@@ -43,6 +43,13 @@ const clientIdParamSchema = Joi.object({
   id: uuidSchema.required()
 });
 
+const requestDocsBodySchema = Joi.object({
+  documentTypes: Joi.array()
+    .items(Joi.string().valid("invoice", "bank_statement", "bill", "other"))
+    .min(1)
+    .optional()
+});
+
 router.use(requireAuth);
 
 router.get(
@@ -130,12 +137,14 @@ router.post(
   "/:id/request-docs",
   requireAdmin,
   validate(clientIdParamSchema, "params"),
+  validate(requestDocsBodySchema),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>
       requestClientDocuments(db, {
         firmId: req.user.firmId,
         clientId: req.params.id,
-        actorUserId: req.user.userId
+        actorUserId: req.user.userId,
+        documentTypes: req.body.documentTypes
       })
     );
     res.status(200).json(result);

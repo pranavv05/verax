@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from groq import Groq
 
 from app.config import settings
 from app.utils.json_parser import parse_json_object
+
+logger = logging.getLogger("ai-service")
 
 # ── Invoice / Bill ────────────────────────────────────────────────────────────
 
@@ -400,22 +403,31 @@ class LLMService:
             # invoice, bill, other all use the invoice prompt
             prompt = INVOICE_PROMPT
 
-        response = self._client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a strict JSON extraction engine for Indian financial documents.",
-                },
-                {
-                    "role": "user",
-                    "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
-                },
-            ],
-            temperature=0.1,
-            max_tokens=2000,
-            response_format={"type": "json_object"},
-        )
+        try:
+            response = self._client.chat.completions.create(
+                model="llama-3.1-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a strict JSON extraction engine for Indian financial documents.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+                timeout=settings.llm_timeout_seconds,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            logger.error(f"Groq extraction failed: {e}")
+            return {
+                "document_type_detected": "unknown",
+                "confidence": 0.0,
+                "_llm_error": str(e),
+            }
 
         raw_output = response.choices[0].message.content or ""
         parsed = parse_json_object(raw_output)

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
@@ -23,6 +23,11 @@ const DocTypeBadge = ({ docType }) => {
   );
 };
 
+const allowedExtensions = ["pdf", "jpg", "jpeg", "png", "xlsx"];
+const maxFileSizeMb = 50;
+
+const fileExtension = (name = "") => name.split(".").pop()?.toLowerCase() || "";
+
 const ClientDocumentsPage = () => {
   const { id } = useParams();
   const [clientName, setClientName] = useState("Client documents");
@@ -30,7 +35,7 @@ const ClientDocumentsPage = () => {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [docType, setDocType] = useState("other");
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [items, setItems] = useState([]);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
 
@@ -62,9 +67,61 @@ const ClientDocumentsPage = () => {
     loadDocuments();
   }, [id]);
 
-  const onUpload = async () => {
-    if (!selectedFile) {
-      setError("Choose a file to upload.");
+  const addFiles = useCallback((files) => {
+    const incoming = Array.from(files || []);
+    if (incoming.length === 0) {
+      return;
+    }
+
+    const nextItems = incoming.map((file) => {
+      const ext = fileExtension(file.name);
+      if (!allowedExtensions.includes(ext)) {
+        return {
+          id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+          file,
+          status: "invalid",
+          progress: 0,
+          message: `Unsupported file type ".${ext || "unknown"}" — allowed: ${allowedExtensions.join(", ")}`
+        };
+      }
+      if (file.size > maxFileSizeMb * 1024 * 1024) {
+        return {
+          id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+          file,
+          status: "invalid",
+          progress: 0,
+          message: `File exceeds ${maxFileSizeMb}MB limit`
+        };
+      }
+
+      return {
+        id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+        file,
+        status: "pending",
+        progress: 0,
+        message: "Ready"
+      };
+    });
+
+    setItems((prev) => [...prev, ...nextItems]);
+  }, []);
+
+  const onFileInputChange = (event) => {
+    addFiles(event.target.files);
+    event.target.value = "";
+  };
+
+  const updateItem = (itemId, patch) => {
+    setItems((prev) => prev.map((item) => (item.id === itemId ? { ...item, ...patch } : item)));
+  };
+
+  const removeItem = (itemId) => {
+    setItems((prev) => prev.filter((item) => item.id !== itemId));
+  };
+
+  const processUploadQueue = async () => {
+    const uploadable = items.filter((item) => item.status === "pending" || item.status === "error");
+    if (uploading || uploadable.length === 0) {
       return;
     }
 
@@ -72,27 +129,47 @@ const ClientDocumentsPage = () => {
     setError("");
     setToast("");
 
-    try {
-      const uploadInit = await documentsApi.requestUpload({
-        client_id: id,
-        file_name: selectedFile.name,
-        file_type: selectedFile.type || "application/octet-stream",
-        file_size: selectedFile.size,
-        doc_type: docType
-      });
+    for (const item of uploadable) {
+      try {
+        updateItem(item.id, { status: "preparing", message: "Requesting upload URL...", progress: 0 });
 
-      await uploadApi.uploadFileToSignedUrl(uploadInit.upload_url, selectedFile);
-      await documentsApi.confirmUpload(uploadInit.document_id);
+        const uploadInit = await documentsApi.requestUpload({
+          client_id: id,
+          file_name: item.file.name,
+          file_type: item.file.type || "application/octet-stream",
+          file_size: item.file.size,
+          doc_type: docType
+        });
 
-      setToast("Upload completed. Document has been queued for OCR processing.");
-      setSelectedFile(null);
-      await loadDocuments();
-    } catch (uploadError) {
-      setError(parseApiError(uploadError, "Unable to upload document"));
-    } finally {
-      setUploading(false);
+        updateItem(item.id, { status: "uploading", message: "Uploading to secure storage..." });
+
+        await uploadApi.uploadFileToSignedUrl(uploadInit.upload_url, item.file, (progress) => {
+          updateItem(item.id, { progress });
+        });
+
+        updateItem(item.id, { status: "confirming", message: "Confirming and queueing OCR...", progress: 100 });
+
+        await documentsApi.confirmUpload(uploadInit.document_id);
+
+        updateItem(item.id, { status: "success", message: "Upload completed", progress: 100 });
+      } catch (uploadError) {
+        updateItem(item.id, {
+          status: "error",
+          message: parseApiError(uploadError, "Upload failed")
+        });
+      }
     }
+
+    setUploading(false);
+    setToast("Upload queue finished. Documents have been queued for OCR processing.");
+    await loadDocuments();
   };
+
+  const successCount = useMemo(() => items.filter((item) => item.status === "success").length, [items]);
+  const uploadableCount = useMemo(
+    () => items.filter((item) => item.status === "pending" || item.status === "error").length,
+    [items]
+  );
 
   const rows = useMemo(() => docs || [], [docs]);
 
@@ -100,14 +177,17 @@ const ClientDocumentsPage = () => {
     <AppShell title={clientName} subtitle="Track every document for this client, from upload to export.">
       <section className="mb-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <article className="panel p-4">
-          <h2 className="text-lg font-bold text-ink-900">Upload new document</h2>
-          <p className="mt-1 text-sm text-[#6b7c92]">Direct browser-to-S3 upload with queue confirmation.</p>
+          <h2 className="text-lg font-bold text-ink-900">Upload new documents</h2>
+          <p className="mt-1 text-sm text-[#6b7c92]">
+            Direct browser-to-S3 upload with queue confirmation. PDF, JPG, PNG, XLSX up to {maxFileSizeMb}MB each.
+          </p>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_220px_140px]">
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_220px]">
             <input
               className="field"
               type="file"
-              onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+              multiple
+              onChange={onFileInputChange}
               accept=".pdf,.jpg,.jpeg,.png,.xlsx"
             />
             <select className="field" value={docType} onChange={(event) => setDocType(event.target.value)}>
@@ -116,9 +196,6 @@ const ClientDocumentsPage = () => {
               <option value="bill">Bill</option>
               <option value="other">Other</option>
             </select>
-            <button type="button" className="btn-primary" disabled={uploading} onClick={onUpload}>
-              {uploading ? "Uploading..." : "Upload"}
-            </button>
           </div>
 
           {error ? (
@@ -132,6 +209,71 @@ const ClientDocumentsPage = () => {
               {toast}
             </div>
           ) : null}
+
+          {items.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#6c7d93]">
+                  Queue — {successCount} successful / {items.length} total
+                </p>
+              </div>
+              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                {items.map((item) => (
+                  <div key={item.id} className="rounded-xl border border-[#e4d8c5] bg-sand-50 p-3">
+                    <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-ink-900">{item.file.name}</p>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
+                            item.status === "success"
+                              ? "bg-mint-500/15 text-mint-700"
+                              : item.status === "error" || item.status === "invalid"
+                                ? "bg-rose-500/15 text-rose-700"
+                                : "bg-ink-900/10 text-ink-700"
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+                        {(item.status === "pending" || item.status === "invalid") && (
+                          <button
+                            type="button"
+                            className="text-xs font-semibold text-[#8b7757] underline"
+                            onClick={() => removeItem(item.id)}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <p
+                      className={`text-xs ${
+                        item.status === "invalid" || item.status === "error" ? "text-rose-600" : "text-[#6c7d93]"
+                      }`}
+                    >
+                      {item.message}
+                    </p>
+                    {item.status !== "invalid" && (
+                      <div className="mt-2 h-2 rounded-full bg-[#eadfcf]">
+                        <div
+                          className="h-2 rounded-full bg-ink-800 transition-all"
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="btn-primary mt-4 w-full"
+            disabled={uploading || uploadableCount === 0}
+            onClick={processUploadQueue}
+          >
+            {uploading ? "Uploading files..." : `Upload ${uploadableCount > 0 ? uploadableCount : ""} file${uploadableCount === 1 ? "" : "s"}`}
+          </button>
         </article>
 
         <article className="panel p-4">

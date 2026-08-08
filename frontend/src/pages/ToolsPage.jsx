@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import AppShell from "../components/layout/AppShell";
-import { API_BASE_URL } from "../lib/api-client";
-import { tokenStore } from "../lib/token-store";
+import { request } from "../lib/api-client";
 import { parseApiError } from "../lib/utils";
 
 // ─── Shared file-info row ───────────────────────────────────────────────────
@@ -40,18 +39,11 @@ const RegisterCleanerCard = () => {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const token = tokenStore.getAccessToken();
-      const response = await fetch(`${API_BASE_URL}/api/tools/register-clean`, {
+      const blob = await request("/api/tools/register-clean", {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
-        credentials: "include",
+        responseType: "blob"
       });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ message: "Processing failed" }));
-        throw new Error(err.message || err.detail || "Processing failed");
-      }
-      const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -64,7 +56,7 @@ const RegisterCleanerCard = () => {
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
-      setError(err.message || parseApiError(err, "Unable to process the file"));
+      setError(parseApiError(err, "Unable to process the file"));
     } finally {
       setProcessing(false);
     }
@@ -152,24 +144,13 @@ const BankStatementXmlCard = () => {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const token = tokenStore.getAccessToken();
       const params = new URLSearchParams();
       if (companyName.trim()) params.set("company_name", companyName.trim());
       if (bankLedger.trim())  params.set("bank_ledger",  bankLedger.trim());
-      const response = await fetch(
-        `${API_BASE_URL}/api/tools/bank-statement-xml?${params}`,
-        {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-          credentials: "include",
-        }
-      );
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ message: "Conversion failed" }));
-        throw new Error(err.message || err.detail || "Conversion failed");
-      }
-      const result = await response.json();
+      const result = await request(`/api/tools/bank-statement-xml?${params}`, {
+        method: "POST",
+        body: formData
+      });
       const blob = new Blob([result.xml || ""], { type: "text/xml" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -185,7 +166,7 @@ const BankStatementXmlCard = () => {
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
-      setError(err.message || parseApiError(err, "Unable to convert the file"));
+      setError(parseApiError(err, "Unable to convert the file"));
     } finally {
       setProcessing(false);
     }

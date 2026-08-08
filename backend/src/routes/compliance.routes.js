@@ -426,6 +426,7 @@ router.get(
 // POST /api/compliance/gstr2b/match
 router.post(
   "/gstr2b/match",
+  requireAdmin,
   validate(gstr2bMatchSchema),
   asyncHandler(async (req, res) => {
     const { firmId, userId } = req.user;

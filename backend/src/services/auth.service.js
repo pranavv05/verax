@@ -433,6 +433,18 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
     );
     const user = userResult.rows[0];
 
+    await insertAuditLog(client, {
+      firmId: firm.id,
+      userId: user.id,
+      action: "firm_registered",
+      entityType: "firm",
+      entityId: firm.id,
+      metadata: {
+        firmName: firm.name,
+        userEmail: normalizedEmail
+      }
+    });
+
     const session = await createSession(client, { user, userAgent, ipAddress });
 
     await client.query("COMMIT");
@@ -453,7 +465,7 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
 const loginUser = async ({ email, password, userAgent, ipAddress }) => {
   const normalizedEmail = email.trim().toLowerCase();
 
-  return withTenantTransaction(
+  const result = await withTenantTransaction(
     {
       authContext: "login",
       authEmail: normalizedEmail
@@ -471,18 +483,32 @@ const loginUser = async ({ email, password, userAgent, ipAddress }) => {
       );
 
       if (userResult.rowCount === 0) {
+        // No firm can be resolved for an unknown email, and audit_logs.firm_id is
+        // NOT NULL with no RLS escape hatch for this context, so this attempt
+        // cannot be attributed to a firm and is intentionally not audit-logged.
         throw ApiError.unauthorized("Invalid email or password");
       }
 
       const user = userResult.rows[0];
-      const passwordMatches = await bcrypt.compare(password, user.password_hash);
-      if (!passwordMatches) {
-        throw ApiError.unauthorized("Invalid email or password");
-      }
 
       await setLocalConfig(client, "app.current_firm_id", user.firm_id);
       await setLocalConfig(client, "app.auth_context", "");
       await setLocalConfig(client, "app.auth_email", "");
+
+      const passwordMatches = await bcrypt.compare(password, user.password_hash);
+      if (!passwordMatches) {
+        // Recorded on this same client/transaction (which still commits normally)
+        // rather than thrown here, since throwing would roll back the insert.
+        await insertAuditLog(client, {
+          firmId: user.firm_id,
+          userId: user.id,
+          action: "login_failed",
+          entityType: "user",
+          entityId: user.id,
+          metadata: { email: normalizedEmail, reason: "invalid_password" }
+        });
+        return { authFailed: true };
+      }
 
       const firmResult = await client.query(
         `
@@ -505,6 +531,15 @@ const loginUser = async ({ email, password, userAgent, ipAddress }) => {
         ipAddress
       });
 
+      await insertAuditLog(client, {
+        firmId: user.firm_id,
+        userId: user.id,
+        action: "login_success",
+        entityType: "user",
+        entityId: user.id,
+        metadata: { email: normalizedEmail }
+      });
+
       return {
         accessToken: session.accessToken,
         refreshToken: session.refreshToken,
@@ -513,6 +548,12 @@ const loginUser = async ({ email, password, userAgent, ipAddress }) => {
       };
     }
   );
+
+  if (result.authFailed) {
+    throw ApiError.unauthorized("Invalid email or password");
+  }
+
+  return result;
 };
 
 const refreshAccessToken = async ({ refreshToken, userAgent, ipAddress }) => {

@@ -252,11 +252,31 @@ const recordDocumentReadyEmailAudit = async (
   });
 };
 
+const recordDocumentFailedEmailAudit = async (
+  db,
+  { firmId, userId, documentId, email, emailResult }
+) => {
+  await insertAuditLog(db, {
+    firmId,
+    userId,
+    action: "document_failed_emailed",
+    entityType: "document",
+    entityId: documentId,
+    metadata: {
+      email,
+      sent: Boolean(emailResult.sent),
+      provider: emailResult.provider ?? null,
+      error: emailResult.error ?? null
+    }
+  });
+};
+
 module.exports = {
   parseAiResponse,
   markDocumentProcessingStarted,
   markDocumentProcessingSucceeded,
   markDocumentProcessingFailed,
   getDocumentReadyEmailContext,
-  recordDocumentReadyEmailAudit
+  recordDocumentReadyEmailAudit,
+  recordDocumentFailedEmailAudit
 };
