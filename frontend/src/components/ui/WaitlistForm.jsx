@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const WaitlistForm = () => {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState("idle"); // idle, loading, success, error
@@ -7,10 +9,10 @@ const WaitlistForm = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!email.endsWith("@gmail.com")) {
+
+    if (!EMAIL_PATTERN.test(email.trim())) {
       setStatus("error");
-      setMessage("Please enter a valid Gmail address.");
+      setMessage("Please enter a valid email address.");
       return;
     }
 
@@ -52,7 +54,7 @@ const WaitlistForm = () => {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="Enter your Gmail"
+              placeholder="Enter your email"
               required
               className="field h-12 pr-4 pl-4"
               disabled={status === "loading" || status === "success"}

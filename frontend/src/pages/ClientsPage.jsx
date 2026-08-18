@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
+import Drawer from "../components/ui/Drawer";
 import EmptyState from "../components/ui/EmptyState";
+import OverflowMenu from "../components/ui/OverflowMenu";
 import { TableRowsSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
 import { clientsApi } from "../api/clients-api";
 import { complianceApi } from "../api/compliance-api";
 import { useAuth } from "../contexts/AuthContext";
-import { formatDateTime, parseApiError } from "../lib/utils";
+import { formatDate, parseApiError } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 const clientSchema = z.object({
@@ -40,8 +42,31 @@ const requestDocsTypeOptions = [
   ["other", "Other"]
 ];
 
+const PlusIcon = () => (
+  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.25">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+  </svg>
+);
+
+const SearchIcon = () => (
+  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+  </svg>
+);
+
+const documentSummaryText = (summary) => {
+  const total = summary?.totalDocuments || 0;
+  if (total === 0) return null;
+  const pending = summary?.pendingDocuments || 0;
+  if (pending > 0) return `${total} total · ${pending} pending`;
+  return `${total} document${total === 1 ? "" : "s"}`;
+};
+
+const lastActivityText = (summary) => (summary?.lastActivityAt ? formatDate(summary.lastActivityAt) : null);
+
 const ClientsPage = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const canAdmin = isAdmin(user);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -52,11 +77,19 @@ const ClientsPage = () => {
   const [requestDocsError, setRequestDocsError] = useState("");
   const [magicLink, setMagicLink] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState("");
-  const [error, setError] = useState("");
-  const [toast, setToast] = useState("");
+  // Drawer-scoped feedback (create/update client) — shown next to the form.
+  const [formError, setFormError] = useState("");
+  const [formToast, setFormToast] = useState("");
+  // Page-level feedback for actions that happen outside the drawer (delete,
+  // and a confirmation echo once the drawer auto-closes on success).
+  const [pageError, setPageError] = useState("");
+  const [pageToast, setPageToast] = useState("");
+  const [listError, setListError] = useState("");
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 0 });
   const [filters, setFilters] = useState({ page: 1, limit: 20, search: "", status: "" });
+  const [searchInput, setSearchInput] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editingClient, setEditingClient] = useState(null); // null = add mode, object = edit mode
   const [confirmDeleteId, setConfirmDeleteId] = useState(""); // id to confirm delete
@@ -64,13 +97,13 @@ const ClientsPage = () => {
 
   const loadClients = async () => {
     setLoading(true);
-    setError("");
+    setListError("");
     try {
       const result = await clientsApi.list(filters);
       setRows(result.data || []);
       setPagination(result.pagination || { page: 1, limit: 20, total: 0, totalPages: 0 });
     } catch (loadError) {
-      setError(parseApiError(loadError, "Unable to load clients"));
+      setListError(parseApiError(loadError, "Couldn't load your clients."));
     } finally {
       setLoading(false);
     }
@@ -79,6 +112,14 @@ const ClientsPage = () => {
   useEffect(() => {
     loadClients();
   }, [filters.page, filters.status, filters.search]);
+
+  // Debounced so search feels instant without firing a request on every keystroke.
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setFilters((prev) => (prev.search === searchInput ? prev : { ...prev, page: 1, search: searchInput }));
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchInput]);
 
   useEffect(() => {
     const gstin = String(form.gstin || "").trim().toUpperCase();
@@ -126,6 +167,15 @@ const ClientsPage = () => {
     return () => window.clearTimeout(timeoutId);
   }, [form.gstin]);
 
+  const openAddDrawer = () => {
+    setEditingClient(null);
+    setForm(emptyForm);
+    setFormError("");
+    setFormToast("");
+    setGstLookup({ status: "idle", message: "", legalName: "" });
+    setDrawerOpen(true);
+  };
+
   const startEdit = (client) => {
     setEditingClient(client);
     setForm({
@@ -135,26 +185,28 @@ const ClientsPage = () => {
       gstin: client.gstin || "",
       status: client.status || "active"
     });
-    setError("");
-    setToast("");
+    setFormError("");
+    setFormToast("");
     setGstLookup({ status: "idle", message: "", legalName: "" });
+    setDrawerOpen(true);
   };
 
-  const cancelEdit = () => {
+  const closeDrawer = () => {
+    setDrawerOpen(false);
     setEditingClient(null);
     setForm(emptyForm);
-    setError("");
+    setFormError("");
     setGstLookup({ status: "idle", message: "", legalName: "" });
   };
 
   const onSubmit = async (event) => {
     event.preventDefault();
-    setError("");
-    setToast("");
+    setFormError("");
+    setFormToast("");
 
     const validation = clientSchema.safeParse(form);
     if (!validation.success) {
-      setError(validation.error.issues[0]?.message || "Invalid form values");
+      setFormError(validation.error.issues[0]?.message || "Invalid form values");
       return;
     }
 
@@ -162,17 +214,16 @@ const ClientsPage = () => {
     try {
       if (editingClient) {
         await clientsApi.update(editingClient.id, validation.data);
-        setToast("Client updated successfully.");
-        setEditingClient(null);
-        setForm(emptyForm);
+        setPageToast("Client updated successfully.");
       } else {
         await clientsApi.create(validation.data);
-        setForm(emptyForm);
-        setToast("Client created successfully.");
+        setPageToast("Client created successfully.");
       }
+      setPageError("");
+      closeDrawer();
       await loadClients();
     } catch (submitError) {
-      setError(parseApiError(submitError, editingClient ? "Unable to update client" : "Unable to create client"));
+      setFormError(parseApiError(submitError, editingClient ? "Unable to update client" : "Unable to create client"));
     } finally {
       setSaving(false);
     }
@@ -180,17 +231,17 @@ const ClientsPage = () => {
 
   const onDeleteConfirmed = async () => {
     const id = confirmDeleteId;
-    setConfirmDeleteId("");
     setDeletingId(id);
-    setError("");
-    setToast("");
+    setPageError("");
+    setPageToast("");
     try {
       await clientsApi.remove(id);
-      setToast("Client deleted.");
-      if (editingClient?.id === id) cancelEdit();
+      setConfirmDeleteId("");
+      setPageToast("Client deleted.");
+      if (editingClient?.id === id) closeDrawer();
       await loadClients();
     } catch (deleteError) {
-      setError(parseApiError(deleteError, "Unable to delete client"));
+      setPageError(parseApiError(deleteError, "Unable to delete client"));
     } finally {
       setDeletingId("");
     }
@@ -239,77 +290,29 @@ const ClientsPage = () => {
     }
   };
 
+  const clearFilters = () => {
+    setSearchInput("");
+    setFilters({ page: 1, limit: 20, search: "", status: "" });
+  };
+
+  const getClientMenuItems = (client) => [
+    { label: "View details", onSelect: () => navigate(`/clients/${client.id}`) },
+    { label: "View documents", onSelect: () => navigate(`/clients/${client.id}/documents`) },
+    canAdmin && {
+      label: "Request documents",
+      onSelect: () => openRequestDocsModal(client)
+    },
+    canAdmin && "divider",
+    canAdmin && { label: "Edit client", onSelect: () => startEdit(client) },
+    canAdmin && { label: "Delete client", destructive: true, onSelect: () => setConfirmDeleteId(client.id) }
+  ];
+
   const canGoPrevious = pagination.page > 1;
   const canGoNext = pagination.totalPages > pagination.page;
-
-  const tableBody = useMemo(() => {
-    if (!rows.length) {
-      return (
-        <tr>
-          <td colSpan={7} className="p-0">
-            <EmptyState
-              title="No clients found"
-              description="Try changing filters or add a new client to begin collecting documents."
-            />
-          </td>
-        </tr>
-      );
-    }
-
-    return rows.map((client) => (
-      <tr key={client.id} className={`border-t border-[#eadfcf] ${editingClient?.id === client.id ? "bg-indigo-50/50" : ""}`}>
-        <td className="px-3 py-3 text-sm font-semibold text-ink-900">{client.name}</td>
-        <td className="px-3 py-3 text-sm text-[#5f6f84]">{client.gstin || "-"}</td>
-        <td className="px-3 py-3 text-sm text-[#5f6f84]">{client.email || "-"}</td>
-        <td className="px-3 py-3 text-sm text-[#5f6f84]">{client.phone || "-"}</td>
-        <td className="px-3 py-3 text-sm">
-          <StatusBadge status={client.status} />
-        </td>
-        <td className="px-3 py-3 text-xs text-[#6e7f96]">{formatDateTime(client.createdAt)}</td>
-        <td className="px-3 py-3 text-right text-sm">
-          <div className="flex flex-wrap justify-end gap-1.5">
-            <Link className="btn-secondary px-2 py-1.5 text-xs" to={`/clients/${client.id}`}>
-              Details
-            </Link>
-            <Link className="btn-secondary px-2 py-1.5 text-xs" to={`/clients/${client.id}/documents`}>
-              Docs
-            </Link>
-            {canAdmin && (
-              <button
-                type="button"
-                className="btn-secondary px-2 py-1.5 text-xs"
-                onClick={() => startEdit(client)}
-              >
-                Edit
-              </button>
-            )}
-            {canAdmin && (
-              <button
-                type="button"
-                className="px-2 py-1.5 text-xs rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
-                disabled={deletingId === client.id}
-                onClick={() => setConfirmDeleteId(client.id)}
-              >
-                {deletingId === client.id ? "..." : "Delete"}
-              </button>
-            )}
-            {canAdmin && (
-              <button
-                type="button"
-                className="btn-primary px-2 py-1.5 text-xs"
-                onClick={() => openRequestDocsModal(client)}
-              >
-                Request docs
-              </button>
-            )}
-          </div>
-        </td>
-      </tr>
-    ));
-  }, [rows, editingClient, deletingId, canAdmin]);
+  const isFiltering = Boolean(filters.search || filters.status);
 
   return (
-    <AppShell title="Clients" subtitle="Search, filter, and manage clients across your firm.">
+    <AppShell>
       {/* Delete confirmation modal */}
       {confirmDeleteId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
@@ -318,20 +321,27 @@ const ClientsPage = () => {
             <p className="mt-2 text-sm text-[#607086]">
               This will permanently delete the client and all associated data. This cannot be undone.
             </p>
+            {pageError ? (
+              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {pageError}
+              </div>
+            ) : null}
             <div className="mt-5 flex gap-3">
               <button
                 type="button"
                 className="btn-secondary flex-1"
+                disabled={deletingId === confirmDeleteId}
                 onClick={() => setConfirmDeleteId("")}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                className="flex-1 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 transition"
+                disabled={deletingId === confirmDeleteId}
+                className="flex-1 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={onDeleteConfirmed}
               >
-                Delete
+                {deletingId === confirmDeleteId ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>
@@ -426,100 +436,15 @@ const ClientsPage = () => {
         </div>
       )}
 
-      <section className={`grid gap-4 ${canAdmin ? "lg:grid-cols-[1fr_0.9fr]" : ""}`}>
-        {/* Client table */}
-        <article className="panel p-4">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-1 gap-2">
-              <input
-                className="field"
-                placeholder="Search by name, email, GSTIN, phone"
-                value={filters.search}
-                onChange={(e) => setFilters((prev) => ({ ...prev, page: 1, search: e.target.value }))}
-              />
-              <select
-                className="field max-w-[160px]"
-                value={filters.status}
-                onChange={(e) => setFilters((prev) => ({ ...prev, page: 1, status: e.target.value }))}
-              >
-                <option value="">All statuses</option>
-                <option value="active">Active</option>
-                <option value="pending">Pending</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-separate border-spacing-0">
-              <thead>
-                <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
-                  <th className="rounded-l-lg px-3 py-3">Name</th>
-                  <th className="px-3 py-3">GSTIN</th>
-                  <th className="px-3 py-3">Email</th>
-                  <th className="px-3 py-3">Phone</th>
-                  <th className="px-3 py-3">Status</th>
-                  <th className="px-3 py-3">Created</th>
-                  <th className="rounded-r-lg px-3 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? <TableRowsSkeleton rows={6} cols={7} /> : tableBody}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between text-sm">
-            <p className="text-[#6b7b90]">
-              Showing page {pagination.page} of {Math.max(1, pagination.totalPages || 1)}
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="btn-secondary px-3 py-1.5 text-xs"
-                disabled={!canGoPrevious}
-                onClick={() => setFilters((prev) => ({ ...prev, page: prev.page - 1 }))}
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                className="btn-secondary px-3 py-1.5 text-xs"
-                disabled={!canGoNext}
-                onClick={() => setFilters((prev) => ({ ...prev, page: prev.page + 1 }))}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </article>
-
-        {/* Add / Edit panel */}
-        {canAdmin && (
-        <article className="panel p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-ink-900">
-                {editingClient ? `Edit: ${editingClient.name}` : "Add new client"}
-              </h2>
-              <p className="mt-0.5 text-sm text-[#66778f]">
-                {editingClient
-                  ? "Update client details below."
-                  : "Create a client profile and issue upload links."}
-              </p>
-            </div>
-            {editingClient && (
-              <button
-                type="button"
-                onClick={cancelEdit}
-                className="text-xs text-[#607086] hover:text-ink-900 underline"
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-
-          <form className="mt-4 space-y-3" onSubmit={onSubmit}>
+      {/* Add / Edit client drawer */}
+      {canAdmin && (
+        <Drawer
+          open={drawerOpen}
+          onClose={closeDrawer}
+          title={editingClient ? `Edit ${editingClient.name}` : "Add new client"}
+          subtitle={editingClient ? "Update client details below." : "Create a client profile and issue upload links."}
+        >
+          <form className="space-y-4" onSubmit={onSubmit}>
             <div>
               <label className="label">Client name</label>
               <input
@@ -527,94 +452,340 @@ const ClientsPage = () => {
                 value={form.name}
                 onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                 placeholder="M/s Example Industries"
+                autoFocus
               />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="label">Email</label>
-                <input
-                  className="field"
-                  value={form.email}
-                  onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-                  placeholder="accounts@example.com"
-                  type="email"
-                />
-              </div>
-              <div>
-                <label className="label">Phone</label>
-                <input
-                  className="field"
-                  value={form.phone}
-                  onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
-                  placeholder="9876543210"
-                />
-              </div>
+            <div>
+              <label className="label">Email</label>
+              <input
+                className="field"
+                value={form.email}
+                onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="accounts@example.com"
+                type="email"
+              />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="label">GSTIN</label>
-                <input
-                  className="field uppercase"
-                  value={form.gstin}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, gstin: e.target.value.toUpperCase() }))
-                  }
-                  placeholder="22AAAAA0000A1Z5"
-                />
-                {gstLookup.status !== "idle" && gstLookup.message && (
-                  <p
-                    className={`mt-1 text-xs font-semibold ${
-                      gstLookup.status === "valid"
-                        ? "text-mint-700"
-                        : gstLookup.status === "fallback"
-                        ? "text-slate-500"
-                        : gstLookup.status === "loading"
-                        ? "text-[#607086]"
-                        : "text-rose-600"
-                    }`}
-                  >
-                    {gstLookup.status === "valid" ? "GST verified: " : ""}
-                    {gstLookup.message}
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="label">Status</label>
-                <select
-                  className="field"
-                  value={form.status}
-                  onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}
+            <div>
+              <label className="label">Phone</label>
+              <input
+                className="field"
+                value={form.phone}
+                onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
+                placeholder="9876543210"
+              />
+            </div>
+
+            <div>
+              <label className="label">GSTIN</label>
+              <input
+                className="field uppercase"
+                value={form.gstin}
+                onChange={(e) => setForm((prev) => ({ ...prev, gstin: e.target.value.toUpperCase() }))}
+                placeholder="22AAAAA0000A1Z5"
+              />
+              {gstLookup.status !== "idle" && gstLookup.message && (
+                <p
+                  className={`mt-1 text-xs font-semibold ${
+                    gstLookup.status === "valid"
+                      ? "text-mint-700"
+                      : gstLookup.status === "fallback"
+                      ? "text-slate-500"
+                      : gstLookup.status === "loading"
+                      ? "text-[#607086]"
+                      : "text-rose-600"
+                  }`}
                 >
-                  <option value="active">Active</option>
-                  <option value="pending">Pending</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </div>
+                  {gstLookup.status === "valid" ? "GST verified: " : ""}
+                  {gstLookup.message}
+                </p>
+              )}
             </div>
 
-            {error ? (
+            <div>
+              <label className="label">Status</label>
+              <select
+                className="field"
+                value={form.status}
+                onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}
+              >
+                <option value="active">Active</option>
+                <option value="pending">Pending</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+
+            {formError ? (
               <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
+                {formError}
               </div>
             ) : null}
 
-            {toast ? (
+            {formToast ? (
               <div className="rounded-lg border border-mint-300 bg-mint-500/10 px-3 py-2 text-sm text-mint-700">
-                {toast}
+                {formToast}
               </div>
             ) : null}
 
-            <button type="submit" className="btn-primary w-full" disabled={saving}>
-              {saving
-                ? editingClient ? "Saving..." : "Creating..."
-                : editingClient ? "Save changes" : "Create client"}
-            </button>
+            <div className="flex gap-3 pt-2">
+              <button type="button" className="btn-secondary flex-1" onClick={closeDrawer} disabled={saving}>
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary flex-1" disabled={saving}>
+                {saving
+                  ? editingClient ? "Saving..." : "Creating..."
+                  : editingClient ? "Save changes" : "Create client"}
+              </button>
+            </div>
           </form>
-        </article>
+        </Drawer>
+      )}
+
+      {/* Header */}
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight text-ink-900">Clients</h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Manage your firm&apos;s clients, documents, and upload requests.
+          </p>
+        </div>
+        {canAdmin && (
+          <button
+            type="button"
+            onClick={openAddDrawer}
+            className="btn-primary inline-flex items-center justify-center gap-2 self-start sm:self-auto"
+          >
+            <PlusIcon />
+            Add client
+          </button>
         )}
-      </section>
+      </div>
+
+      {pageToast ? (
+        <div className="mb-4 rounded-lg border border-mint-300 bg-mint-500/10 px-4 py-3 text-sm font-semibold text-mint-700">
+          {pageToast}
+        </div>
+      ) : null}
+      {pageError ? (
+        <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {pageError}
+        </div>
+      ) : null}
+
+      <article className="panel p-4">
+        {/* Search + filter toolbar */}
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-400">
+              <SearchIcon />
+            </span>
+            <input
+              className="field pl-9 pr-8"
+              placeholder="Search clients by name, GSTIN, email or phone..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            {searchInput ? (
+              <button
+                type="button"
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700"
+                onClick={() => setSearchInput("")}
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+          <select
+            className="field sm:max-w-[180px]"
+            value={filters.status}
+            onChange={(e) => setFilters((prev) => ({ ...prev, page: 1, status: e.target.value }))}
+          >
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="pending">Pending</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+
+        {loading ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-0">
+              <thead>
+                <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
+                  <th className="rounded-l-lg px-3 py-3">Client</th>
+                  <th className="px-3 py-3">Contact</th>
+                  <th className="px-3 py-3">Status</th>
+                  <th className="px-3 py-3">Documents</th>
+                  <th className="px-3 py-3">Last activity</th>
+                  <th className="rounded-r-lg px-3 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <TableRowsSkeleton rows={6} cols={6} />
+              </tbody>
+            </table>
+          </div>
+        ) : listError ? (
+          <EmptyState
+            title="Couldn't load your clients."
+            description={listError}
+            action={
+              <button type="button" className="btn-primary" onClick={loadClients}>
+                Try again
+              </button>
+            }
+          />
+        ) : rows.length === 0 ? (
+          isFiltering ? (
+            <EmptyState
+              title="No matching clients"
+              description="Try a different search term or clear your filters."
+              action={
+                <button type="button" className="btn-secondary" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No clients yet"
+              description="Add your first client to start collecting and processing financial documents."
+              action={
+                canAdmin ? (
+                  <button type="button" className="btn-primary inline-flex items-center gap-2" onClick={openAddDrawer}>
+                    <PlusIcon />
+                    Add your first client
+                  </button>
+                ) : null
+              }
+            />
+          )
+        ) : (
+          <>
+            {/* Desktop / tablet table */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="min-w-full border-separate border-spacing-0">
+                <thead>
+                  <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
+                    <th className="rounded-l-lg px-3 py-3">Client</th>
+                    <th className="px-3 py-3">Contact</th>
+                    <th className="px-3 py-3">Status</th>
+                    <th className="px-3 py-3">Documents</th>
+                    <th className="px-3 py-3">Last activity</th>
+                    <th className="rounded-r-lg px-3 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((client) => {
+                    const docsText = documentSummaryText(client.documentSummary);
+                    const activityText = lastActivityText(client.documentSummary);
+                    return (
+                      <tr
+                        key={client.id}
+                        className={`border-t border-[#eadfcf] transition-colors hover:bg-sand-50/50 ${
+                          editingClient?.id === client.id && drawerOpen ? "bg-indigo-50/50" : ""
+                        }`}
+                      >
+                        <td className="px-3 py-4 align-middle">
+                          <Link
+                            to={`/clients/${client.id}`}
+                            className="font-semibold text-ink-900 transition-colors hover:text-indigo-600 hover:underline"
+                          >
+                            {client.name}
+                          </Link>
+                          {client.gstin && (
+                            <div className="mt-0.5 font-mono text-xs text-ink-400">{client.gstin}</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-4 align-middle">
+                          <div className="text-sm text-ink-700">{client.email || "-"}</div>
+                          {client.phone && <div className="text-xs text-ink-400">{client.phone}</div>}
+                        </td>
+                        <td className="px-3 py-4 align-middle">
+                          <StatusBadge status={client.status} />
+                        </td>
+                        <td className="px-3 py-4 align-middle text-sm text-ink-700">
+                          {docsText || <span className="text-ink-400">No documents</span>}
+                        </td>
+                        <td className="px-3 py-4 align-middle text-xs text-[#6e7f96]">
+                          {activityText || <span className="text-ink-400">No activity yet</span>}
+                        </td>
+                        <td className="px-3 py-4 text-right align-middle">
+                          <OverflowMenu items={getClientMenuItems(client)} label={`Actions for ${client.name}`} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="divide-y divide-[#eee3cf] md:hidden">
+              {rows.map((client) => {
+                const docsText = documentSummaryText(client.documentSummary);
+                const activityText = lastActivityText(client.documentSummary);
+                return (
+                  <div key={client.id} className="flex items-start justify-between gap-3 py-4">
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        to={`/clients/${client.id}`}
+                        className="block truncate font-semibold text-ink-900 hover:text-indigo-600 hover:underline"
+                      >
+                        {client.name}
+                      </Link>
+                      {client.gstin && (
+                        <div className="mt-0.5 font-mono text-xs text-ink-400">{client.gstin}</div>
+                      )}
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <StatusBadge status={client.status} />
+                        {docsText && <span className="text-xs text-ink-500">{docsText}</span>}
+                      </div>
+                      {(client.email || client.phone) && (
+                        <div className="mt-1.5 text-xs text-ink-500">
+                          {[client.email, client.phone].filter(Boolean).join(" · ")}
+                        </div>
+                      )}
+                      <div className="mt-1 text-[11px] text-ink-400">
+                        Last activity: {activityText || "No activity yet"}
+                      </div>
+                    </div>
+                    <OverflowMenu items={getClientMenuItems(client)} label={`Actions for ${client.name}`} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Pagination */}
+            <div className="mt-4 flex items-center justify-between text-sm">
+              <p className="text-[#6b7b90]">
+                {pagination.total} client{pagination.total === 1 ? "" : "s"} · Page {pagination.page} of{" "}
+                {Math.max(1, pagination.totalPages || 1)}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn-secondary px-3 py-1.5 text-xs"
+                  disabled={!canGoPrevious}
+                  onClick={() => setFilters((prev) => ({ ...prev, page: prev.page - 1 }))}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary px-3 py-1.5 text-xs"
+                  disabled={!canGoNext}
+                  onClick={() => setFilters((prev) => ({ ...prev, page: prev.page + 1 }))}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </article>
     </AppShell>
   );
 };

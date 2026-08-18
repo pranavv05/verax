@@ -558,6 +558,7 @@ const ReviewPage = () => {
   const blocking = hasBlockingErrors(validation);
   const isExported = document?.status === "exported";
   const isReviewed = document?.status === "reviewed";
+  const isLocked = isExported || isReviewed;
   const canApprove = ["extracted", "review_required"].includes(document?.status);
   const canAdmin = isAdmin(user);
 
@@ -873,7 +874,7 @@ const ReviewPage = () => {
                         : ""
                     }`}
                     value={form[key] ?? ""}
-                    disabled={isExported}
+                    disabled={isLocked}
                     onChange={(e) => onFieldChange(key, e.target.value)}
                   />
                   {fieldNeedsReview && (
@@ -961,7 +962,7 @@ const ReviewPage = () => {
             <button
               type="button"
               className="btn-secondary"
-              disabled={saving || isExported}
+              disabled={saving || isLocked}
               onClick={onSave}
             >
               {saving ? "Saving..." : "Save"}
@@ -1050,7 +1051,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full"
                           type="date"
                           value={txn.date}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "date", e.target.value)}
                         />
                       </td>
@@ -1058,7 +1059,7 @@ const ReviewPage = () => {
                         <input
                           className="field text-xs"
                           value={txn.narration}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "narration", e.target.value)}
                         />
                       </td>
@@ -1067,7 +1068,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full text-right"
                           inputMode="decimal"
                           value={txn.debit}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "debit", e.target.value)}
                         />
                       </td>
@@ -1076,7 +1077,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full text-right"
                           inputMode="decimal"
                           value={txn.credit}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "credit", e.target.value)}
                         />
                       </td>
@@ -1085,7 +1086,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full text-right"
                           inputMode="decimal"
                           value={txn.balance}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "balance", e.target.value)}
                         />
                       </td>
@@ -1093,7 +1094,7 @@ const ReviewPage = () => {
                         <input
                           className="field text-xs w-full"
                           value={txn.reference}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "reference", e.target.value)}
                         />
                       </td>
@@ -1173,7 +1174,7 @@ const ReviewPage = () => {
                           <input
                             className="field text-xs"
                             value={item.description}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "description", e.target.value)}
                           />
                         </td>
@@ -1182,7 +1183,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             inputMode="decimal"
                             value={item.quantity}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "quantity", e.target.value)}
                           />
                         </td>
@@ -1191,7 +1192,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             inputMode="decimal"
                             value={item.unit_price}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "unit_price", e.target.value)}
                           />
                         </td>
@@ -1200,7 +1201,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             inputMode="decimal"
                             value={item.total}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "total", e.target.value)}
                           />
                         </td>
@@ -1208,7 +1209,7 @@ const ReviewPage = () => {
                           <input
                             className="field text-xs w-full"
                             value={item.hsn_code}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "hsn_code", e.target.value)}
                           />
                         </td>
@@ -1217,7 +1218,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             value={item.uom}
                             placeholder="PCS"
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "uom", e.target.value)}
                           />
                         </td>
@@ -1225,7 +1226,7 @@ const ReviewPage = () => {
                           <input
                             className="field text-xs w-full border-mint-300 focus:border-mint-500 focus:ring-mint-500/20"
                             value={item.tally_item_name}
-                            disabled={isExported}
+                            disabled={isLocked}
                             list={datalistId}
                             placeholder="Mapped name..."
                             onChange={(e) =>

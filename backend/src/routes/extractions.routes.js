@@ -88,7 +88,7 @@ router.get(
 
     // Run compliance validation
     const validation = await req.withTenantTransaction((db) =>
-      complianceService.runAll(db, { firmId, extraction: extraction.structuredData })
+      complianceService.runAll(db, { firmId, extraction: extraction.structuredData, documentId })
     );
 
     return res.status(200).json({

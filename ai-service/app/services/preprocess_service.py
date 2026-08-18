@@ -13,12 +13,28 @@ logger = logging.getLogger(__name__)
 MAX_PAGES = 15
 
 
-def is_blank_page(image, threshold: float = 0.98) -> bool:
+def is_blank_page(image, threshold: float = 0.98, min_ink_pixels: int = 500) -> bool:
     try:
         if hasattr(image, "convert"):
             gray = np.array(image.convert("L"))
         else:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        # A pure white-ratio check misclassifies real but sparse pages as
+        # blank: a digitally-rendered PDF page carrying just a couple of
+        # trailing line items (common on page 2+ of a multi-page invoice)
+        # is >99% whitespace by area and exceeded the 0.98 ratio threshold,
+        # so it was silently dropped before OCR ever saw it — the invoice's
+        # first page (denser with letterhead/table borders) survived while
+        # continuation pages did not. Any page with a meaningful amount of
+        # dark ink is real content regardless of how much whitespace
+        # surrounds it, so check that first and only fall back to the
+        # ratio (which still catches genuinely blank/near-blank scanned
+        # pages with sensor noise) when ink is negligible.
+        ink_pixels = int(np.sum(gray < 200))
+        if ink_pixels >= min_ink_pixels:
+            return False
+
         white_ratio = np.sum(gray > 240) / gray.size
         return white_ratio > threshold
     except Exception:  # noqa: BLE001

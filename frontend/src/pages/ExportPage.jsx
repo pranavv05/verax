@@ -4,6 +4,7 @@ import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
 import { ExportSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
+import ClientSearchSelect from "../components/ui/ClientSearchSelect";
 import { clientsApi } from "../api/clients-api";
 import { documentsApi } from "../api/documents-api";
 import { exportsApi } from "../api/exports-api";
@@ -365,18 +366,11 @@ const ExportPage = () => {
           <form className="mt-4 space-y-3" onSubmit={onGenerate}>
             <div>
               <label className="label">Client</label>
-              <select
-                className="field"
+              <ClientSearchSelect
+                clients={clients}
                 value={form.client_id}
-                onChange={(event) => setForm((prev) => ({ ...prev, client_id: event.target.value }))}
-              >
-                <option value="">Select client</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(clientId) => setForm((prev) => ({ ...prev, client_id: clientId }))}
+              />
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">

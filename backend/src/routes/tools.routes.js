@@ -8,6 +8,7 @@ const asyncHandler = require("../utils/async-handler");
 const { requireAuth } = require("../middlewares/auth.middleware");
 const ApiError = require("../utils/api-error");
 const env = require("../config/env");
+const { generateBankStatementXmlExport } = require("../services/ai.service");
 
 const router = express.Router();
 const maxToolUploadBytes = env.MAX_TOOL_UPLOAD_MB * 1024 * 1024;
@@ -179,6 +180,20 @@ router.post(
       pathname: "/tools/bank-statement-xml",
       responseContentType: "application/json"
     });
+  })
+);
+
+router.post(
+  "/bank-statement-xml/export",
+  toolsRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { transactions, companyName, bankLedger } = req.body || {};
+    if (!Array.isArray(transactions) || transactions.length === 0) {
+      throw ApiError.badRequest("transactions must be a non-empty array");
+    }
+
+    const result = await generateBankStatementXmlExport({ transactions, companyName, bankLedger });
+    res.status(200).json(result);
   })
 );
 

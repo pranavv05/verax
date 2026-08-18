@@ -11,6 +11,25 @@ const ENTITY_TYPES = ["firm", "client", "document", "extraction", "user"];
 
 const LIMIT = 20;
 
+// Actions where the client themself (not a firm user) performed the action via the
+// magic-link / client portal — the client's name should be shown as the Actor.
+const CLIENT_ACTOR_ACTIONS = new Set([
+  "document_upload_initiated",
+  "document_upload_confirmed",
+  "client_portal_login",
+  "client_portal_login_failed",
+  "client_portal_logout",
+  "client_portal_password_changed"
+]);
+
+// System/worker-triggered actions that relate to a client's document but weren't
+// caused by anyone logging in — Actor is "System", with the related client called out.
+const SYSTEM_CLIENT_ACTIONS = new Set([
+  "document_processed",
+  "document_processing_failed",
+  "document_processing_alert"
+]);
+
 const formatAction = (action) => {
   if (!action) return "-";
   return action
@@ -21,6 +40,22 @@ const formatAction = (action) => {
 const shortId = (id) => {
   if (!id) return "-";
   return String(id).slice(0, 8);
+};
+
+const getActorDisplay = (entry) => {
+  const userName = entry.userName || entry.user_name || entry.user?.name;
+  const userEmail = entry.userEmail || entry.user_email || entry.user?.email;
+  if (userName) {
+    return { primary: userName, secondary: userEmail || "" };
+  }
+  const clientName = entry.clientName || entry.client_name;
+  if (clientName && CLIENT_ACTOR_ACTIONS.has(entry.action)) {
+    return { primary: clientName, secondary: "Client" };
+  }
+  if (clientName && SYSTEM_CLIENT_ACTIONS.has(entry.action)) {
+    return { primary: "System", secondary: `Client: ${clientName}` };
+  }
+  return { primary: "-", secondary: "" };
 };
 
 const MetaDetails = ({ metadata }) => {
@@ -53,14 +88,15 @@ const AuditLogPage = () => {
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0 });
 
-  const [filters, setFilters] = useState({ page: 1, action: "", entityType: "" });
+  const [filters, setFilters] = useState({ page: 1, search: "", entityType: "" });
+  const [searchInput, setSearchInput] = useState("");
 
   const loadLogs = async (activeFilters) => {
     setLoading(true);
     setError("");
     try {
       const params = { limit: LIMIT, page: activeFilters.page };
-      if (activeFilters.action) params.action = activeFilters.action;
+      if (activeFilters.search) params.search = activeFilters.search;
       if (activeFilters.entityType) params.entityType = activeFilters.entityType;
       const result = await auditApi.list(params);
       const rows = result.data || [];
@@ -84,11 +120,14 @@ const AuditLogPage = () => {
       return;
     }
     loadLogs(filters);
-  }, [filters.page, filters.action, filters.entityType, canAdmin]);
+  }, [filters.page, filters.search, filters.entityType, canAdmin]);
 
-  const onActionChange = (event) => {
-    setFilters((prev) => ({ ...prev, page: 1, action: event.target.value }));
-  };
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setFilters((prev) => (prev.search === searchInput ? prev : { ...prev, page: 1, search: searchInput }));
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchInput]);
 
   const onEntityTypeChange = (event) => {
     setFilters((prev) => ({ ...prev, page: 1, entityType: event.target.value }));
@@ -111,12 +150,24 @@ const AuditLogPage = () => {
         {/* Filter bar */}
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-1 flex-wrap gap-2">
-            <input
-              className="field max-w-[260px]"
-              placeholder="Filter by action (e.g. document_approved)"
-              value={filters.action}
-              onChange={onActionChange}
-            />
+            <div className="relative max-w-[280px] flex-1">
+              <input
+                className="field pr-8"
+                placeholder="Search by user, action, entity, or details"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+              />
+              {searchInput ? (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700"
+                  onClick={() => setSearchInput("")}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
             <select
               className="field max-w-[200px]"
               value={filters.entityType}
@@ -188,10 +239,10 @@ const AuditLogPage = () => {
                     </td>
                     <td className="px-3 py-3">
                       <div className="text-sm font-semibold text-ink-900">
-                        {entry.userName || entry.user_name || entry.user?.name || "-"}
+                        {getActorDisplay(entry).primary}
                       </div>
                       <div className="text-xs text-ink-500">
-                        {entry.userEmail || entry.user_email || entry.user?.email || ""}
+                        {getActorDisplay(entry).secondary}
                       </div>
                     </td>
                     <td className="px-3 py-3">

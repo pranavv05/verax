@@ -7,6 +7,7 @@ export const auditApi = {
     if (params.limit) q.set("limit", params.limit);
     if (params.action) q.set("action", params.action);
     if (params.entityType) q.set("entityType", params.entityType);
+    if (params.search) q.set("search", params.search);
     return request(`/api/audit-logs?${q.toString()}`);
   }
 };

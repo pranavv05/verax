@@ -167,13 +167,21 @@ class OCRService:
         return "\n".join(line.strip() for line in text.splitlines() if line.strip())
 
     @staticmethod
+    def _join_pages(page_texts: list[str]) -> str:
+        if len(page_texts) <= 1:
+            return "\n".join(page_texts).strip()
+        return "\n".join(
+            f"\n--- PAGE {index} ---\n\n{text}" for index, text in enumerate(page_texts, start=1)
+        ).strip()
+
+    @staticmethod
     def _ocr_with_paddle(images: list[np.ndarray]) -> str:
         all_text: list[str] = []
         for image in images:
             text = run_paddle_ocr(image)
             if text:
                 all_text.append(text)
-        return "\n".join(all_text).strip()
+        return OCRService._join_pages(all_text)
 
     @staticmethod
     def _ocr_with_tesseract(images: list[np.ndarray]) -> str:
@@ -183,7 +191,7 @@ class OCRService:
             text = run_tesseract_multilingual(Image.fromarray(rgb))
             if text:
                 all_text.append(text)
-        return "\n".join(all_text).strip()
+        return OCRService._join_pages(all_text)
 
     def extract_text(self, processed_images: list[np.ndarray]) -> tuple[str, str]:
         logger.info("OCR starting: %d preprocessed page(s), trying PaddleOCR first", len(processed_images))

@@ -15,10 +15,12 @@ const waitlistRoutes = require("./routes/waitlist.routes");
 const firmRoutes = require("./routes/firms.routes");
 const userRoutes = require("./routes/users.routes");
 const auditRoutes = require("./routes/audit.routes");
+const dashboardRoutes = require("./routes/dashboard.routes");
 const toolsRoutes = require("./routes/tools.routes");
 const complianceRoutes = require("./routes/compliance.routes");
 const notificationRoutes = require("./routes/notifications.routes");
 const scheduledRequestRoutes = require("./routes/scheduled-requests.routes");
+const narrationMappingRoutes = require("./routes/narration-mappings.routes");
 const env = require("./config/env");
 const { notFoundHandler, errorHandler } = require("./middlewares/error.middleware");
 const localUploadRoutes = env.LOCAL_STORAGE ? require("./routes/local-upload.routes") : null;
@@ -66,10 +68,12 @@ app.use("/api/waitlist", waitlistRoutes);
 app.use("/api/firms", firmRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/audit-logs", auditRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/tools", toolsRoutes);
 app.use("/api/compliance", complianceRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/scheduled-requests", scheduledRequestRoutes);
+app.use("/api/narration-mappings", narrationMappingRoutes);
 if (env.LOCAL_STORAGE) {
   app.use("/api", localUploadRoutes);
 }

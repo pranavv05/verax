@@ -1,8 +1,26 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { useAuth } from "../contexts/AuthContext";
 import { parseApiError } from "../lib/utils";
+import AuthShell from "../components/auth/AuthShell";
+import AuthField from "../components/auth/AuthField";
+import { LoginPanel } from "../components/auth/AuthPanel";
+import { collectFieldErrors } from "../components/auth/validation";
+import { Caret, Eyebrow } from "../components/marketing/ledger";
+import { EASE } from "../components/public/motion";
+
+/**
+ * Firm login.
+ *
+ * Visual layer only — the schema, the `useAuth().login` call, the
+ * `location.state.from` redirect and the already-authenticated guard are all
+ * exactly as they were. There is no social/OAuth sign-in here because the
+ * backend exposes none: `auth.routes.js` has email+password, refresh, logout
+ * and password reset, and nothing else. Adding a "Continue with Google" button
+ * would have been inventing an authentication provider.
+ */
 
 const loginSchema = z.object({
   email: z.string().email("Enter a valid email address"),
@@ -13,8 +31,10 @@ const LoginPage = () => {
   const { isAuthenticated, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const reduced = useReducedMotion();
 
   const [form, setForm] = useState({ email: "", password: "" });
+  const [fieldErrors, setFieldErrors] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,11 +44,13 @@ const LoginPage = () => {
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    if (loading) return; // belt-and-braces against a double submit
     setError("");
+    setFieldErrors({});
 
     const validation = loginSchema.safeParse(form);
     if (!validation.success) {
-      setError(validation.error.issues[0]?.message || "Invalid login details");
+      setFieldErrors(collectFieldErrors(validation.error));
       return;
     }
 
@@ -44,126 +66,137 @@ const LoginPage = () => {
     }
   };
 
+  const setField = (key) => (event) => {
+    const { value } = event.target;
+    setForm((prev) => ({ ...prev, [key]: value }));
+    // Clear a field's error as soon as the user starts fixing it; keeping it on
+    // screen while they type reads as the form arguing with them.
+    setFieldErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
+  };
+
+  const enter = (delay) => ({
+    initial: reduced ? false : { opacity: 0, y: 14 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.6, ease: EASE, delay: reduced ? 0 : delay }
+  });
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col justify-center px-4 py-12 sm:px-6">
-      <div className="grid gap-8 lg:grid-cols-[1.1fr_1fr]">
-        {/* Brand Panel */}
-        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-ink-900 via-ink-800 to-ink-700 text-white shadow-elevated">
-          <div className="relative h-full p-8 sm:p-10">
-            {/* Animated Orbs */}
-            <div className="absolute -left-10 top-12 h-40 w-40 rounded-full bg-mint-500/25 blur-2xl animate-float" />
-            <div className="absolute right-0 top-1/2 h-36 w-36 rounded-full bg-indigo-400/20 blur-2xl animate-float-delayed" />
-            <div className="absolute bottom-10 left-1/3 h-28 w-28 rounded-full bg-ember-500/15 blur-2xl animate-float" />
+    <AuthShell panel={<LoginPanel />}>
+      <motion.div {...enter(0)}>
+        <Eyebrow>Firm workspace</Eyebrow>
+      </motion.div>
 
-            <Link to="/" className="relative inline-block">
-              <div className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-100 backdrop-blur-sm border border-white/10 transition hover:bg-white/20">
-                Verax
-              </div>
+      <motion.h1
+        {...enter(0.06)}
+        className="mt-7 text-[2.25rem] font-bold leading-[1.05] tracking-[-0.04em] text-carbon-900 sm:text-[2.5rem]"
+      >
+        Welcome back.
+      </motion.h1>
+
+      <motion.p {...enter(0.12)} className="mt-4 text-[1rem] leading-[1.65] text-carbon-500">
+        Continue to your firm&apos;s financial workspace.
+      </motion.p>
+
+      <motion.form {...enter(0.18)} className="mt-10 space-y-5" onSubmit={onSubmit} noValidate>
+        <AuthField
+          id="email"
+          label="Work email"
+          type="email"
+          autoComplete="email"
+          inputMode="email"
+          value={form.email}
+          onChange={setField("email")}
+          error={fieldErrors.email}
+        />
+
+        <AuthField
+          id="password"
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          value={form.password}
+          onChange={setField("password")}
+          error={fieldErrors.password}
+          action={
+            <Link
+              to="/forgot-password"
+              className="rounded text-[0.8125rem] font-medium text-carbon-500 underline
+                         decoration-carbon-200 underline-offset-4 transition-colors
+                         hover:text-carbon-900 hover:decoration-carbon-400 focus-visible:outline-none
+                         focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-4
+                         focus-visible:ring-offset-canvas"
+            >
+              Forgot password?
             </Link>
+          }
+        />
 
-            <h1 className="relative mt-6 max-w-lg text-3xl font-extrabold leading-tight sm:text-4xl">
-              Keep client books, OCR reviews, and Tally exports in{" "}
-              <span className="text-mint-400">one secure platform</span>.
-            </h1>
-
-            <ul className="relative mt-8 space-y-4 text-sm text-sand-100/90">
-              <li className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-mint-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Firm-isolated data with strict multi-tenant controls
-              </li>
-              <li className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-mint-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Document OCR and accountant review workflow
-              </li>
-              <li className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-mint-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                TallyPrime XML export with audit tracking
-              </li>
-            </ul>
-          </div>
-        </section>
-
-        {/* Login Form */}
-        <section className="panel p-6 sm:p-8">
-          <h2 className="text-2xl font-extrabold text-ink-900">Sign in</h2>
-          <p className="mt-1 text-sm text-ink-500">Use your firm credentials to continue.</p>
-
-          <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-            <div>
-              <label className="label" htmlFor="email">
-                Email
-              </label>
-              <input
-                id="email"
-                className="field"
-                type="email"
-                autoComplete="email"
-                value={form.email}
-                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-                placeholder="owner@firm.in"
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between gap-3">
-                <label className="label" htmlFor="password">
-                  Password
-                </label>
-                <Link className="text-xs font-semibold text-mint-500 underline transition hover:text-mint-600" to="/forgot-password">
-                  Forgot password?
-                </Link>
-              </div>
-              <input
-                id="password"
-                className="field"
-                type="password"
-                autoComplete="current-password"
-                value={form.password}
-                onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-                placeholder="Enter password"
-              />
-            </div>
-
-            {error ? (
-              <div className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
+        <AnimatePresence initial={false}>
+          {error ? (
+            <motion.div
+              initial={reduced ? false : { opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25, ease: EASE }}
+              className="overflow-hidden"
+            >
+              <p
+                role="alert"
+                className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3
+                           text-[0.875rem] font-medium leading-[1.5] text-red-700"
+              >
+                <span className="mt-[3px] text-red-600">
+                  <Caret size={13} />
+                </span>
                 {error}
-              </div>
-            ) : null}
+              </p>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
 
-            <button type="submit" disabled={loading} className="btn-primary w-full py-2.5 text-sm">
-              {loading ? "Signing in..." : "Login"}
-            </button>
-          </form>
+        <button type="submit" disabled={loading} className="vx-cta w-full disabled:opacity-60">
+          {loading ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white"
+              />
+              Logging in…
+            </>
+          ) : (
+            "Log in"
+          )}
+        </button>
+      </motion.form>
 
-          <div className="mt-6 flex items-center gap-3">
-            <hr className="flex-1 border-[#e7dcc8]" />
-            <span className="text-xs font-medium text-[#7f8a99]">or</span>
-            <hr className="flex-1 border-[#e7dcc8]" />
-          </div>
+      <motion.div {...enter(0.26)} className="mt-10 border-t border-hairline pt-7">
+        <p className="text-[0.875rem] text-carbon-500">
+          New to Verax?{" "}
+          <Link
+            to="/signup"
+            className="rounded font-medium text-carbon-900 underline decoration-carbon-300
+                       underline-offset-4 transition-colors hover:decoration-carbon-900
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500
+                       focus-visible:ring-offset-4 focus-visible:ring-offset-canvas"
+          >
+            Set up your firm
+          </Link>
+        </p>
 
-          <p className="mt-5 text-center text-sm text-ink-500">
-            Don't have an account?{" "}
-            <Link className="font-semibold text-mint-500 underline transition hover:text-mint-600" to="/signup">
-              Create one
-            </Link>
-          </p>
-
-          <p className="mt-3 text-center text-xs text-[#9aa5b4]">
-            Public client upload is available via magic link at
-            <span className="font-mono"> /upload/:token</span>.{" "}
-            <Link className="font-semibold text-ink-900 underline" to="/upload/sample-token">
-              Preview route
-            </Link>
-          </p>
-        </section>
-      </div>
-    </div>
+        <p className="mt-3 text-[0.8125rem] text-carbon-400">
+          Are you a client of a CA firm?{" "}
+          <Link
+            to="/client-portal/login"
+            className="rounded underline decoration-carbon-200 underline-offset-4 transition-colors
+                       hover:text-carbon-900 hover:decoration-carbon-400 focus-visible:outline-none
+                       focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-4
+                       focus-visible:ring-offset-canvas"
+          >
+            Use the client portal
+          </Link>
+        </p>
+      </motion.div>
+    </AuthShell>
   );
 };
 

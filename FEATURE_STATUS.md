@@ -83,36 +83,36 @@ Notes: **`PlanBadge` only renders inside the admin-gated panel (`SettingsPage.js
 
 ## CLIENT MANAGEMENT
 
-### Client list with search and status filter
-Status: ⚠️ Partial
-Backend: `GET /api/clients` — `clients.routes.js:48-63`, `listClientsQuerySchema` (`:19-24`) → `listClients` (`clients.service.js:63-121`)
-Frontend: `pages/ClientsPage.jsx:308-323` (search + status filter), `TableRowsSkeleton` loading, empty state (`:206-218`), pagination
-Notes: Search re-fetches on every keystroke via `useEffect` dependency array (`:68-70`) with no debounce — works, but generates one API call per character typed (the GSTIN lookup elsewhere in the same page *is* debounced 800ms, an inconsistency).
+### Client list — search, status filter, table/card UI, overflow actions
+Status: ✅ Production Ready
+Backend: `GET /api/clients` — `clients.routes.js`, `listClientsQuerySchema` → `listClients` (`clients.service.js`), unchanged search/status/pagination contract
+Frontend: `pages/ClientsPage.jsx` redesigned — debounced (300ms) search box, status select, a real "Client / Contact / Status / Documents / Last activity / Actions" table (`hidden md:block`) with a responsive card fallback (`md:hidden`) below tablet width, sticky-feel header row, per-row `OverflowMenu` (new `components/ui/OverflowMenu.jsx`, keyboard accessible: arrow keys/Enter/Escape, click-outside close) replacing the 5 stacked action buttons. Add/Edit moved into a right-side `Drawer` (new `components/ui/Drawer.jsx`, Escape/backdrop/✕ to close) opened via a header "+ Add client" button or the row menu's "Edit client" — same Zod schema, same debounced GSTIN lookup, same create/update calls. Distinct empty states for "no clients at all" (with an Add-client CTA) vs "no results for current filters" (with a Clear-filters action), a dedicated load-error state with Try again, and a `TableRowsSkeleton` loading state.
+Notes: 🔧 Fixed — search previously fired one request per keystroke with no debounce (now matches the 800ms-debounced GSTIN-lookup pattern already used elsewhere on this page); load failures and delete success/failure previously only rendered inside the always-visible edit panel, so they were silently invisible to non-admins and often unreachable in practice — now surfaced as a page-level banner (`pageError`/`pageToast`) independent of the drawer's own `formError`/`formToast`. Delete confirmation modal now stays open with an inline error and a "Deleting..." disabled state while the request is in flight, closing only on success (previously closed immediately on click, before the request even resolved).
 
 ### Create client
 Status: ✅ Production Ready
-Backend: `POST /api/clients` — `clients.routes.js:65-79`, `requireAdmin`, `createClientBodySchema` (`:26-32`) → `createClient` (`clients.service.js:123-180`, audit `client_created`)
-Frontend: `ClientsPage.jsx:372` admin-gated form panel, Zod schema (`:14-32`)
+Backend: `POST /api/clients` — `clients.routes.js`, `requireAdmin`, `createClientBodySchema` → `createClient` (`clients.service.js`, audit `client_created`)
+Frontend: `ClientsPage.jsx` — form now lives in the Add/Edit `Drawer` (opened via "+ Add client"), same Zod schema, same API call
 
 ### View client details
 Status: ✅ Production Ready
-Backend: `GET /api/clients/:id` — `clients.routes.js:81-93` → `getClientById` (`clients.service.js:182-232`)
-Frontend: `pages/ClientDetailPage.jsx`, loading skeleton, not-found empty state (`:656-658`)
+Backend: `GET /api/clients/:id` — `clients.routes.js` → `getClientById` (`clients.service.js`)
+Frontend: `pages/ClientDetailPage.jsx` — untouched (separate route, reached via the client name link or the list's "View details" menu item), loading skeleton, not-found empty state
 
 ### Update client details
 Status: ✅ Production Ready
-Backend: `PUT /api/clients/:id` — `clients.routes.js:95-111`, `requireAdmin`, `updateClientBodySchema` (`:34-40`) → `updateClient` (`clients.service.js:234-293`, audit `client_updated`)
-Frontend: `ClientDetailPage.jsx:688-761`, admin-gated edit form
+Backend: `PUT /api/clients/:id` — `clients.routes.js`, `requireAdmin`, `updateClientBodySchema` → `updateClient` (`clients.service.js`, audit `client_updated`)
+Frontend: `ClientDetailPage.jsx` (unchanged, its own edit form) and `ClientsPage.jsx` (list's own Add/Edit Drawer, "Edit client" row-menu item pre-fills and opens it) — two independent entry points to the same endpoint, both preserved
 
 ### Soft delete client
 Status: ✅ Production Ready
-Backend: `DELETE /api/clients/:id` — `clients.routes.js:113-127`, `requireAdmin` → `deleteClient` (`clients.service.js:295-320`, soft delete, audit `client_deleted`)
-Frontend: `ClientDetailPage.jsx:325-346,852-859` confirm modal, admin-gated
+Backend: `DELETE /api/clients/:id` — `clients.routes.js`, `requireAdmin` → `deleteClient` (`clients.service.js`, soft delete, audit `client_deleted`)
+Frontend: `ClientDetailPage.jsx` (own confirm modal, unchanged) and `ClientsPage.jsx` (confirm modal now triggered from the row's overflow menu instead of an always-visible row button — see loading/error fix above)
 
 ### Client document summary
 Status: ✅ Production Ready
-Backend: `getClientById`/`listClients` returns `totalDocuments`/`processingDocuments`/`reviewedDocuments`/`exportedDocuments` (`clients.service.js:222-229`)
-Frontend: `ClientDetailPage.jsx:662-667` StatCards — field names confirmed matching backend
+Backend: `getClientById` returns the full breakdown (`totalDocuments`/`processingDocuments`/`reviewedDocuments`/`exportedDocuments`/`lastUploadedAt`, `clients.service.js`). `listClients` now also returns a lighter per-row `documentSummary` (`totalDocuments`/`pendingDocuments`/`lastActivityAt`) via a single indexed `LEFT JOIN` aggregate over `documents` grouped by `client_id` — one extra query for the whole page, not one per row, so it stays cheap at 100+ clients. `pendingDocuments` uses the same `extracted`+`review_required` definition as the dashboard's "Awaiting review" tile.
+Frontend: `ClientDetailPage.jsx` StatCards (full breakdown, unchanged) and `ClientsPage.jsx` table/card "Documents"/"Last activity" columns (new, uses the lighter summary — shows "12 total · 2 pending" or "N documents"/"No documents", and a formatted last-activity date or "No activity yet")
 
 ### GSTIN live lookup on client form
 Status: ✅ Production Ready
@@ -351,6 +351,7 @@ Frontend: `ExportPage.jsx:232-271`, `ClientDetailPage.jsx:428-469` — warnings 
 ### Single document export
 Status: ✅ Production Ready
 Frontend: `ExportPage.jsx:360-433` — client + optional date range + checkbox document selection
+Client picker: `ExportPage.jsx:368-372` uses `components/ui/ClientSearchSelect.jsx` (new, client-side filtered searchable combobox — the already-loaded `clients` list from `clientsApi.list`, no new API); replaces the old plain `<select>`, keyboard accessible (arrow keys/Enter/Escape), selected client shown as a chip with a clear (×) button. `form.client_id` state and the `loadClientDocuments` effect keyed on it are unchanged.
 
 ### Bulk export with date range
 Status: ✅ Production Ready
@@ -565,6 +566,16 @@ Frontend: `TeamPage.jsx:18-32,289-291` role badges, `296-297` non-admin "view on
 
 ---
 
+## DASHBOARD
+
+### Overview stats (Total clients / Awaiting review / Approved this session / Exports this month)
+Status: ✅ Production Ready
+Backend: `GET /api/dashboard/overview` — `dashboard.routes.js`, `requireAuth` → `getDashboardOverview` (`dashboard.service.js`), a single firm-scoped CTE query returning all 4 counts server-side
+Frontend: `dashboard-api.js` calls the new endpoint plus `exportsApi.history({limit:6})` for the separate "recent activity" list; `DashboardPage.jsx` unchanged (same `{totalClients, pendingDocs, reviewedDocs, exportedThisMonth, activity}` shape)
+Notes: 🔧 Fixed — previously computed entirely client-side from `Promise.allSettled` over `clientsApi`/`documentsApi`/`exportsApi` calls (`dashboard-api.js`, old version). Two real bugs: (1) "Approved this session" had no date filter at all — it was an all-time count of `status='reviewed'` docs, and even that undercounted because a doc's status flips to `exported` after export, dropping it out of the count; now backed by `extractions.reviewed_at` scoped to the current day in `Asia/Kolkata`, which survives the later status change. (2) "Exports this month" filtered a capped 20-row `exportsApi.history()` page client-side using **UTC** month boundaries — both a truncation bug (>20 lifetime exports silently undercounts the month) and a timezone bug (IST exports near month boundaries miscounted); now a firm-scoped `COUNT(*)` in the DB bucketed by IST calendar month, excluding `status='failed'`. "Total clients" and "Awaiting review" were already correct and are unchanged in definition, just moved server-side. Verified against raw SQL counts for a real firm (5/3/2/10) — see PR notes.
+
+---
+
 ## AUDIT LOGS
 
 ### Audit log page (admin only)
@@ -576,9 +587,17 @@ Status: ✅ Production Ready
 Backend: `GET /api/audit-logs` — `audit.routes.js:19-35`, `requireAdmin`, `listAuditLogsQuerySchema` (`:10-15`) → `listAuditLogs` (`audit.service.js:1-67`)
 Frontend: loading skeleton, empty state, pagination (`:144-247`)
 
-### Filter by action
+### Search audit logs (free text)
 Status: ✅ Production Ready
-Frontend: `AuditLogPage.jsx:114-119` free-text filter
+Backend: `GET /api/audit-logs?search=` — `audit.routes.js` (`search` added to `listAuditLogsQuerySchema`) → `listAuditLogs` (`audit.service.js`) runs an `ILIKE` match across `action`, `entity_type`, `entity_id`, `metadata::text`, `user.name`, `user.email`
+Frontend: `AuditLogPage.jsx:118-135` — debounced (300ms) free-text input with a clear button, resets to page 1 on change
+Notes: 🔧 Fixed — this box previously did an exact-equality filter on the raw `action` column only (e.g. required typing the literal `document_approved`), so any partial text or search across user/entity/details silently returned zero rows. It now does a partial, case-insensitive match across the fields actually shown in the table.
+
+### Client attribution for client-portal / magic-link actions
+Status: ✅ Production Ready
+Backend: `listAuditLogs` (`audit.service.js`) `LEFT JOIN clients` on `(metadata->>'clientId')::uuid` (regex-guarded so a malformed/missing value can't break the query), falling back to `entity_id` when `entity_type='client'`; returns `clientName`. `document-processing.service.js`'s `document_processed`/`document_processing_failed`/`document_processing_alert` audit inserts now include `clientId` in metadata (previously had `client_id` in scope via `RETURNING` but never wrote it) — `document_upload_initiated`/`document_upload_confirmed` (`documents.service.js`) already had it.
+Frontend: `AuditLogPage.jsx` — `getActorDisplay()` shows the client's name as the Actor for client-initiated actions (`document_upload_initiated/confirmed`, `client_portal_login/login_failed/logout/password_changed`) when there's no firm-user actor, and "System" + "Client: {name}" for system/worker-triggered actions tied to a client (`document_processed`, `document_processing_failed`, `document_processing_alert`)
+Notes: 🔧 Fixed — client-portal/magic-link-triggered rows always have `user_id = NULL` (a client isn't a `users` row), so Actor showed "-" even though `metadata.clientId` was already being written for the upload events. Verified against real DB rows for two different clients (no cross-client mixups) and via a mocked call confirming the AI-processing insert sites now include `clientId`.
 
 ### Filter by entity type
 Status: ✅ Production Ready
@@ -728,6 +747,209 @@ Notes: The portal deliberately reuses the app's existing design tokens (`panel`,
 
 ---
 
+## PUBLIC / MARKETING SURFACE
+
+Scope note: this group covers the unauthenticated pages only (`/`, `/features`, `/pricing`,
+`/about`, `/security`, `/login`, `/signup`, `/client-portal/login`, `/upload/:token`,
+`/upload/:token/status`). Two design systems coexist by design: **V2 ("The Ledger")** on the
+marketing surface, **V1** on the auth and magic-link upload pages. Every token is namespaced
+(`vx-*`, `canvas`/`surface`/`well`/`hairline`) so no authenticated dashboard page is affected —
+verified by grep: `zinc-*` and `verify-*` have no call sites outside the public surface, and the
+dashboard's `ink`/`sand`/`mint`/`ember`/`graphite` scales are untouched.
+
+### Public design system — V2 ("The Ledger", marketing surface)
+Status: ✅ Production Ready for the marketing surface (`/` + shared nav/footer chrome on
+`/features`, `/pricing`, `/about`, `/security`); the four secondary pages' own *body* content is
+still on the pre-V1 sand/ink/mint palette — see "Secondary marketing pages" below.
+Added 2026-08-09.
+Docs: `frontend/DESIGN_SYSTEM.md` §§0.5, 9–12 (V2 supplement; V1 sections below it still describe
+`/login`, `/signup`, `/client-portal/login` and the magic-link upload pages, which V2 does not
+touch).
+Concept: three drawn primitives repeated at every scale — Sheet (ruled paper = an unread
+document), Field (bracketed label/value in mono = something lifted out of one), Mark (teal tick =
+validated / amber caret = needs a human) — connected by Rail (a dashed track). Implemented in
+`frontend/src/components/marketing/ledger.jsx`, which every marketing section imports. No icon
+grids, no screenshots-as-identity, no stock imagery, no gradient blobs.
+Tokens: `frontend/tailwind.config.js` — new `carbon` scale (`carbon-950 #08090B` … `carbon-100
+#E4E6EA`), the V2 primary: it carries every marketing headline and every full-bleed contrast
+section. Purely additive — `navy`, `brand`, `zinc`, `graphite`, `verify`, `sky`, `canvas`,
+`surface`, `well`, `hairline*` and the dashboard's `ink`/`sand`/`mint`/`ember` are all unchanged,
+so no V1 page and no dashboard page shifted.
+Type/utilities: `frontend/src/index.css` — new `.vx-display-xl` (hero, `clamp(2.5rem, 6.2vw,
+5.75rem)`; the 92px ceiling is set by the longest line the page contains so headlines stay two
+lines), `.vx-h2-xl`, `.vx-mono` (IBM Plex Mono + tabular figures — reserved for extracted values,
+never headlines or body), `.vx-sheet`/`.vx-sheet-dark` (ruled paper), `.vx-dark`,
+`.vx-cta`/`.vx-cta-invert`/`.vx-link-action`, `.vx-index`; new keyframes `vx-rail-flow`,
+`vx-rail-flow-v`, `vx-scan`, `vx-float-y` with `.vx-rail`/`.vx-rail-v`/`.vx-scan-line`/
+`.vx-float-y`. All V1 `.vx-*` classes left in place.
+Motion: unchanged contract (`components/public/motion.jsx`, expo-out, 40px, 0.8s, 0.1s stagger).
+Three CSS loops on the marketing page — the hero sheets' float, the two scan bands, the rail
+dashes — all inside `.vx-page`, so the existing `prefers-reduced-motion` kill switch in
+`index.css` disables them, and every Framer entrance additionally checks `useReducedMotion()`.
+Notes: `primitives.jsx` (the V1 additive primitive layer) is still unimported by anything — V2
+sections compose from `ledger.jsx` instead. It is now dead code and can be deleted once nothing
+plans to migrate the secondary pages onto it.
+
+### Public design system — V1 (light-first, auth + upload surface)
+Status: ⚠️ Partial — still the system for `/login`, `/signup`, `/client-portal/login`,
+`/upload/:token`, `/upload/:token/status`. Superseded by V2 on the marketing surface. The
+secondary marketing pages' bodies remain on the pre-V1 shell (see below).
+Docs: `frontend/DESIGN_SYSTEM.md` — supersedes its own previous (dark-canvas) version. Palette with
+hex values, type scale, spacing rhythm, borders/radius/shadows, layout primitives, animation
+contract, migration status, logo rationale.
+Tokens: `frontend/tailwind.config.js` — `canvas #F7F6F2`, `surface #FFFFFF`, `well #F0EEE7`,
+`hairline #E5E3DD`, `hairline-strong #D6D2C6`; `zinc` ramp retuned in place to the three text
+tones for a light background (`zinc-100 #111827` headings, `zinc-400 #5F6675` body, `zinc-600`
+lightest/muted); new `brand` scale retuned to the V1 violet accent (`brand-500 #6657D9`, 900/950
+kept at their pre-V1 values per the brief); new `graphite` scale (same hex ladder as `zinc`, used
+by the new primitives + `DemoRequestForm`'s previously-dormant `tone="light"` branch); new `navy`
+scale for dark-contrast sections (`navy-800 #11182D`); new `sky` scale for the secondary muted-blue
+accent (`sky-500 #4D8DFF`). `indigo-400/500/600 #818CF8/#6366F1/#4F46E5` deliberately left
+unchanged — shared with the authenticated dashboard (`DashboardPage`, `TeamPage`, `ExportPage`,
+etc.), so retuning it would have silently changed dashboard UI.
+Type/utilities: `frontend/src/index.css` — same `.vx-*` classes as before; `.vx-mockup`'s shadow
+retuned from a black+indigo glow to a restrained navy-tinted contact shadow (no colour bloom on a
+light surface); `brandGlow` retuned to the violet accent and reduced from a bloom to a tight CTA
+contact shadow.
+Primitives: `frontend/src/components/marketing/primitives.jsx` (new) — `MarketingContainer`,
+`Section`, `SectionHeader`, `SplitSection`, `ProductShowcase`, `Eyebrow`, `PrimaryButton`,
+`SecondaryButton`, `Metric`, `ProductFrame`. Deliberately no feature-card-grid primitive. Additive
+only — nothing imports these yet.
+Motion: `frontend/src/components/public/motion.jsx` — unchanged from the dark pass (single
+expo-out curve, `REVEAL_Y = 40`, `REVEAL_DURATION = 0.8`, 0.1s stagger, full `prefers-reduced-motion`
+support).
+Image assets: `frontend/public/images/{documents,photography,editorial}/` and
+`frontend/public/product/{document-processing,reconciliation,classification,gst,tally,dashboard,
+whatsapp}/` — directory structure + READMEs documenting intended contents only, no assets
+populated.
+Notes: `components/layout/PublicLayout.jsx` was `@deprecated` here; as of 2026-08-09 it has been
+replaced by a thin `LandingNav`/`LandingFooter` wrapper — see "Secondary marketing pages" above.
+`.hero-gradient`, `.orb*`,
+`.gradient-text`/`.gradient-text-accent`, `pulse-glow`/`shimmer`/`gradient-shift`/`spin-slow`
+remain in `index.css` (still used by the unmigrated pages) — do not delete until `/features`,
+`/pricing`, `/about`, `/security`, `/404` move onto the primitives above. `.hover-lift`/
+`.card-shine` are NOT deprecated despite the similar naming — shared with the dashboard's
+`StatCard.jsx`.
+
+### Brand mark (chevron lockup)
+Status: ⚠️ Partial — React component is V1-correct; static SVG assets are not.
+Frontend: `components/brand/VeraxLogo.jsx` (exports `VeraxLogo` + `VeraxMark`; default `tone`
+flipped from `"light"` to `"dark"` for V1 — every call site now renders correctly on the light
+canvas with no prop changes needed), `public/verax-logo.svg`, `public/verax-icon.svg`,
+`public/favicon.svg`.
+Notes: Two overlapping angular chevrons; the overlap is drawn as an explicit clipped third path
+rather than `mix-blend-mode`. `VeraxMark` now takes a `tone` prop too (`dark` = navy right
+chevron for the ivory canvas, `light` = light right chevron for a navy contrast section), so the
+mark and wordmark always match. **The three static `public/*.svg` files still encode the pre-V1
+dark-canvas coloring** and were not regenerated in this pass — low priority since favicon/OG
+chrome is browser-drawn, but they should be brought in line with the component before any of them
+render inline on the light surface.
+
+### Landing page (`/`) — rebuilt on V2, 2026-08-09
+Status: ✅ Production Ready
+Frontend: `pages/HomePage.jsx` — rewritten as composition only (~140 lines: hero + eleven imported
+sections). Every section owns its own markup, copy and motion, so no section can grow into the
+others. Order: hero (`DocumentFlowVisual`) → `ProofBand` → `ProblemSection` →
+`TransformationSection` → `DocumentTypes` → `VeraxEngine` → `DocumentDecode` →
+`ReviewExperience` → `ClientWorkflow` → `TallySection` → `Outcomes` → `ClosingCTA`.
+Section components (all new, `components/marketing/`):
+- `ledger.jsx` — the shared atoms (Sheet/Field/Tick/Caret/Rail/FlowRail/Eyebrow/SectionHead/Section).
+- `DocumentFlowVisual.jsx` — the hero: a drifting pile of six mismatched sheets → a carbon Verax
+  slab with a scan band → a ledger of validated fields. HTML/CSS/SVG, no images, no canvas.
+- `ProblemSection.jsx` — the manual eight-step loop with three ghosted repeats stacked behind it.
+- `TransformationSection.jsx` — 216-cell field resolving to ticks and nine amber carets; the split
+  is **explicitly labelled illustrative**, since nothing in the repo measures a real document mix.
+- `DocumentTypes.jsx` — four document types, each with its own drawing (captured invoice, txn run,
+  spreadsheet grid, two-column reconciliation) rather than a shared icon card.
+- `VeraxEngine.jsx` — the six stages on near-black, each naming what it actually produces.
+- `DocumentDecode.jsx` — the signature visual: a drawn invoice whose capture brackets render
+  *around the real field elements* (so they stay aligned at any width) → `structured_data` →
+  the compliance checks.
+- `ReviewExperience.jsx` — the only place real product UI appears, reusing the existing live
+  `mockups/ReviewMockup` as evidence rather than as the site's identity.
+- `ClientWorkflow.jsx`, `TallySection.jsx` (real `tally-xml.service.js` tag shapes, figures
+  reconciling with the rest of the page), `Outcomes.jsx`, `ClosingCTA.jsx`, `ProofBand.jsx`.
+Chrome: `LandingNav.jsx` (retuned to `carbon`; nav items now How it works / Documents / Security /
+Pricing — every one resolves to a real anchor or route, replacing the Solutions/Resources
+placeholders), `LandingFooter.jsx` (rebuilt: Product / Company / Get started columns, all links
+real). `DemoRequestForm.jsx` gained a third `tone="onDark"` variant for the closing CTA — the two
+pre-existing tones are both light-ground and failed contrast on carbon.
+Removed deliberately: the fabricated "Trusted by CA firms across India" avatar row and city
+trust-bar (implied customers that don't exist) — replaced by `ProofBand`, which says the product
+is in its founding-customer phase and lists verifiable capabilities instead. The WhatsApp roadmap
+section was also dropped from the homepage; the feature is still unbuilt.
+Notes: The demo CTA still posts to the existing public `POST /api/waitlist/join`, Gmail addresses
+only — no API change was made for the redesign. Footer "Privacy"/"Terms" still render as plain
+text because those routes still don't exist.
+Dead code (verified by grep, 2026-08-09 — zero importers each): `HeroVisual.jsx` (already unused
+before this pass), and, as a result of the `HomePage` rewrite, `WorkflowStrip.jsx`,
+`FlowSteps.jsx`, `primitives.jsx`, `mockups/LedgerMockup.jsx`, `mockups/ReconMockup.jsx` and
+`mockups/PortalMockup.jsx`. All are safe to delete; they were left in place rather than removed in
+the same pass as the redesign so the deletion is a reviewable change on its own. Still live:
+`mockups/ReviewMockup.jsx` (its one consumer is now `ReviewExperience`) and
+`mockups/InvoiceDocument.jsx` + `mockups/MockupFrame.jsx`, which it depends on.
+
+### Secondary marketing pages (`/features`, `/pricing`, `/about`, `/security`)
+Status: ⚠️ Partial — shared chrome is V2; page bodies are still pre-V1.
+Frontend: `components/layout/PublicLayout.jsx` was rewritten from a 232-line self-contained shell
+(glass navbar, gradient-box text logo, dark cream footer) to a 9-line wrapper that renders
+`LandingNav` + `children` + `LandingFooter` inside `.vx-page`. All four pages therefore now share
+one navbar, one footer, one canvas and Inter with the homepage.
+Notes: Their **body** content still uses the older `sand`/`ink`/`mint` palette, `.hero-gradient`,
+`.orb*` and icon-in-tinted-chip feature grids — they render correctly and are not broken, but they
+read as an older design language next to `/`. Migrating that content onto `ledger.jsx` is the
+obvious next pass. The deprecated CSS (`.hero-gradient`, `.orb*`, `.gradient-text*`,
+`pulse-glow`/`shimmer`/`gradient-shift`/`spin-slow`) still cannot be deleted from `index.css` for
+the same reason. `.hover-lift`/`.card-shine` remain NOT deprecated — shared with the dashboard's
+`StatCard.jsx`.
+
+### Marketing bundle size (route-level code splitting)
+Status: ✅ Production Ready — added 2026-08-09
+Frontend: `src/App.jsx` — the sixteen authenticated pages (eleven dashboard + five client-portal)
+are now `React.lazy`; public/marketing pages stay eager so the homepage paints without a second
+request. `<Suspense>` wraps `<Routes>` with a near-empty `RouteFallback` (`min-h-screen`,
+`role="status"`) so a fast connection never flashes a spinner between click and page.
+Effect: main bundle 728 kB → 545 kB (gzip 203 kB → 160 kB); `ReviewPage`, `ClientDetailPage`,
+`ExportPage`, `AppShell` etc. now load only behind a login.
+Notes: No routing, guard or auth behaviour changed — `ProtectedRoute`/`ProtectedClientRoute` and
+the `ClientPortalAuthProvider` branch are untouched.
+
+### Product mockups (no screenshots, no stock imagery)
+Status: ✅ Production Ready (V1 retheme complete; architecture unchanged)
+Frontend: `components/marketing/mockups/` — `MockupFrame.jsx` (shared shell, top bar, label,
+row-stagger hook, confidence bar), `ReviewMockup.jsx`, `LedgerMockup.jsx`, `ReconMockup.jsx`,
+`PortalMockup.jsx`. All HTML/CSS/SVG.
+Notes: Each mockup is authored at a fixed design size and scaled to its container by a
+`ResizeObserver` in `ScaledFrame` — unchanged, not rebuilt for V1 per instruction. What changed:
+literal `bg-white/[0.0x]` row/card fills (invisible on a light surface) moved to `bg-black/[0.0x]`,
+and status/confidence text that was a light tint for dark-canvas legibility (`indigo-300`,
+`verify-300`, `amber-300`, `red-300`) moved to `-700` shades so it stays readable on their pale
+translucent chip backgrounds. `public/product/` now exists for eventually supplementing/replacing
+these with real screenshots — see the image-asset note above.
+
+### Auth pages (V1, light-first)
+Status: ✅ Production Ready
+Frontend: `pages/LoginPage.jsx`, `pages/SignupPage.jsx`, `pages/ClientPortalLoginPage.jsx`,
+`components/public/AuthSplitLayout.jsx`, `components/public/FloatingField.jsx`.
+Notes: Presentation only — no validation, submit, or session logic was touched. The form column is
+now the light canvas; the brand column (desktop only) is the `navy-800` dark-contrast background
+(not a `canvas`/`surface` gradient, which would have gone light and made its white text
+illegible) with its two blurred accent-colour orbs removed — the V1 brief rules those out
+explicitly, and the panel didn't need them once it had a real dark background of its own.
+
+### Magic-link upload pages
+Status: ⚠️ Partial — shell (`PublicPageShell`) is V1; page-level literal-white cosmetic debt not
+addressed this pass.
+Frontend: `pages/PublicUploadPage.jsx`, `pages/PublicUploadStatusPage.jsx`.
+Notes: These pages render on the light canvas automatically (their shared `PublicPageShell`,
+`hairline`/`zinc`/`indigo` tokens all retuned for V1), which is a coherent look now rather than the
+2026-08-09 dark/light-shell mismatch fixed previously. Not addressed in this pass: both files still
+contain some of the same literal `white/opacity` decorative utilities called out for `HomePage.jsx`
+above — same reasoning, page content was out of scope for a tokens/primitives change. Upload queue,
+progress, validation and polling logic are untouched either way.
+
+---
+
 ## ROLE PERMISSIONS
 
 ### requireAdmin on all admin-only routes
@@ -804,6 +1026,18 @@ Backend: `document-processing.worker.js:104-115` → audit `document_ready_email
 Status: ⚠️ Partial
 Backend: 3 of 4 email call sites record `sent`/`provider`/`error` in their audit row; user-invite does not (see above)
 
+### Request Demo — lead capture, persistence, and notification
+Status: ✅ Production Ready
+Backend: `POST /api/waitlist/join` — `waitlist.routes.js` (`firmName`/`contactName`/`phone` added as optional Joi fields, kept optional so the plain "Join Waitlist" entry points still work with email only) → `addToWaitlist` (`waitlist.service.js`) upserts into `waitlist` (new nullable `firm_name`/`contact_name`/`phone`/`status` columns, migration `20260809000000_add_lead_fields_to_waitlist.js`), then calls the existing `email.service.js` `sendEmail` twice: internal notification to `env.DEMO_NOTIFICATION_EMAIL` (default `verax.hello@gmail.com`) via `demoRequest.template.js`, and a requester confirmation via `demoRequestConfirmation.template.js`. Failures are logged (`console.error`, no secrets) and don't roll back the already-persisted lead.
+Frontend: `DemoRequestForm.jsx` — two-step reveal (email, then firm name + contact name) so the landing page keeps its original single-field look until someone commits to requesting a demo; posts via new `frontend/src/api/waitlist-api.js`. `WaitlistForm.jsx` (AboutPage, plain email-only join) intentionally untouched — same endpoint, new fields simply omitted.
+Notes: 🔧 Fixed — previously only collected an email, saved it to `waitlist`, and never sent any email at all (`waitlist.service.js` had zero reference to `email.service.js`), so `verax.hello@gmail.com` never received leads and a CA firm was represented only by an anonymous address. Verified end-to-end against the running dev backend: lead persisted with all 4 fields, both emails returned `{sent:true, provider:"smtp"}` from the real configured SMTP credentials.
+
+### Request Demo / Waitlist — email domain restriction removed
+Status: ✅ Production Ready
+Backend: `waitlist.routes.js` Joi schema now just `Joi.string().email().required()`; `waitlist.service.js`'s duplicate `@gmail.com` check removed. Any well-formed address is accepted (Gmail, Outlook, company domains, `.in`, `.co.in`, etc.); malformed addresses still rejected with a 400.
+Frontend: `DemoRequestForm.jsx` and `WaitlistForm.jsx` both replaced their `.endsWith("@gmail.com")` gate with a generic `EMAIL_PATTERN` regex check and dropped the "Gmail addresses only" hint/placeholder text, so client-side behavior matches the backend.
+Notes: 🔧 Fixed — the Gmail-only restriction (both the Joi `.custom()` validator and a duplicate check in the service, plus matching client-side gates in both forms) rejected real CA-firm leads using company-domain emails, which is most of them. Verified via direct Joi-schema validation (8 cases: gmail/company/`.in`/`.co.in`/outlook accepted, 3 malformed variants rejected) and live `POST /api/waitlist/join` calls for gmail/company-domain/`.co.in`, all persisted correctly with `notificationSent`/`confirmationSent` both `true`. No test framework exists in this repo (no Jest/Mocha/test scripts) — verification was ad hoc (schema + live HTTP checks) rather than a committed test suite.
+
 ---
 
 ## SECURITY & PLATFORM
@@ -871,6 +1105,12 @@ Notes: Added 2026-08-08: `backend/scripts/demo-smoke-test.js` walks the whole pa
 | ❌ Not Built | 0 |
 | 🔧 Needs Fix | 6 |
 | **Total** | 157 |
+
+*(2026-08-09, marketing redesign: the landing page was rebuilt on a new V2 design system
+("The Ledger") — 13 new marketing components, `HomePage` reduced to composition, `PublicLayout`
+replaced by the shared marketing chrome, fabricated social proof removed, and route-level code
+splitting added. See PUBLIC / MARKETING SURFACE. No backend, API, schema or authenticated-app
+behaviour was touched.)*
 
 *(2026-08-09: +13 new ✅ entries for the CLIENT PORTAL section, and "JWT refresh" moved ✅→🔧 after a real rollback bug was found in its reuse detection while building the portal — see that entry. Previous pass, 2026-08-08: 1 item moved ❌→✅, 9 items ⚠️→✅, 3 items 🔧→✅.)*
 

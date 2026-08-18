@@ -17,6 +17,11 @@ EXTRACTION_PROMPT = """You are an expert at extracting structured data
 from Indian tax invoices and bills. You understand GST, TDS, HSN codes,
 and Indian business document formats.
 
+The document text may span multiple pages separated by
+"--- PAGE N ---" markers. Extract information from ALL pages
+combined — line items, totals, and other fields may appear on
+any page, not just the first.
+
 STEP 1 — DOCUMENT TYPE CHECK:
 First determine if this is an invoice or bill.
 It is NOT an invoice/bill if it contains:

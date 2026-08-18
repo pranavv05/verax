@@ -21,6 +21,8 @@ from app.services.persistence_service import PersistenceService
 from app.services.preprocess_service import PreprocessService
 from app.services.register_cleaner_service import process_bytes as clean_register_bytes
 from app.services.bank_statement_xml_service import process_bytes as bank_statement_to_xml
+from app.services.bank_statement_xml_service import generate_xml_with_ledgers
+from app.models import BankStatementExportRequest
 from app.services.s3_service import S3Service
 
 logging.basicConfig(level=logging.INFO)
@@ -189,4 +191,24 @@ async def bank_statement_xml(
         raise
     except Exception as error:
         logger.exception("Bank statement XML conversion failed")
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.post("/tools/bank-statement-xml/export")
+async def bank_statement_xml_export(
+    payload: BankStatementExportRequest,
+    _: None = Depends(require_service_token),
+) -> dict:
+    """Build the final Tally XML once the CA has confirmed a ledger per transaction."""
+    try:
+        xml, voucher_count = generate_xml_with_ledgers(
+            [txn.model_dump() for txn in payload.transactions],
+            company_name=payload.company_name,
+            bank_ledger=payload.bank_ledger,
+        )
+        return {"xml": xml, "voucherCount": voucher_count}
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("Bank statement XML export failed")
         raise HTTPException(status_code=500, detail=str(error)) from error

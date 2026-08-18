@@ -105,6 +105,7 @@ const markDocumentProcessingSucceeded = async (
     entityType: "document",
     entityId: documentId,
     metadata: {
+      clientId: updateResult.rows[0].client_id,
       confidenceScore,
       ...(logMessage ? { message: logMessage } : {}),
       ...auditMetadata
@@ -146,6 +147,7 @@ const markDocumentProcessingFailed = async (
     entityType: "document",
     entityId: documentId,
     metadata: {
+      clientId: row.client_id,
       attempt,
       jobId,
       error: normalizedError
@@ -162,6 +164,7 @@ const markDocumentProcessingFailed = async (
       entityType: "document",
       entityId: documentId,
       metadata: {
+        clientId: row.client_id,
         attempt,
         jobId,
         error: normalizedError

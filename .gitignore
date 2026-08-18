@@ -66,3 +66,9 @@ docker-compose.override.yml
 ai-service/Dockerfile.local
 ai-service/corp-ca.pem
 backend/local-storage/
+
+# start-demo.ps1 / stop-demo.ps1 PID tracking + service logs (added 2026-08-10)
+.verax-run/
+
+# Real customer bank statements used for local parser testing — never commit
+ai-service/test-hdfc.pdf
