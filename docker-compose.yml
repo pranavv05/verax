@@ -47,6 +47,8 @@
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      LOCAL_STORAGE: ${LOCAL_STORAGE:-true}
+      LOCAL_STORAGE_PATH: ${LOCAL_STORAGE_PATH:-./local-storage}
       AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
       AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY:-local_ai_service_api_key_change_me_32}
       AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-120000}
@@ -70,6 +72,7 @@
     volumes:
       - ./backend:/app
       - backend_node_modules:/app/node_modules
+      - ./backend/local-storage:/app/local-storage
     ports:
       - "3000:3000"
     depends_on:
@@ -148,6 +151,8 @@
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      LOCAL_STORAGE: ${LOCAL_STORAGE:-true}
+      LOCAL_STORAGE_PATH: ${LOCAL_STORAGE_PATH:-./local-storage}
       AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
       AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY:-local_ai_service_api_key_change_me_32}
       AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-120000}
@@ -169,6 +174,7 @@
     volumes:
       - ./backend:/app
       - backend_node_modules:/app/node_modules
+      - ./backend/local-storage:/app/local-storage
     depends_on:
       postgres:
         condition: service_healthy
