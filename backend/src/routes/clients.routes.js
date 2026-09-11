@@ -1,4 +1,5 @@
 const express = require("express");
+const multer = require("multer");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
@@ -12,8 +13,32 @@ const {
   requestClientDocuments
 } = require("../services/clients.service");
 const { enableClientPortal } = require("../services/client-auth.service");
+const {
+  MAX_FILE_SIZE_BYTES,
+  buildTemplateCsv,
+  previewClientImport,
+  confirmClientImport
+} = require("../services/client-import.service");
+const ApiError = require("../utils/api-error");
 
 const router = express.Router();
+
+const importUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE_BYTES }
+});
+
+const handleImportUpload = (req, res, next) => {
+  importUpload.single("file")(req, res, (error) => {
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+      return next(ApiError.badRequest("File exceeds 5MB limit"));
+    }
+    if (error) {
+      return next(error);
+    }
+    return next();
+  });
+};
 
 const uuidSchema = Joi.string().uuid({ version: ["uuidv4", "uuidv5"] });
 
@@ -55,6 +80,23 @@ const requestDocsBodySchema = Joi.object({
     .optional()
 });
 
+const importConfirmRowSchema = Joi.object({
+  rowNumber: Joi.number().integer().optional(),
+  status: Joi.string().valid("valid", "warning").optional(),
+  data: Joi.object({
+    clientName: Joi.string().trim().min(2).max(255).required(),
+    gstin: Joi.string().trim().uppercase().max(15).allow(null, ""),
+    email: Joi.string().email().max(255).allow(null, ""),
+    phone: Joi.string().trim().max(15).allow(null, ""),
+    status: Joi.string().valid("active", "inactive").allow(null, "")
+  }).required(),
+  issues: Joi.array().items(Joi.string()).optional()
+});
+
+const importConfirmBodySchema = Joi.object({
+  rows: Joi.array().items(importConfirmRowSchema).min(1).required()
+});
+
 router.use(requireAuth);
 
 router.get(
@@ -87,6 +129,47 @@ router.post(
       })
     );
     res.status(201).json(client);
+  })
+);
+
+router.get(
+  "/import/template",
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const csv = buildTemplateCsv();
+    res.status(200);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="verax-client-import-template.csv"'
+    );
+    res.send(csv);
+  })
+);
+
+router.post(
+  "/import/preview",
+  requireAdmin,
+  handleImportUpload,
+  asyncHandler(async (req, res) => {
+    const result = previewClientImport(req.file);
+    res.status(200).json(result);
+  })
+);
+
+router.post(
+  "/import/confirm",
+  requireAdmin,
+  validate(importConfirmBodySchema),
+  asyncHandler(async (req, res) => {
+    const result = await req.withTenantTransaction((db) =>
+      confirmClientImport(db, {
+        firmId: req.user.firmId,
+        actorUserId: req.user.userId,
+        rows: req.body.rows
+      })
+    );
+    res.status(200).json(result);
   })
 );
 

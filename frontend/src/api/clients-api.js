@@ -1,4 +1,5 @@
-﻿import { request } from "../lib/api-client";
+﻿import { API_BASE_URL, refreshAccessToken, request } from "../lib/api-client";
+import { tokenStore } from "../lib/token-store";
 
 const toQuery = (params = {}) => {
   const searchParams = new URLSearchParams();
@@ -45,6 +46,59 @@ export const clientsApi = {
     return request(`/api/clients/${id}/enable-portal`, {
       method: "POST",
       body: payload
+    });
+  },
+
+  async downloadImportTemplate() {
+    const url = `${API_BASE_URL}/api/clients/import/template`;
+    const fetchTemplate = () => {
+      const token = tokenStore.getAccessToken();
+      return fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: "include"
+      });
+    };
+
+    let response = await fetchTemplate();
+    if (response.status === 401) {
+      await refreshAccessToken();
+      response = await fetchTemplate();
+    }
+
+    if (!response.ok) {
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      throw new Error(payload?.message || payload?.error || "Unable to download template");
+    }
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = "verax-client-import-template.csv";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
+  },
+
+  previewImport(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request("/api/clients/import/preview", {
+      method: "POST",
+      body: formData
+    });
+  },
+
+  confirmImport(rows) {
+    return request("/api/clients/import/confirm", {
+      method: "POST",
+      body: { rows }
     });
   }
 };

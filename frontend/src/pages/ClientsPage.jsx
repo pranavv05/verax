@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
+import ClientImportModal from "../components/clients/ClientImportModal";
 import Drawer from "../components/ui/Drawer";
 import EmptyState from "../components/ui/EmptyState";
 import OverflowMenu from "../components/ui/OverflowMenu";
@@ -90,6 +91,7 @@ const ClientsPage = () => {
   const [filters, setFilters] = useState({ page: 1, limit: 20, search: "", status: "" });
   const [searchInput, setSearchInput] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editingClient, setEditingClient] = useState(null); // null = add mode, object = edit mode
   const [confirmDeleteId, setConfirmDeleteId] = useState(""); // id to confirm delete
@@ -551,16 +553,33 @@ const ClientsPage = () => {
           </p>
         </div>
         {canAdmin && (
-          <button
-            type="button"
-            onClick={openAddDrawer}
-            className="btn-primary inline-flex items-center justify-center gap-2 self-start sm:self-auto"
-          >
-            <PlusIcon />
-            Add client
-          </button>
+          <div className="flex gap-2 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setImportModalOpen(true)}
+              className="btn-secondary inline-flex items-center justify-center gap-2"
+            >
+              Import Clients
+            </button>
+            <button
+              type="button"
+              onClick={openAddDrawer}
+              className="btn-primary inline-flex items-center justify-center gap-2"
+            >
+              <PlusIcon />
+              Add client
+            </button>
+          </div>
         )}
       </div>
+
+      {canAdmin && (
+        <ClientImportModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onImported={loadClients}
+        />
+      )}
 
       {pageToast ? (
         <div className="mb-4 rounded-lg border border-mint-300 bg-mint-500/10 px-4 py-3 text-sm font-semibold text-mint-700">

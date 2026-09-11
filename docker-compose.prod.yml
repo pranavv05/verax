@@ -44,10 +44,12 @@ services:
       start_period: 10s
 
   backend:
-    image: node:20-alpine
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ca-backend:prod
     container_name: ca-backend
     restart: unless-stopped
-    working_dir: /app
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -76,12 +78,14 @@ services:
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       MAX_TOOL_UPLOAD_MB: ${MAX_TOOL_UPLOAD_MB:-25}
       DOCUMENT_WORKER_CONCURRENCY: ${DOCUMENT_WORKER_CONCURRENCY:-3}
-    command: sh -c "npm install --omit=dev && npm start"
-    volumes:
-      - ./backend:/app
-      - backend_node_modules:/app/node_modules
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,13 +103,19 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       - backend
 
   ai-service:
     build:
       context: ./ai-service
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.prod
     image: ca-ai-service:prod
     container_name: ca-ai-service
     restart: unless-stopped
@@ -122,17 +132,25 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET}
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
     # No ports exposed — backend calls it via internal Docker network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
 
   worker:
-    image: node:20-alpine
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ca-backend:prod
     container_name: ca-worker
     restart: unless-stopped
-    working_dir: /app
+    command: ["node", "src/workers/document-processing.worker.js"]
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL}
@@ -158,10 +176,12 @@ services:
       TALLY_EXPORT_URL_EXPIRY_SECONDS: ${TALLY_EXPORT_URL_EXPIRY_SECONDS:-900}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       MAX_TOOL_UPLOAD_MB: ${MAX_TOOL_UPLOAD_MB:-25}
-    command: sh -c "npm install --omit=dev && npm run worker:documents"
-    volumes:
-      - ./backend:/app
-      - backend_node_modules:/app/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f document-processing.worker.js || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,4 +193,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  backend_node_modules:

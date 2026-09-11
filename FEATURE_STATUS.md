@@ -1096,17 +1096,21 @@ Notes: **Fixed 2026-08-08.** The backend writes uploads to a hardcoded `backend/
 Status: ✅ Production Ready
 Notes: Added 2026-08-08: `backend/scripts/demo-smoke-test.js` walks the whole path (login → client → magic link → upload → confirm → processing → extraction → approve → Tally export → download, asserting the payload is real XML) and is idempotent so it can be re-run before a demo; `backend/scripts/make-test-invoice.js` generates a text-bearing invoice PDF (the repo had no PDF fixture); `backend/scripts/seed-demo-extraction.js` seeds a realistic extraction so review/approve/export can be exercised without a live OCR round trip. Local-only, git-ignored support files: `docker-compose.override.yml`, `ai-service/Dockerfile.local`, `ai-service/corp-ca.pem`.
 
+### Production docker-compose (Railway-target build)
+Status: ✅ Production Ready
+Notes: **Fixed 2026-09-11.** `docker-compose.prod.yml`'s `backend` and `worker` services were defined as raw `image: node:20-alpine` with `./backend:/app` bind mounts and `npm install --omit=dev && npm start` as the runtime command — i.e. they never used `backend/Dockerfile` at all and mounted the host filesystem into a "production" container, both directly contradicting the production requirements (no local bind mounts; build from the Dockerfile). Changed both to `build: { context: ./backend, dockerfile: Dockerfile }`, removed the bind mounts and the now-unused `backend_node_modules` volume, and gave `worker` an explicit `command: ["node", "src/workers/document-processing.worker.js"]` override on the same image. `ai-service` was building the dev `Dockerfile` (tesseract-hin, `--reload`, no PaddleOCR model pre-fetch) instead of the existing `ai-service/Dockerfile.prod` (multi-worker uvicorn, models baked in at build time) — switched to `Dockerfile.prod`. Added Docker `healthcheck:` blocks to `backend`, `worker`, `frontend`, and `ai-service` (previously only `postgres`/`redis` had them): `wget --spider` against `/health` for backend and frontend, a `python -c urllib.request` check against `/health` for `ai-service` (the `python:3.12-slim` base has no curl/wget), and `pgrep -f document-processing.worker.js` for `worker`, which has no HTTP listener. Also added `backend/.dockerignore`, `frontend/.dockerignore`, and `ai-service/.dockerignore` (none existed) — without them, `COPY . .` in each Dockerfile copies the host's `node_modules`/`__pycache__` over the freshly-installed Linux ones after `npm ci`/`pip install`; frontend's build tooling (`esbuild`/`@rollup/rollup-*`) ships OS-specific native binaries, so building on a non-Linux host without a `.dockerignore` breaks `npm run build` inside the image. Verified: `docker compose -f docker-compose.prod.yml build` completes with exit code 0 for all four built images (`ca-backend:prod`, `ca-frontend:prod`, `ca-ai-service:prod`). Not verified: a full `docker compose up` run, since the prod compose has no `LOCAL_STORAGE` fallback and requires real `AWS_S3_BUCKET`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` values, which this environment doesn't have — actual Railway deployment (service creation, env var configuration, domain wiring) was out of scope for this pass, which covered only preparing and build-testing the production Docker artifacts.
+
 ---
 
 ## Summary
 
 | Status | Count |
 |--------|-------|
-| ✅ Production Ready | 142 |
+| ✅ Production Ready | 143 |
 | ⚠️ Partial | 9 |
 | ❌ Not Built | 0 |
 | 🔧 Needs Fix | 6 |
-| **Total** | 157 |
+| **Total** | 158 |
 
 *(2026-08-09, marketing redesign: the landing page was rebuilt on a new V2 design system
 ("The Ledger") — 13 new marketing components, `HomePage` reduced to composition, `PublicLayout`
