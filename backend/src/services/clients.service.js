@@ -62,7 +62,7 @@ const insertAuditLog = async (db, { firmId, userId, action, entityType, entityId
 
 const listClients = async (db, { firmId, page, limit, status, search }) => {
   const offset = (page - 1) * limit;
-  const filters = ["firm_id = $1", "deleted_at IS NULL"];
+  const filters = ["c.firm_id = $1", "c.deleted_at IS NULL"];
   const params = [firmId];
   let paramIndex = params.length + 1;
 
@@ -70,14 +70,14 @@ const listClients = async (db, { firmId, page, limit, status, search }) => {
     if (!ALLOWED_STATUSES.has(status)) {
       throw ApiError.badRequest("Invalid client status filter");
     }
-    filters.push(`status = $${paramIndex}`);
+    filters.push(`c.status = $${paramIndex}`);
     params.push(status);
     paramIndex += 1;
   }
 
   if (search) {
     filters.push(
-      `(name ILIKE $${paramIndex} OR email ILIKE $${paramIndex} OR gstin ILIKE $${paramIndex} OR phone ILIKE $${paramIndex})`
+      `(c.name ILIKE $${paramIndex} OR c.email ILIKE $${paramIndex} OR c.gstin ILIKE $${paramIndex} OR c.phone ILIKE $${paramIndex})`
     );
     params.push(`%${search}%`);
     paramIndex += 1;
@@ -88,18 +88,34 @@ const listClients = async (db, { firmId, page, limit, status, search }) => {
   const countResult = await db.query(
     `
       SELECT COUNT(*)::int AS total
-      FROM clients
+      FROM clients c
       WHERE ${whereClause}
     `,
     params
   );
 
+  // Single indexed aggregate (idx_documents_firm_id), grouped by client — one extra
+  // round trip for the whole page, not one query per row, so this stays cheap even
+  // at 100+ clients.
   const rowsResult = await db.query(
     `
-      SELECT id, firm_id, name, gstin, email, phone, upload_token, upload_token_expires_at, status, created_at, updated_at
-      FROM clients
+      SELECT c.id, c.firm_id, c.name, c.gstin, c.email, c.phone, c.upload_token,
+             c.upload_token_expires_at, c.status, c.created_at, c.updated_at,
+             COALESCE(doc_stats.total_documents, 0) AS total_documents,
+             COALESCE(doc_stats.pending_documents, 0) AS pending_documents,
+             doc_stats.last_activity_at
+      FROM clients c
+      LEFT JOIN (
+        SELECT client_id,
+               COUNT(*)::int AS total_documents,
+               COUNT(*) FILTER (WHERE status IN ('extracted', 'review_required'))::int AS pending_documents,
+               MAX(uploaded_at) AS last_activity_at
+        FROM documents
+        WHERE firm_id = $1 AND deleted_at IS NULL
+        GROUP BY client_id
+      ) doc_stats ON doc_stats.client_id = c.id
       WHERE ${whereClause}
-      ORDER BY created_at DESC
+      ORDER BY c.created_at DESC
       LIMIT $${paramIndex}
       OFFSET $${paramIndex + 1}
     `,
@@ -107,7 +123,14 @@ const listClients = async (db, { firmId, page, limit, status, search }) => {
   );
 
   return {
-    data: rowsResult.rows.map(toClientResponse),
+    data: rowsResult.rows.map((row) => ({
+      ...toClientResponse(row),
+      documentSummary: {
+        totalDocuments: row.total_documents,
+        pendingDocuments: row.pending_documents,
+        lastActivityAt: row.last_activity_at
+      }
+    })),
     pagination: {
       page,
       limit,
@@ -182,7 +205,8 @@ const createClient = async (db, { firmId, payload, actorUserId }) => {
 const getClientById = async (db, { firmId, clientId }) => {
   const clientResult = await db.query(
     `
-      SELECT id, firm_id, name, gstin, email, phone, upload_token, upload_token_expires_at, status, created_at, updated_at
+      SELECT id, firm_id, name, gstin, email, phone, upload_token, upload_token_expires_at, status,
+             portal_email, portal_enabled, portal_last_login_at, created_at, updated_at
       FROM clients
       WHERE id = $1
         AND firm_id = $2
@@ -214,11 +238,19 @@ const getClientById = async (db, { firmId, clientId }) => {
     [firmId, clientId]
   );
 
-  const client = toClientResponse(clientResult.rows[0]);
+  const clientRow = clientResult.rows[0];
+  const client = toClientResponse(clientRow);
   const summary = summaryResult.rows[0];
 
   return {
     ...client,
+    // Portal credentials themselves (portal_password_hash) are never selected
+    // or returned — only whether the portal is on, and for whom.
+    portal: {
+      enabled: Boolean(clientRow.portal_enabled),
+      email: clientRow.portal_email,
+      lastLoginAt: clientRow.portal_last_login_at
+    },
     documentSummary: {
       totalDocuments: summary.total_documents,
       uploadedDocuments: summary.uploaded_documents,

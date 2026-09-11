@@ -12,12 +12,17 @@ const {
   markDocumentProcessingSucceeded,
   markDocumentProcessingFailed,
   getDocumentReadyEmailContext,
-  recordDocumentReadyEmailAudit
+  recordDocumentReadyEmailAudit,
+  recordDocumentFailedEmailAudit
 } = require("../services/document-processing.service");
 const {
   documentReadySubject,
   documentReadyTemplate
 } = require("../templates/documentReady.template");
+const {
+  documentFailedSubject,
+  documentFailedTemplate
+} = require("../templates/documentFailed.template");
 const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.job");
 
 const redisConnection = new IORedis(env.REDIS_URL, {
@@ -165,6 +170,70 @@ const worker = new Worker(
         process.stderr.write(
           `[ALERT] Document ${payload.documentId} for firm ${payload.firmId} failed ${failure.attempt} times.\n`
         );
+
+        try {
+          const failureContext = await withTenantTransaction({ firmId: payload.firmId }, (db) =>
+            getDocumentReadyEmailContext(db, {
+              firmId: payload.firmId,
+              documentId: payload.documentId
+            })
+          );
+
+          if (failureContext && failureContext.admins.length > 0) {
+            const auditLogUrl = `${env.FRONTEND_URL}/audit-logs`;
+
+            for (const admin of failureContext.admins) {
+              try {
+                await createNotification({
+                  firmId: payload.firmId,
+                  userId: admin.id,
+                  type: "document_failed",
+                  title: "Document processing failed",
+                  message:
+                    "A document failed to process after 3 attempts and needs manual review.",
+                  entityType: "document",
+                  entityId: payload.documentId
+                });
+              } catch (notificationError) {
+                process.stderr.write(
+                  `Failure notification failed for document ${payload.documentId}: ${String(notificationError.message || notificationError)}\n`
+                );
+              }
+
+              try {
+                const emailResult = await sendEmail({
+                  to: admin.email,
+                  subject: documentFailedSubject(),
+                  html: documentFailedTemplate({
+                    firmName: failureContext.document.firm_name,
+                    clientName: failureContext.document.client_name,
+                    documentName: failureContext.document.file_name,
+                    failureReason: normalizedError,
+                    auditLogUrl
+                  })
+                });
+
+                await withTenantTransaction({ firmId: payload.firmId }, (db) =>
+                  recordDocumentFailedEmailAudit(db, {
+                    firmId: payload.firmId,
+                    userId: admin.id,
+                    documentId: payload.documentId,
+                    email: admin.email,
+                    emailResult
+                  })
+                );
+              } catch (emailError) {
+                process.stderr.write(
+                  `Failure email failed for document ${payload.documentId}: ${String(emailError.message || emailError)}\n`
+                );
+              }
+            }
+          }
+        } catch (alertPipelineError) {
+          process.stderr.write(
+            `Permanent-failure alert pipeline failed for document ${payload.documentId}: ${String(alertPipelineError.message || alertPipelineError)}\n`
+          );
+        }
       }
 
       throw error;

@@ -11,7 +11,8 @@ const listAuditLogsQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(50),
   action: Joi.string().trim().max(255).optional(),
-  entityType: Joi.string().trim().max(255).optional()
+  entityType: Joi.string().trim().max(255).optional(),
+  search: Joi.string().trim().max(255).optional()
 });
 
 router.use(requireAuth);
@@ -27,7 +28,8 @@ router.get(
         page: req.query.page,
         limit: req.query.limit,
         action: req.query.action,
-        entityType: req.query.entityType
+        entityType: req.query.entityType,
+        search: req.query.search
       })
     );
     res.status(200).json(result);

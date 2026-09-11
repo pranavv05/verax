@@ -3,13 +3,23 @@ const https = require("https");
 const { Transform } = require("stream");
 const { URL } = require("url");
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const { requireAuth } = require("../middlewares/auth.middleware");
 const ApiError = require("../utils/api-error");
 const env = require("../config/env");
+const { generateBankStatementXmlExport } = require("../services/ai.service");
 
 const router = express.Router();
 const maxToolUploadBytes = env.MAX_TOOL_UPLOAD_MB * 1024 * 1024;
+
+const toolsRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later" }
+});
 
 router.use(requireAuth);
 
@@ -149,6 +159,7 @@ const proxyToolRequest = async ({ req, res, pathname, responseContentType }) => 
 
 router.post(
   "/register-clean",
+  toolsRateLimiter,
   asyncHandler(async (req, res) => {
     await proxyToolRequest({
       req,
@@ -161,6 +172,7 @@ router.post(
 
 router.post(
   "/bank-statement-xml",
+  toolsRateLimiter,
   asyncHandler(async (req, res) => {
     await proxyToolRequest({
       req,
@@ -168,6 +180,20 @@ router.post(
       pathname: "/tools/bank-statement-xml",
       responseContentType: "application/json"
     });
+  })
+);
+
+router.post(
+  "/bank-statement-xml/export",
+  toolsRateLimiter,
+  asyncHandler(async (req, res) => {
+    const { transactions, companyName, bankLedger } = req.body || {};
+    if (!Array.isArray(transactions) || transactions.length === 0) {
+      throw ApiError.badRequest("transactions must be a non-empty array");
+    }
+
+    const result = await generateBankStatementXmlExport({ transactions, companyName, bankLedger });
+    res.status(200).json(result);
   })
 );
 

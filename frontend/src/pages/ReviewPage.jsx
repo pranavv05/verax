@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import { ReviewSkeleton } from "../components/ui/skeletons";
@@ -232,6 +232,9 @@ const ReviewPage = () => {
   const [selectedVersion, setSelectedVersion] = useState(null);
   const [versionLoading, setVersionLoading] = useState(false);
   const [versionError, setVersionError] = useState("");
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollError, setPollError] = useState("");
+  const pollingRef = useRef(null);
 
   const docType = document?.docType || document?.doc_type || "invoice";
   const isBankStatement = docType === "bank_statement";
@@ -336,6 +339,63 @@ const ReviewPage = () => {
     loadData();
   }, [loadData]);
 
+  /* ─── processing status polling ─── */
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (pollingRef.current) return;
+    const startTime = Date.now();
+    const MAX_POLL_TIME = 3 * 60 * 1000;
+
+    pollingRef.current = setInterval(async () => {
+      if (Date.now() - startTime > MAX_POLL_TIME) {
+        stopPolling();
+        setIsPolling(false);
+        setPollError("Processing is taking longer than expected. Please refresh the page.");
+        return;
+      }
+
+      try {
+        const doc = await documentsApi.getById(documentId);
+
+        if (doc.status === "extracted" || doc.status === "review_required") {
+          stopPolling();
+          setIsPolling(false);
+          setToast("Document reprocessed successfully.");
+          await loadData();
+          return;
+        }
+
+        if (doc.status === "failed") {
+          stopPolling();
+          setIsPolling(false);
+          setPollError("Processing failed. Please try again.");
+          setDocument(doc);
+          return;
+        }
+      } catch (pollErr) {
+        console.error("Poll error:", pollErr);
+      }
+    }, 3000);
+  }, [documentId, loadData, stopPolling]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  // Auto-start polling if the document is already processing on page load
+  useEffect(() => {
+    if (!loading && document?.status === "processing" && !pollingRef.current) {
+      setIsPolling(true);
+      setPollError("");
+      startPolling();
+    }
+  }, [loading, document?.status, startPolling]);
+
   /* ─── form helpers ─── */
 
   const onFieldChange = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -409,10 +469,11 @@ const ReviewPage = () => {
     setReprocessing(true);
     setToast("");
     setError("");
+    setPollError("");
     try {
       await extractionsApi.reprocess(documentId);
-      setToast("Reprocess request queued. Refresh in a moment.");
-      await loadData();
+      setIsPolling(true);
+      startPolling();
     } catch (reprocessError) {
       setError(parseApiError(reprocessError, "Unable to reprocess document"));
     } finally {
@@ -497,6 +558,7 @@ const ReviewPage = () => {
   const blocking = hasBlockingErrors(validation);
   const isExported = document?.status === "exported";
   const isReviewed = document?.status === "reviewed";
+  const isLocked = isExported || isReviewed;
   const canApprove = ["extracted", "review_required"].includes(document?.status);
   const canAdmin = isAdmin(user);
 
@@ -553,6 +615,12 @@ const ReviewPage = () => {
       {toast && (
         <div className="mb-4 rounded-lg border border-mint-300 bg-mint-500/10 px-4 py-3 text-sm font-semibold text-mint-700">
           {toast}
+        </div>
+      )}
+
+      {pollError && (
+        <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {pollError}
         </div>
       )}
 
@@ -666,8 +734,21 @@ const ReviewPage = () => {
         </div>
       )}
 
+      {/* Processing / polling state */}
+      {isPolling && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+          <div className="relative h-5 w-5 shrink-0">
+            <span className="absolute inset-0 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
+          </div>
+          <div>
+            <p>Processing document...</p>
+            <p className="mt-0.5 font-normal">This usually takes 30–60 seconds.</p>
+          </div>
+        </div>
+      )}
+
       {/* Not yet processed banner */}
-      {!loading && !error && !extractionReady && extractionMessage && (
+      {!loading && !error && !isPolling && !extractionReady && extractionMessage && (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
           {extractionMessage}
           {document && (["uploaded", "processing"].includes(document.status)) && (
@@ -765,8 +846,18 @@ const ReviewPage = () => {
             </div>
           )}
 
-          <div className="max-h-[58vh] space-y-3 overflow-y-auto pr-1">
-            {headerFields.map(([key, label]) => {
+          <div className="relative">
+            {isPolling && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg bg-white/80 backdrop-blur-sm">
+                <div className="relative h-8 w-8">
+                  <span className="absolute inset-0 animate-spin rounded-full border-2 border-ink-200 border-t-mint-500" />
+                </div>
+                <p className="text-sm font-semibold text-ink-700">Processing document...</p>
+                <p className="text-xs text-[#607086]">This usually takes 30–60 seconds</p>
+              </div>
+            )}
+            <div className={`max-h-[58vh] space-y-3 overflow-y-auto pr-1 ${isPolling ? "pointer-events-none opacity-40" : ""}`}>
+              {headerFields.map(([key, label]) => {
               const fv = getFieldValidation(validation, key);
               const isGstinField = key === "vendor_gstin";
               const gstBadge = getGstBadge(gstMatch?.matchStatus);
@@ -783,7 +874,7 @@ const ReviewPage = () => {
                         : ""
                     }`}
                     value={form[key] ?? ""}
-                    disabled={isExported}
+                    disabled={isLocked}
                     onChange={(e) => onFieldChange(key, e.target.value)}
                   />
                   {fieldNeedsReview && (
@@ -799,15 +890,17 @@ const ReviewPage = () => {
                         >
                           {gstChecking ? "Checking..." : gstBadge.label}
                         </span>
-                        <button
-                          type="button"
-                          className="btn-secondary px-3 py-1.5 text-xs"
-                          disabled={gstChecking || isExported || !form.vendor_gstin}
-                          title={!form.vendor_gstin ? "No GSTIN found in document" : ""}
-                          onClick={onVerifyGst}
-                        >
-                          {gstChecking ? "Verifying..." : "Verify GST"}
-                        </button>
+                        {canAdmin && (
+                          <button
+                            type="button"
+                            className="btn-secondary px-3 py-1.5 text-xs"
+                            disabled={gstChecking || isExported || !form.vendor_gstin}
+                            title={!form.vendor_gstin ? "No GSTIN found in document" : ""}
+                            onClick={onVerifyGst}
+                          >
+                            {gstChecking ? "Verifying..." : "Verify GST"}
+                          </button>
+                        )}
                         {gstMatch?.mismatchFields?.length > 0 && (
                           <button
                             type="button"
@@ -850,7 +943,8 @@ const ReviewPage = () => {
                   )}
                 </div>
               );
-            })}
+              })}
+            </div>
           </div>
 
           {versions.length > 0 && (
@@ -868,7 +962,7 @@ const ReviewPage = () => {
             <button
               type="button"
               className="btn-secondary"
-              disabled={saving || isExported}
+              disabled={saving || isLocked}
               onClick={onSave}
             >
               {saving ? "Saving..." : "Save"}
@@ -877,10 +971,10 @@ const ReviewPage = () => {
               <button
                 type="button"
                 className="btn-secondary"
-                disabled={reprocessing || isExported}
+                disabled={reprocessing || isPolling || isExported}
                 onClick={onReprocess}
               >
-                {reprocessing ? "Queueing..." : "Reprocess"}
+                {reprocessing ? "Queueing..." : isPolling ? "Processing..." : "Reprocess"}
               </button>
             )}
             {canAdmin && (
@@ -957,7 +1051,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full"
                           type="date"
                           value={txn.date}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "date", e.target.value)}
                         />
                       </td>
@@ -965,7 +1059,7 @@ const ReviewPage = () => {
                         <input
                           className="field text-xs"
                           value={txn.narration}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "narration", e.target.value)}
                         />
                       </td>
@@ -974,7 +1068,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full text-right"
                           inputMode="decimal"
                           value={txn.debit}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "debit", e.target.value)}
                         />
                       </td>
@@ -983,7 +1077,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full text-right"
                           inputMode="decimal"
                           value={txn.credit}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "credit", e.target.value)}
                         />
                       </td>
@@ -992,7 +1086,7 @@ const ReviewPage = () => {
                           className="field text-xs w-full text-right"
                           inputMode="decimal"
                           value={txn.balance}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "balance", e.target.value)}
                         />
                       </td>
@@ -1000,7 +1094,7 @@ const ReviewPage = () => {
                         <input
                           className="field text-xs w-full"
                           value={txn.reference}
-                          disabled={isExported}
+                          disabled={isLocked}
                           onChange={(e) => onTransactionChange(idx, "reference", e.target.value)}
                         />
                       </td>
@@ -1080,7 +1174,7 @@ const ReviewPage = () => {
                           <input
                             className="field text-xs"
                             value={item.description}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "description", e.target.value)}
                           />
                         </td>
@@ -1089,7 +1183,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             inputMode="decimal"
                             value={item.quantity}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "quantity", e.target.value)}
                           />
                         </td>
@@ -1098,7 +1192,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             inputMode="decimal"
                             value={item.unit_price}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "unit_price", e.target.value)}
                           />
                         </td>
@@ -1107,7 +1201,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             inputMode="decimal"
                             value={item.total}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "total", e.target.value)}
                           />
                         </td>
@@ -1115,7 +1209,7 @@ const ReviewPage = () => {
                           <input
                             className="field text-xs w-full"
                             value={item.hsn_code}
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "hsn_code", e.target.value)}
                           />
                         </td>
@@ -1124,7 +1218,7 @@ const ReviewPage = () => {
                             className="field text-xs w-full"
                             value={item.uom}
                             placeholder="PCS"
-                            disabled={isExported}
+                            disabled={isLocked}
                             onChange={(e) => onLineItemChange(idx, "uom", e.target.value)}
                           />
                         </td>
@@ -1132,7 +1226,7 @@ const ReviewPage = () => {
                           <input
                             className="field text-xs w-full border-mint-300 focus:border-mint-500 focus:ring-mint-500/20"
                             value={item.tally_item_name}
-                            disabled={isExported}
+                            disabled={isLocked}
                             list={datalistId}
                             placeholder="Mapped name..."
                             onChange={(e) =>

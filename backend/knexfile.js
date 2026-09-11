@@ -1,7 +1,13 @@
 ﻿const path = require("path");
-require("dotenv").config({ path: path.resolve(process.cwd(), "../.env") });
+// Same precedence as src/config/env.js: backend/.env wins, repo-root .env fills gaps.
+// Paths are resolved from __dirname, not process.cwd(), so migrations work from any cwd.
+require("dotenv").config({ path: path.resolve(__dirname, ".env") });
+require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
-const connection = process.env.DATABASE_URL || "postgresql://ca_user:ca_password@localhost:5432/ca_saas";
+const connection = process.env.DATABASE_URL;
+if (!connection) {
+  throw new Error("DATABASE_URL is not set — check backend/.env");
+}
 const migrations = { directory: path.resolve(__dirname, "migrations") };
 const pool = { min: 2, max: 10 };
 

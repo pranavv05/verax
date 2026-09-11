@@ -1,4 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap");
+/* Fonts are loaded via <link> in index.html — a stylesheet @import blocks the
+   CSSOM until it resolves, which delays first paint on the landing page. */
 
 @tailwind base;
 @tailwind components;
@@ -106,6 +107,423 @@ a {
 
   .section-padding {
     @apply px-4 py-16 sm:px-6 md:py-24 lg:px-8;
+  }
+
+  /* ---------------------------------------------------------------------
+     Public surface (landing, auth, magic-link upload) — dark-mode system.
+     Deliberately namespaced with `vx-` so none of these can collide with the
+     legacy panel, btn and field classes the dashboard pages depend on. The
+     dashboard's `body` background/font stays untouched by everything below.
+     --------------------------------------------------------------------- */
+  .vx-page {
+    @apply bg-canvas font-inter text-zinc-100 antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  }
+
+  .vx-shell {
+    @apply mx-auto w-full max-w-[1200px] px-6 sm:px-8 lg:px-10;
+  }
+
+  /* The single most important number on the public surface: 160/96/64px of
+     vertical section padding. It is what buys the editorial pacing — sections
+     read as separate because of the air between them, not because of rules. */
+  .vx-section {
+    @apply py-16 sm:py-24 lg:py-40;
+  }
+
+  /* Narrow measure for centred editorial blocks. */
+  .vx-measure {
+    @apply mx-auto max-w-[800px];
+  }
+
+  .vx-card {
+    @apply rounded-2xl border border-hairline bg-surface transition-colors duration-[250ms]
+           hover:border-hairline-strong;
+  }
+
+  .vx-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-medium
+           transition-opacity duration-150 outline-none
+           hover:opacity-[0.82]
+           focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas
+           disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:opacity-55;
+  }
+
+  .vx-btn-primary {
+    @apply vx-btn bg-indigo-500 text-white;
+  }
+
+  .vx-btn-secondary {
+    @apply vx-btn border border-hairline bg-white/[0.03] text-zinc-100 hover:opacity-100
+           hover:border-hairline-strong;
+  }
+
+  /* Text-weight secondary action, for use directly beside the primary pill —
+     a second outlined pill next to a filled one is the tell of a template. */
+  .vx-btn-text {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-2 py-3 text-sm font-medium
+           text-zinc-400 outline-none transition-colors duration-200 hover:text-zinc-100
+           focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas;
+  }
+
+  .vx-btn-ghost-light {
+    @apply vx-btn border border-white/15 bg-white/[0.04] text-white;
+  }
+
+  /* ── Type scale ──────────────────────────────────────────────────────── */
+
+  .vx-label {
+    @apply font-inter text-[11px] font-semibold uppercase leading-none tracking-[0.1em] text-zinc-500;
+  }
+
+  .vx-eyebrow {
+    @apply vx-label text-indigo-400;
+  }
+
+  .vx-display {
+    @apply font-inter font-extrabold text-zinc-100;
+    font-size: clamp(3.25rem, 6vw, 5.25rem);
+    letter-spacing: -0.04em;
+    line-height: 1.02;
+  }
+
+  .vx-h1 {
+    @apply font-inter font-bold text-zinc-100;
+    font-size: clamp(2.25rem, 4vw, 3.5rem);
+    letter-spacing: -0.03em;
+    line-height: 1.06;
+  }
+
+  .vx-h2 {
+    @apply font-inter font-semibold text-zinc-100;
+    font-size: clamp(1.75rem, 3vw, 2.5rem);
+    letter-spacing: -0.02em;
+    line-height: 1.12;
+  }
+
+  /* Editorial pull-quote — a claim given a whole section, no card around it. */
+  .vx-quote {
+    @apply font-inter font-bold italic text-zinc-100;
+    font-size: clamp(1.75rem, 3.5vw, 3rem);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  .vx-body {
+    @apply text-[1.0625rem] font-normal leading-[1.75] text-zinc-400;
+  }
+
+  /* Legacy alias — several public pages still call the body style `vx-lede`. */
+  .vx-lede {
+    @apply vx-body;
+  }
+
+  .vx-small {
+    @apply text-sm font-normal leading-[1.6] text-zinc-400;
+  }
+
+  /* Currency and figures inside product mockups must align in columns. */
+  .vx-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vx-gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #6366f1 0%, #14b8a6 100%);
+  }
+
+  /* Product mockup elevation, V1 (light surfaces): hairline ring + a
+     restrained ambient shadow. No colored bloom — on an ivory/white surface
+     a tinted glow around a "screenshot" reads as an AI-glow effect, which the
+     V1 brief rules out. The shadow is navy-tinted so it reads as a soft
+     contact shadow under the card, not a spotlight. */
+  .vx-mockup {
+    box-shadow:
+      0 0 0 1px rgba(17, 24, 39, 0.06),
+      0 24px 64px -28px rgba(17, 24, 39, 0.22),
+      0 8px 20px -12px rgba(17, 24, 39, 0.10);
+  }
+
+  /* Field with a floating label. The label position is driven entirely by
+     peer-placeholder-shown, so it stays correct through browser autofill and
+     bfcache restores — the input carries a single-space placeholder. */
+  .vx-field {
+    @apply block w-full min-h-[52px] rounded-xl border border-hairline bg-surface px-4 pb-2.5 pt-6 text-[0.95rem]
+           font-medium text-zinc-100 outline-none transition
+           placeholder:text-transparent
+           focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10;
+  }
+
+  .vx-field-label {
+    @apply pointer-events-none absolute left-4 top-2 text-[0.7rem] font-semibold uppercase
+           tracking-[0.09em] text-zinc-500 transition-all duration-200
+           peer-placeholder-shown:top-[1.15rem] peer-placeholder-shown:text-[0.9rem]
+           peer-placeholder-shown:normal-case peer-placeholder-shown:tracking-normal
+           peer-placeholder-shown:text-zinc-500
+           peer-focus:top-2 peer-focus:text-[0.7rem] peer-focus:uppercase
+           peer-focus:tracking-[0.09em] peer-focus:text-indigo-400;
+  }
+
+  /* Hero-only background texture: a single 900px indigo circle, blurred, hung
+     off the top edge and centred. Deliberately the only glow on the page. */
+  .vx-hero-glow {
+    width: 900px;
+    height: 900px;
+    max-width: 160vw;
+    border-radius: 9999px;
+    background: rgba(99, 102, 241, 0.1);
+    filter: blur(100px);
+  }
+
+  /* Dot-grid overlay at ~3%, masked so it dissolves before the fold. */
+  .vx-dot-grid {
+    background-image: radial-gradient(rgba(242, 242, 243, 0.14) 1px, transparent 1px);
+    background-size: 28px 28px;
+    opacity: 0.3;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     V2 — "The Ledger"
+     The marketing surface's own vocabulary, layered on top of the V1 tokens
+     above rather than replacing them (V1 still dresses /login, /signup, the
+     magic-link upload pages and the client-portal login, none of which are
+     being redesigned here).
+
+     Three motifs, repeated at every scale, are the whole visual system:
+       .vx-sheet  — ruled paper. A document nobody has read yet.
+       .vx-mono   — a value that has been lifted out of one.
+       .vx-rail   — the line documents travel along between the two.
+     ───────────────────────────────────────────────────────────────────── */
+
+  /* Hero-scale display. Larger and tighter than .vx-display, which stays put
+     because /features, /pricing, /about and /security are still typeset on
+     it. The 5.75rem (92px) ceiling is set by the longest line the page
+     actually contains — "Accounting-ready data out." has to fit the 1200px
+     shell on one line, and a headline that wraps into three lines loses the
+     two-line rhythm the whole site is built on. */
+  .vx-display-xl {
+    @apply font-inter font-extrabold text-carbon-900;
+    font-size: clamp(2.5rem, 6.2vw, 5.75rem);
+    letter-spacing: -0.045em;
+    line-height: 0.98;
+  }
+
+  /* Section headline for V2. Carbon rather than zinc-100 so the marketing
+     surface reads a half-step darker and warmer than the V1 pages. */
+  .vx-h2-xl {
+    @apply font-inter font-bold text-carbon-900;
+    font-size: clamp(2rem, 4.2vw, 3.5rem);
+    letter-spacing: -0.035em;
+    line-height: 1.04;
+  }
+
+  /* Technical values: GSTINs, invoice numbers, amounts, XML. Never a headline,
+     never body copy — the mono face is what marks a string as *extracted*. */
+  .vx-mono {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Ruled paper. Sits behind a sheet's content at 24px rhythm and fades out
+     downward so the sheet reads as continuing past its own bottom edge. */
+  .vx-sheet {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgba(17, 24, 39, 0.055) 0px,
+      rgba(17, 24, 39, 0.055) 1px,
+      transparent 1px,
+      transparent 12px
+    );
+  }
+
+  .vx-sheet-dark {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.06) 0px,
+      rgba(255, 255, 255, 0.06) 1px,
+      transparent 1px,
+      transparent 12px
+    );
+  }
+
+  /* Full-bleed near-black section. Every contrast moment on the marketing
+     site is this, not navy and not a gradient. */
+  .vx-dark {
+    @apply bg-carbon-950 text-carbon-200;
+  }
+
+  .vx-dark-rule {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  /* The primary CTA, V2: carbon fill on paper. The indigo pill is reserved
+     for the one nav CTA and the closing section, so the accent stays scarce. */
+  .vx-cta {
+    @apply inline-flex items-center justify-center gap-2.5 rounded-full bg-carbon-900 px-7 py-3.5
+           text-[0.9375rem] font-medium text-white outline-none
+           transition-[background-color,opacity] duration-200 hover:bg-carbon-700
+           focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2
+           focus-visible:ring-offset-canvas;
+  }
+
+  .vx-cta-invert {
+    @apply inline-flex items-center justify-center gap-2.5 rounded-full bg-white px-7 py-3.5
+           text-[0.9375rem] font-medium text-carbon-900 outline-none
+           transition-opacity duration-200 hover:opacity-[0.88]
+           focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2
+           focus-visible:ring-offset-carbon-950;
+  }
+
+  /* Secondary action: an underline that extends on hover, never a second pill
+     beside the first. */
+  .vx-link-action {
+    @apply inline-flex items-center gap-2 text-[0.9375rem] font-medium text-carbon-600
+           outline-none transition-colors duration-200 hover:text-carbon-900
+           focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-4
+           focus-visible:ring-offset-canvas rounded;
+  }
+
+  /* Numbered / lettered section marker, e.g. "01 — CAPTURE". */
+  .vx-index {
+    @apply vx-mono text-[0.6875rem] font-medium uppercase tracking-[0.16em] text-carbon-400;
+  }
+}
+
+/* The rail: a 1px dashed track with a solid segment travelling along it. Used
+   wherever the page needs to say "these stages happen in order". */
+@keyframes vx-rail-flow {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 24px 0;
+  }
+}
+
+.vx-rail {
+  height: 1px;
+  background-image: linear-gradient(
+    to right,
+    rgba(17, 24, 39, 0.22) 0 8px,
+    transparent 8px 24px
+  );
+  background-size: 24px 1px;
+  animation: vx-rail-flow 1.6s linear infinite;
+}
+
+.vx-rail-dark {
+  background-image: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.28) 0 8px,
+    transparent 8px 24px
+  );
+}
+
+/* Vertical rail — the same track rotated for the stacked mobile compositions,
+   so a flow that runs left-to-right on desktop runs top-to-bottom on a phone
+   without either layout resorting to an arrow glyph. */
+@keyframes vx-rail-flow-v {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 24px;
+  }
+}
+
+.vx-rail-v {
+  width: 1px;
+  background-image: linear-gradient(
+    to bottom,
+    rgba(17, 24, 39, 0.22) 0 8px,
+    transparent 8px 24px
+  );
+  background-size: 1px 24px;
+  animation: vx-rail-flow-v 1.6s linear infinite;
+}
+
+.vx-rail-v.vx-rail-dark {
+  background-image: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.28) 0 8px,
+    transparent 8px 24px
+  );
+}
+
+/* The extraction scan: a soft indigo band sweeping down a document once it is
+   in view. This is the single motion that means "Verax is reading this". */
+@keyframes vx-scan {
+  0% {
+    transform: translateY(-8%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(560%);
+    opacity: 0;
+  }
+}
+
+.vx-scan-line {
+  animation: vx-scan 3.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+/* Documents drifting on the hero rail. Long, slow, and offset per-element by
+   an inline animation-delay so nothing marches in lockstep. */
+@keyframes vx-float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.vx-float-y {
+  animation: vx-float-y 7s ease-in-out infinite;
+}
+
+/* Infinite marquee for the trust bar. The track holds two identical copies of
+   the list, so translating by exactly -50% loops seamlessly. */
+@keyframes vx-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.vx-marquee-track {
+  animation: vx-marquee 38s linear infinite;
+}
+
+.vx-marquee:hover .vx-marquee-track {
+  animation-play-state: paused;
+}
+
+/* Edge fade so pills dissolve rather than clip at the container bounds. */
+.vx-marquee-mask {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+
+/* Reduced-motion: Framer Motion respects this via useReducedMotion, but kill
+   any decorative CSS loops too. */
+@media (prefers-reduced-motion: reduce) {
+  .vx-page *,
+  .vx-page *::before,
+  .vx-page *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }
 

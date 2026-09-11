@@ -3,19 +3,46 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Verax — Modern Practice Management for Chartered Accountants</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="mask-icon" href="/favicon.svg" color="#6366F1" />
+    <title>Verax — Financial Document Intelligence for CA Firms</title>
     <meta
       name="description"
-      content="Verax is a multi-tenant SaaS platform for Chartered Accountant firms in India. Manage clients, OCR document reviews, and Tally exports — all in one place."
+      content="Verax automates financial document processing for Indian CA firms — from document collection and AI extraction to GST validation, reconciliation and Tally-ready export."
     />
-    <meta name="theme-color" content="#10151F" />
-    <meta property="og:title" content="Verax — Modern Practice Management" />
-    <meta property="og:description" content="Multi-tenant SaaS platform for CA firms. Client management, OCR reviews, and TallyPrime exports." />
+    <!-- Matches the marketing canvas (#F7F6F2), not the old dark surface, so
+         mobile browser chrome blends with the page instead of framing it. -->
+    <meta name="theme-color" content="#F7F6F2" />
+
+    <meta property="og:site_name" content="Verax" />
+    <meta property="og:title" content="Verax — Financial Document Intelligence for CA Firms" />
+    <meta
+      property="og:description"
+      content="Financial documents in, accounting-ready data out. Collection, AI extraction, GSTIN and tax validation, GSTR-2B reconciliation and Tally-ready XML — built for Indian CA firms."
+    />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="/verax-logo.svg" />
+    <meta property="og:image:alt" content="Verax" />
+
+    <!-- No og:url / canonical: the production domain isn't configured
+         anywhere in this repository, and a wrong canonical is worse than
+         none. Add both here once the domain is known. -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Verax — Financial Document Intelligence for CA Firms" />
+    <meta
+      name="twitter:description"
+      content="Financial documents in, accounting-ready data out. Built for Indian CA firms."
+    />
+    <meta name="twitter:image" content="/verax-logo.svg" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap"
+    />
   </head>
-  <body class="bg-sand-50">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

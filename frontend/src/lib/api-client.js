@@ -65,7 +65,14 @@ export const setUnauthorizedHandler = (handler) => {
 
 export const request = async (
   path,
-  { method = "GET", body, headers = {}, auth = true, skipRefresh = false } = {}
+  {
+    method = "GET",
+    body,
+    headers = {},
+    auth = true,
+    skipRefresh = false,
+    responseType = "json"
+  } = {}
 ) => {
   const requestHeaders = { ...headers };
 
@@ -89,9 +96,8 @@ export const request = async (
     credentials: "include"
   });
 
-  const payload = await parseJsonSafely(response);
-
   if (response.status === 401 && auth && !skipRefresh) {
+    const errorPayload = await parseJsonSafely(response);
     try {
       await refreshAccessToken();
       return request(path, {
@@ -99,23 +105,29 @@ export const request = async (
         body,
         headers,
         auth,
-        skipRefresh: true
+        skipRefresh: true,
+        responseType
       });
     } catch {
       handleUnauthorized();
-      throw toApiError(401, payload || { message: "Session expired" });
+      throw toApiError(401, errorPayload || { message: "Session expired" });
     }
   }
 
   if (!response.ok) {
-    throw toApiError(response.status, payload);
+    const errorPayload = await parseJsonSafely(response);
+    throw toApiError(response.status, errorPayload);
   }
 
   if (response.status === 204) {
     return null;
   }
 
-  return payload;
+  if (responseType === "blob") {
+    return response.blob();
+  }
+
+  return parseJsonSafely(response);
 };
 
 export { API_BASE_URL, refreshAccessToken };

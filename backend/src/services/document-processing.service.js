@@ -105,6 +105,7 @@ const markDocumentProcessingSucceeded = async (
     entityType: "document",
     entityId: documentId,
     metadata: {
+      clientId: updateResult.rows[0].client_id,
       confidenceScore,
       ...(logMessage ? { message: logMessage } : {}),
       ...auditMetadata
@@ -146,6 +147,7 @@ const markDocumentProcessingFailed = async (
     entityType: "document",
     entityId: documentId,
     metadata: {
+      clientId: row.client_id,
       attempt,
       jobId,
       error: normalizedError
@@ -162,6 +164,7 @@ const markDocumentProcessingFailed = async (
       entityType: "document",
       entityId: documentId,
       metadata: {
+        clientId: row.client_id,
         attempt,
         jobId,
         error: normalizedError
@@ -252,11 +255,31 @@ const recordDocumentReadyEmailAudit = async (
   });
 };
 
+const recordDocumentFailedEmailAudit = async (
+  db,
+  { firmId, userId, documentId, email, emailResult }
+) => {
+  await insertAuditLog(db, {
+    firmId,
+    userId,
+    action: "document_failed_emailed",
+    entityType: "document",
+    entityId: documentId,
+    metadata: {
+      email,
+      sent: Boolean(emailResult.sent),
+      provider: emailResult.provider ?? null,
+      error: emailResult.error ?? null
+    }
+  });
+};
+
 module.exports = {
   parseAiResponse,
   markDocumentProcessingStarted,
   markDocumentProcessingSucceeded,
   markDocumentProcessingFailed,
   getDocumentReadyEmailContext,
-  recordDocumentReadyEmailAudit
+  recordDocumentReadyEmailAudit,
+  recordDocumentFailedEmailAudit
 };

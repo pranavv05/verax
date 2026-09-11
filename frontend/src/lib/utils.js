@@ -41,3 +41,27 @@ export const parseApiError = (error, fallback = "Something went wrong") => {
 };
 
 export const cn = (...parts) => parts.filter(Boolean).join(" ");
+
+export const triggerFileDownload = (url, filename) => {
+  if (!url) {
+    return;
+  }
+  // Export URLs are cross-origin (S3 presigned URLs, or the backend's
+  // localhost origin in LOCAL_STORAGE mode) — the `download` attribute on
+  // an <a> tag is silently ignored by browsers for cross-origin links, so
+  // setting a.href directly to the remote URL just navigates the tab to it
+  // instead of downloading. Fetching the bytes and downloading from a same-
+  // origin blob: URL forces a real download regardless of origin.
+  fetch(url)
+    .then((res) => res.blob())
+    .then((blob) => {
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename || "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    });
+};

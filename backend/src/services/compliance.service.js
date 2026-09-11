@@ -170,7 +170,7 @@ const validateTdsRate = (extraction) => {
 
 /* ────────────────────────── Duplicate Invoice ───────────────────────────────── */
 
-const checkDuplicateInvoice = async (db, { firmId, extraction }) => {
+const checkDuplicateInvoice = async (db, { firmId, extraction, documentId }) => {
   const vendorGstin = extraction.vendor_gstin;
   const invoiceNumber = extraction.invoice_number;
 
@@ -187,8 +187,9 @@ const checkDuplicateInvoice = async (db, { firmId, extraction }) => {
        AND e.structured_data->>'invoice_number' = $3
        AND e.reviewed_at IS NOT NULL
        AND e.deleted_at IS NULL
+       AND d.id != $4
      LIMIT 1`,
-    [firmId, vendorGstin.trim(), invoiceNumber.trim()]
+    [firmId, vendorGstin.trim(), invoiceNumber.trim(), documentId]
   );
 
   if (result.rowCount > 0) {
@@ -205,13 +206,13 @@ const checkDuplicateInvoice = async (db, { firmId, extraction }) => {
 
 /* ──────────────────────────────── Run All ────────────────────────────────────── */
 
-const runAll = async (db, { firmId, extraction }) => {
+const runAll = async (db, { firmId, extraction, documentId }) => {
   if (!extraction || typeof extraction !== "object") {
     return {};
   }
 
   const [duplicate] = await Promise.all([
-    checkDuplicateInvoice(db, { firmId, extraction })
+    checkDuplicateInvoice(db, { firmId, extraction, documentId })
   ]);
 
   return {

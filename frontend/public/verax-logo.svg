@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 106 32" width="106" height="32" role="img" aria-label="Verax">
+  <title>Verax</title>
+  <!--
+    Full lockup, sized for 32px of height. Mark occupies 0-32; the wordmark
+    starts at 41, giving an optical gap of ~13px from the chevron tip at x=28.
+
+    This file is the static asset (og:image, email signatures, anywhere outside
+    the app). Inside the app the lockup is rendered by
+    src/components/brand/VeraxLogo.jsx, which uses the real Inter webfont for
+    the wordmark instead of relying on the viewer having Inter installed.
+  -->
+  <defs>
+    <clipPath id="veraxLogoOverlap">
+      <path d="M10 5 19.5 16 10 27 4 27 13.5 16 4 5Z"/>
+    </clipPath>
+    <style>
+      .verax-wordmark {
+        font-family: Inter, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        font-weight: 700;
+        font-size: 22px;
+        letter-spacing: -0.44px;
+        fill: #F2F2F3;
+      }
+      /* The mark carries its own colour; only the wordmark adapts. */
+      @media (prefers-color-scheme: light) {
+        .verax-wordmark { fill: #0A0A0B; }
+      }
+    </style>
+  </defs>
+
+  <!-- Left chevron — indigo -->
+  <path d="M10 5 19.5 16 10 27 4 27 13.5 16 4 5Z" fill="#6366F1"/>
+
+  <!-- Right chevron — white -->
+  <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#F2F2F3"/>
+
+  <!-- Overlap: indigo at 60%, giving a layered third tone -->
+  <g clip-path="url(#veraxLogoOverlap)">
+    <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#6366F1" fill-opacity="0.6"/>
+  </g>
+
+  <text class="verax-wordmark" x="41" y="24">Verax</text>
+</svg>

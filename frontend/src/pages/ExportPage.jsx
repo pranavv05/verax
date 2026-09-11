@@ -4,11 +4,12 @@ import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
 import { ExportSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
+import ClientSearchSelect from "../components/ui/ClientSearchSelect";
 import { clientsApi } from "../api/clients-api";
 import { documentsApi } from "../api/documents-api";
 import { exportsApi } from "../api/exports-api";
 import { useAuth } from "../contexts/AuthContext";
-import { formatDateTime, parseApiError } from "../lib/utils";
+import { formatDateTime, parseApiError, triggerFileDownload } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 const exportSchema = z
@@ -190,7 +191,7 @@ const ExportPage = () => {
       setPreviewExportPayload(null);
       setToast("Tally XML generated successfully.");
       if (result.download_url) {
-        window.open(result.download_url, "_blank", "noopener,noreferrer");
+        triggerFileDownload(result.download_url, "tally-export.xml");
       }
       const refreshedHistory = await exportsApi.history({ page: 1, limit: 20 });
       setHistory(refreshedHistory.data || []);
@@ -206,7 +207,7 @@ const ExportPage = () => {
     setError("");
     try {
       const result = await exportsApi.download(exportId);
-      window.open(result.download_url, "_blank", "noopener,noreferrer");
+      triggerFileDownload(result.download_url, "tally-export.xml");
     } catch (downloadError) {
       setError(parseApiError(downloadError, "Unable to create download link"));
     }
@@ -365,18 +366,11 @@ const ExportPage = () => {
           <form className="mt-4 space-y-3" onSubmit={onGenerate}>
             <div>
               <label className="label">Client</label>
-              <select
-                className="field"
+              <ClientSearchSelect
+                clients={clients}
                 value={form.client_id}
-                onChange={(event) => setForm((prev) => ({ ...prev, client_id: event.target.value }))}
-              >
-                <option value="">Select client</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(clientId) => setForm((prev) => ({ ...prev, client_id: clientId }))}
+              />
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -447,7 +441,7 @@ const ExportPage = () => {
               <button
                 type="button"
                 className="btn-primary w-full"
-                onClick={() => window.open(latestExport.download_url, "_blank", "noopener,noreferrer")}
+                onClick={() => triggerFileDownload(latestExport.download_url, "tally-export.xml")}
               >
                 Download XML
               </button>

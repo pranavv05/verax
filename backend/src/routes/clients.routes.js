@@ -11,6 +11,7 @@ const {
   deleteClient,
   requestClientDocuments
 } = require("../services/clients.service");
+const { enableClientPortal } = require("../services/client-auth.service");
 
 const router = express.Router();
 
@@ -41,6 +42,17 @@ const updateClientBodySchema = Joi.object({
 
 const clientIdParamSchema = Joi.object({
   id: uuidSchema.required()
+});
+
+const enablePortalBodySchema = Joi.object({
+  portalEmail: Joi.string().email().max(255).required()
+});
+
+const requestDocsBodySchema = Joi.object({
+  documentTypes: Joi.array()
+    .items(Joi.string().valid("invoice", "bank_statement", "bill", "other"))
+    .min(1)
+    .optional()
 });
 
 router.use(requireAuth);
@@ -130,11 +142,33 @@ router.post(
   "/:id/request-docs",
   requireAdmin,
   validate(clientIdParamSchema, "params"),
+  validate(requestDocsBodySchema),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>
       requestClientDocuments(db, {
         firmId: req.user.firmId,
         clientId: req.params.id,
+        actorUserId: req.user.userId,
+        documentTypes: req.body.documentTypes
+      })
+    );
+    res.status(200).json(result);
+  })
+);
+
+// Turns on client-portal access and returns the generated temporary password.
+// This is the only time the password is ever readable — it is stored hashed.
+router.post(
+  "/:id/enable-portal",
+  requireAdmin,
+  validate(clientIdParamSchema, "params"),
+  validate(enablePortalBodySchema),
+  asyncHandler(async (req, res) => {
+    const result = await req.withTenantTransaction((db) =>
+      enableClientPortal(db, {
+        firmId: req.user.firmId,
+        clientId: req.params.id,
+        portalEmail: req.body.portalEmail,
         actorUserId: req.user.userId
       })
     );

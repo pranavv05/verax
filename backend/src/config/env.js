@@ -2,8 +2,11 @@ const path = require("path");
 const dotenv = require("dotenv");
 const Joi = require("joi");
 
+// Load backend/.env FIRST so it takes precedence: dotenv never overwrites a var
+// that is already set, so whichever file is loaded first wins. The repo-root .env
+// is loaded second and only fills in vars the backend-local file did not define.
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-dotenv.config();
 
 const envSchema = Joi.object({
   NODE_ENV: Joi.string().valid("development", "test", "production").default("development"),
@@ -30,6 +33,18 @@ const envSchema = Joi.object({
   AI_SERVICE_TIMEOUT_MS: Joi.number().integer().min(1000).default(120000),
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
+  // Client portal is a separate auth world — its own signing key, never JWT_SECRET.
+  CLIENT_JWT_SECRET: Joi.string()
+    .min(32)
+    .required()
+    .invalid(Joi.ref("JWT_SECRET"), Joi.ref("JWT_REFRESH_SECRET"))
+    .messages({
+      "any.invalid": "CLIENT_JWT_SECRET must differ from JWT_SECRET and JWT_REFRESH_SECRET"
+    }),
+  CLIENT_JWT_EXPIRY: Joi.string()
+    .pattern(/^\d+[smhd]$/)
+    .default("15m"),
+  CLIENT_REFRESH_TOKEN_EXPIRY_DAYS: Joi.number().integer().min(1).default(30),
   FRONTEND_URL: Joi.string().uri().required(),
   EMAIL_PROVIDER: Joi.string().valid("smtp", "resend").default("smtp"),
   RESEND_API_KEY: Joi.string().allow("").optional(),
@@ -39,6 +54,7 @@ const envSchema = Joi.object({
   SMTP_PASS: Joi.string().allow("").optional(),
   EMAIL_FROM_NAME: Joi.string().default("Verax TallyOCR"),
   EMAIL_FROM_ADDRESS: Joi.string().email().default("noreply@verax.in"),
+  DEMO_NOTIFICATION_EMAIL: Joi.string().email().default("verax.hello@gmail.com"),
   GSP_API_URL: Joi.string().uri().default("https://gsp.adaequare.com"),
   GSP_USERNAME: Joi.string().allow("").optional(),
   GSP_PASSWORD: Joi.string().allow("").optional(),
@@ -79,6 +95,10 @@ module.exports = Object.freeze({
   AI_SERVICE_TIMEOUT_MS: value.AI_SERVICE_TIMEOUT_MS,
   JWT_SECRET: value.JWT_SECRET,
   JWT_REFRESH_SECRET: value.JWT_REFRESH_SECRET,
+  CLIENT_JWT_SECRET: value.CLIENT_JWT_SECRET,
+  CLIENT_JWT_EXPIRY: value.CLIENT_JWT_EXPIRY,
+  CLIENT_REFRESH_TOKEN_EXPIRY_DAYS: value.CLIENT_REFRESH_TOKEN_EXPIRY_DAYS,
+  CLIENT_REFRESH_TOKEN_TTL_SECONDS: value.CLIENT_REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60,
   FRONTEND_URL: value.FRONTEND_URL,
   EMAIL_PROVIDER: value.EMAIL_PROVIDER,
   RESEND_API_KEY: value.RESEND_API_KEY,
@@ -88,6 +108,7 @@ module.exports = Object.freeze({
   SMTP_PASS: value.SMTP_PASS,
   EMAIL_FROM_NAME: value.EMAIL_FROM_NAME,
   EMAIL_FROM_ADDRESS: value.EMAIL_FROM_ADDRESS,
+  DEMO_NOTIFICATION_EMAIL: value.DEMO_NOTIFICATION_EMAIL,
   GSP_API_URL: value.GSP_API_URL,
   GSP_USERNAME: value.GSP_USERNAME,
   GSP_PASSWORD: value.GSP_PASSWORD,

@@ -21,6 +21,8 @@ from app.services.persistence_service import PersistenceService
 from app.services.preprocess_service import PreprocessService
 from app.services.register_cleaner_service import process_bytes as clean_register_bytes
 from app.services.bank_statement_xml_service import process_bytes as bank_statement_to_xml
+from app.services.bank_statement_xml_service import generate_xml_with_ledgers
+from app.models import BankStatementExportRequest
 from app.services.s3_service import S3Service
 
 logging.basicConfig(level=logging.INFO)
@@ -99,9 +101,24 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
     try:
         file_bytes = s3_service.download_file_bytes(request.s3_key)
         preprocessed = preprocess_service.preprocess(file_bytes)
+        logger.info(
+            "document_id=%s source_kind=%s pages=%d",
+            request.document_id,
+            preprocessed.source_kind,
+            len(preprocessed.processed_images),
+        )
         raw_text, ocr_engine = ocr_service.extract_text(preprocessed.processed_images)
         structured_data = llm_service.extract_structured_data(raw_text, doc_type=request.doc_type)
         confidence_score = llm_service.calculate_confidence(structured_data, doc_type=request.doc_type)
+        logger.info(
+            "document_id=%s source_kind=%s ocr_engine=%s raw_text_chars=%d confidence=%.3f document_type_detected=%s",
+            request.document_id,
+            preprocessed.source_kind,
+            ocr_engine,
+            len(raw_text),
+            confidence_score,
+            structured_data.get("document_type_detected"),
+        )
 
         if settings.ai_write_back_enabled:
             if not request.firm_id:
@@ -174,4 +191,24 @@ async def bank_statement_xml(
         raise
     except Exception as error:
         logger.exception("Bank statement XML conversion failed")
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.post("/tools/bank-statement-xml/export")
+async def bank_statement_xml_export(
+    payload: BankStatementExportRequest,
+    _: None = Depends(require_service_token),
+) -> dict:
+    """Build the final Tally XML once the CA has confirmed a ledger per transaction."""
+    try:
+        xml, voucher_count = generate_xml_with_ledgers(
+            [txn.model_dump() for txn in payload.transactions],
+            company_name=payload.company_name,
+            bank_ledger=payload.bank_ledger,
+        )
+        return {"xml": xml, "voucherCount": voucher_count}
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("Bank statement XML export failed")
         raise HTTPException(status_code=500, detail=str(error)) from error

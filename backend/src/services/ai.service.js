@@ -58,6 +58,64 @@ const processDocumentWithAiService = async ({ documentId, s3Key, docType, firmId
   }
 };
 
+const generateBankStatementXmlExport = async ({ transactions, companyName, bankLedger }) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.AI_SERVICE_TIMEOUT_MS);
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (env.AI_SERVICE_API_KEY) {
+    headers["X-AI-Service-Token"] = env.AI_SERVICE_API_KEY;
+  }
+
+  try {
+    const response = await fetch(`${env.AI_SERVICE_URL}/tools/bank-statement-xml/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        transactions,
+        company_name: companyName || "My Company",
+        bank_ledger: bankLedger || "Bank Account"
+      }),
+      signal: controller.signal
+    });
+
+    const bodyText = await response.text();
+    let parsedBody = null;
+    if (bodyText) {
+      try {
+        parsedBody = JSON.parse(bodyText);
+      } catch (error) {
+        parsedBody = null;
+      }
+    }
+
+    if (!response.ok) {
+      const message =
+        (parsedBody && parsedBody.message) ||
+        (parsedBody && parsedBody.detail) ||
+        bodyText ||
+        `AI service failed with status ${response.status}`;
+      throw new Error(String(message).slice(0, 1000));
+    }
+
+    if (!parsedBody || typeof parsedBody !== "object") {
+      throw new Error("AI service returned an invalid JSON response");
+    }
+
+    return parsedBody;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("AI service request timed out");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 module.exports = {
-  processDocumentWithAiService
+  processDocumentWithAiService,
+  generateBankStatementXmlExport
 };

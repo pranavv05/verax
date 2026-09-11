@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
 
 from groq import Groq
@@ -7,11 +9,18 @@ from groq import Groq
 from app.config import settings
 from app.utils.json_parser import parse_json_object
 
+logger = logging.getLogger("ai-service")
+
 # ── Invoice / Bill ────────────────────────────────────────────────────────────
 
 EXTRACTION_PROMPT = """You are an expert at extracting structured data
 from Indian tax invoices and bills. You understand GST, TDS, HSN codes,
 and Indian business document formats.
+
+The document text may span multiple pages separated by
+"--- PAGE N ---" markers. Extract information from ALL pages
+combined — line items, totals, and other fields may appear on
+any page, not just the first.
 
 STEP 1 — DOCUMENT TYPE CHECK:
 First determine if this is an invoice or bill.
@@ -78,6 +87,17 @@ GST types: CGST+SGST for intra-state, IGST for inter-state — never both
 Multi-rate GST: Some invoices have multiple GST rates —
   sum all CGST amounts into cgst_amount, same for SGST/IGST
 HSN codes: 4-8 digit numbers — include leading zeros if printed
+
+GRAND TOTAL RULES (for invoices with a multi-row / multi-item table):
+- For the total_amount field, use ONLY the Grand Total row's final
+  "Total Amount (incl. tax)" column value. Do not sum individual rows
+  yourself.
+- For cgst_amount, use ONLY the Grand Total row's CGST Amount column.
+- For sgst_amount, use ONLY the Grand Total row's SGST/UTGST Amount column.
+- Do not perform arithmetic. Read the printed Grand Total values directly
+  from the document.
+- For invoices with multiple line items, the grand total row is usually
+  the last row in bold.
 TDS: May appear as deduction from total — tds_amount reduces the payable amount
 
 OCR ERROR CORRECTION:
@@ -115,6 +135,9 @@ Return confidence as a number. Minimum is 0.0.
 STEP 5 — OUTPUT FORMAT:
 Return ONLY valid JSON. No markdown, no backticks, no explanation.
 The first character of your response must be { and the last must be }
+Every numeric field must be a single literal number (e.g. 171336.24) —
+compute any sums or totals yourself and never output an arithmetic
+expression like 171336.00 + 15390.24 as a field value.
 """
 
 INVOICE_PROMPT = EXTRACTION_PROMPT
@@ -234,8 +257,10 @@ def _to_number(value: Any) -> float:
 
 
 def validate_and_adjust_confidence(extracted: dict) -> dict:
+    raw_confidence = extracted.get("confidence")
+    logger.info("LLM raw confidence: %r", raw_confidence)
     try:
-        confidence = extracted.get("confidence", 0.5)
+        confidence = raw_confidence if raw_confidence is not None else 0.5
         if not isinstance(confidence, (int, float)):
             confidence = 0.5
         confidence = max(0.0, min(1.0, float(confidence)))
@@ -248,7 +273,11 @@ def validate_and_adjust_confidence(extracted: dict) -> dict:
             confidence = min(confidence, 0.35)
 
         gstin = extracted.get("supplier_gstin") or extracted.get("vendor_gstin") or ""
-        if gstin and (len(gstin) != 15 or not gstin[:2].isdigit()):
+        # gstin can come back as a non-string (or an already-invalid type) from
+        # a noisy LLM pass — len()/[:2] on a non-string used to raise, which
+        # was swallowed by the except below and returned the raw, unadjusted
+        # LLM confidence untouched (see the logged warning there).
+        if isinstance(gstin, str) and gstin and (len(gstin) != 15 or not gstin[:2].isdigit()):
             confidence = min(confidence, 0.7)
             extracted["supplier_gstin"] = None
             extracted["vendor_gstin"] = None
@@ -257,10 +286,16 @@ def validate_and_adjust_confidence(extracted: dict) -> dict:
         cgst = _to_number(extracted.get("cgst_amount") or extracted.get("cgst") or 0)
         sgst = _to_number(extracted.get("sgst_amount") or extracted.get("sgst") or 0)
         igst = _to_number(extracted.get("igst_amount") or extracted.get("igst") or 0)
+        cess = _to_number(extracted.get("cess_amount") or 0)
         total = _to_number(extracted.get("total_amount") or 0)
 
         if total > 0 and taxable > 0:
-            computed = taxable + cgst + sgst + igst
+            # cess is part of the printed grand total on invoices that have
+            # it (e.g. luxury/sin goods); the previous version omitted it,
+            # so any invoice with cess always failed this check and had its
+            # confidence capped at the hardcoded 0.75 below regardless of
+            # actual extraction quality.
+            computed = taxable + cgst + sgst + igst + cess
             variance = abs(computed - total) / total
             if variance > 0.02:
                 confidence = min(confidence, 0.75)
@@ -270,9 +305,14 @@ def validate_and_adjust_confidence(extracted: dict) -> dict:
                 )
 
         extracted["confidence"] = round(confidence, 3)
+        logger.info("Final confidence after adjustment: %s", extracted["confidence"])
         return extracted
-    except Exception:  # noqa: BLE001
-        fallback = extracted.get("confidence")
+    except Exception as error:  # noqa: BLE001
+        logger.error(
+            "validate_and_adjust_confidence failed, returning raw LLM confidence unadjusted: %s",
+            error,
+        )
+        fallback = raw_confidence
         extracted["confidence"] = round(fallback if isinstance(fallback, (int, float)) else 0.5, 3)
         return extracted
 
@@ -400,22 +440,35 @@ class LLMService:
             # invoice, bill, other all use the invoice prompt
             prompt = INVOICE_PROMPT
 
-        response = self._client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a strict JSON extraction engine for Indian financial documents.",
-                },
-                {
-                    "role": "user",
-                    "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
-                },
-            ],
-            temperature=0.1,
-            max_tokens=2000,
-            response_format={"type": "json_object"},
-        )
+        try:
+            response = self._client.chat.completions.create(
+                # llama-3.1-70b-versatile was decommissioned by Groq and now
+                # returns 400 model_decommissioned. llama-3.3-70b-versatile is
+                # its direct replacement. Overridable so the next deprecation
+                # does not require a code change.
+                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a strict JSON extraction engine for Indian financial documents.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+                timeout=settings.llm_timeout_seconds,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            logger.error(f"Groq extraction failed: {e}")
+            return {
+                "document_type_detected": "unknown",
+                "confidence": 0.0,
+                "_llm_error": str(e),
+            }
 
         raw_output = response.choices[0].message.content or ""
         parsed = parse_json_object(raw_output)

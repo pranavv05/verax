@@ -20,12 +20,12 @@ const waitlistRateLimiter = rateLimit({
 });
 
 const waitlistSchema = Joi.object({
-  email: Joi.string().email().required().custom((value, helpers) => {
-    if (!value.endsWith("@gmail.com")) {
-      return helpers.message("Only Gmail addresses are accepted.");
-    }
-    return value;
-  })
+  email: Joi.string().email().required(),
+  // Optional so the plain "join waitlist" entry points (email-only) keep working —
+  // the "Request a Demo" form collects and sends these, everything else can omit them.
+  firmName: Joi.string().trim().max(255).allow("").optional(),
+  contactName: Joi.string().trim().max(255).allow("").optional(),
+  phone: Joi.string().trim().max(20).allow("").optional()
 });
 
 router.post(
@@ -33,8 +33,8 @@ router.post(
   waitlistRateLimiter,
   validate(waitlistSchema),
   asyncHandler(async (req, res) => {
-    const { email } = req.body;
-    const entry = await addToWaitlist(email);
+    const { email, firmName, contactName, phone } = req.body;
+    const entry = await addToWaitlist({ email, firmName, contactName, phone });
 
     res.status(201).json({
       success: true,

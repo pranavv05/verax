@@ -1,10 +1,29 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { useAuth } from "../contexts/AuthContext";
 import { authApi } from "../api/auth-api";
 import { tokenStore, userStore } from "../lib/token-store";
 import { parseApiError } from "../lib/utils";
+import { normalizeGstin, validateGstin } from "../lib/gstin";
+import AuthShell from "../components/auth/AuthShell";
+import AuthField from "../components/auth/AuthField";
+import { SignupPanel } from "../components/auth/AuthPanel";
+import { collectFieldErrors } from "../components/auth/validation";
+import { Caret, Eyebrow, Tick } from "../components/marketing/ledger";
+import { EASE } from "../components/public/motion";
+
+/**
+ * Firm signup.
+ *
+ * The fields are exactly the four the backend accepts — `auth.routes.js`'s
+ * `signupSchema` is `{ name, firmName, email, password (min 8) }` — plus the
+ * pre-existing optional GSTIN, which is validated locally and stripped server
+ * side by the Joi `stripUnknown: true` in `validate.middleware.js`. Nothing was
+ * added, nothing was made required, and the submit path (authApi.signup →
+ * tokenStore → userStore → /dashboard) is unchanged.
+ */
 
 const signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -16,10 +35,21 @@ const signupSchema = z.object({
 const SignupPage = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const reduced = useReducedMotion();
 
-  const [form, setForm] = useState({ name: "", firmName: "", email: "", password: "" });
+  const [form, setForm] = useState({
+    name: "",
+    firmName: "",
+    email: "",
+    password: "",
+    gstin: ""
+  });
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const gstinCheck = useMemo(() => validateGstin(form.gstin), [form.gstin]);
 
   if (isAuthenticated) {
     return <Navigate to="/dashboard" replace />;
@@ -27,17 +57,43 @@ const SignupPage = () => {
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    if (loading) return; // belt-and-braces against a double submit
     setError("");
+    setFieldErrors({});
 
-    const validation = signupSchema.safeParse(form);
+    const validation = signupSchema.safeParse({
+      name: form.name,
+      firmName: form.firmName,
+      email: form.email,
+      password: form.password
+    });
     if (!validation.success) {
-      setError(validation.error.issues[0]?.message || "Invalid details");
+      setFieldErrors(collectFieldErrors(validation.error));
+      return;
+    }
+
+    // GSTIN is optional, but if one was typed it has to be a real one.
+    if (gstinCheck.state === "invalid" || gstinCheck.state === "incomplete") {
+      setFieldErrors({
+        gstin: `${gstinCheck.message}. Clear the field to skip it.`
+      });
+      return;
+    }
+
+    if (!acceptedTerms) {
+      setError("Please accept the Terms of Service and Privacy Policy to continue.");
       return;
     }
 
     setLoading(true);
     try {
-      const result = await authApi.signup(validation.data);
+      // `gstin` is sent for forward-compatibility. The backend's Joi signup
+      // schema runs with `stripUnknown: true`, so today it is discarded server
+      // side and the firm's GSTIN still has to be set from Settings.
+      const result = await authApi.signup({
+        ...validation.data,
+        ...(gstinCheck.state === "valid" ? { gstin: normalizeGstin(form.gstin) } : {})
+      });
       tokenStore.setAccessToken(result.accessToken);
       if (result.user) userStore.setUser(result.user);
       navigate("/dashboard", { replace: true });
@@ -48,157 +104,195 @@ const SignupPage = () => {
     }
   };
 
+  const setField = (key) => (event) => {
+    const { value } = event.target;
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setFieldErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
+  };
+
+  const gstinStatus =
+    gstinCheck.state === "empty" || fieldErrors.gstin
+      ? null
+      : {
+          tone:
+            gstinCheck.state === "valid"
+              ? "valid"
+              : gstinCheck.state === "incomplete"
+                ? "neutral"
+                : "invalid",
+          message: gstinCheck.state === "valid" ? "Valid GSTIN" : gstinCheck.message
+        };
+
+  const enter = (delay) => ({
+    initial: reduced ? false : { opacity: 0, y: 14 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.6, ease: EASE, delay: reduced ? 0 : delay }
+  });
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col justify-center px-4 py-12 sm:px-6">
-      <div className="grid gap-8 lg:grid-cols-[1.1fr_1fr]">
-        {/* Brand Panel */}
-        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-ink-900 via-ink-800 to-ink-700 text-white shadow-elevated">
-          <div className="relative h-full p-8 sm:p-10">
-            {/* Animated Orbs */}
-            <div className="absolute -left-10 top-12 h-40 w-40 rounded-full bg-mint-500/25 blur-2xl animate-float" />
-            <div className="absolute right-0 top-1/2 h-36 w-36 rounded-full bg-indigo-400/20 blur-2xl animate-float-delayed" />
-            <div className="absolute bottom-10 left-1/3 h-28 w-28 rounded-full bg-ember-500/15 blur-2xl animate-float" />
+    <AuthShell panel={<SignupPanel />}>
+      <motion.div {...enter(0)}>
+        <Eyebrow>Founding customer plan</Eyebrow>
+      </motion.div>
 
-            <Link to="/" className="relative inline-block">
-              <div className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-100 backdrop-blur-sm border border-white/10 transition hover:bg-white/20">
-                Verax
-              </div>
+      <motion.h1
+        {...enter(0.06)}
+        className="mt-7 text-[2.25rem] font-bold leading-[1.05] tracking-[-0.04em] text-carbon-900 sm:text-[2.5rem]"
+      >
+        Set up your firm.
+      </motion.h1>
+
+      <motion.p {...enter(0.12)} className="mt-4 text-[1rem] leading-[1.65] text-carbon-500">
+        Start turning financial documents into structured, review-ready data.
+      </motion.p>
+
+      <motion.form {...enter(0.18)} className="mt-10 space-y-5" onSubmit={onSubmit} noValidate>
+        <AuthField
+          id="signup-firm"
+          label="Firm name"
+          autoComplete="organization"
+          value={form.firmName}
+          onChange={setField("firmName")}
+          error={fieldErrors.firmName}
+        />
+
+        <AuthField
+          id="signup-name"
+          label="Your full name"
+          autoComplete="name"
+          value={form.name}
+          onChange={setField("name")}
+          error={fieldErrors.name}
+        />
+
+        <AuthField
+          id="signup-email"
+          label="Work email"
+          type="email"
+          autoComplete="email"
+          inputMode="email"
+          value={form.email}
+          onChange={setField("email")}
+          error={fieldErrors.email}
+        />
+
+        <AuthField
+          id="signup-password"
+          label="Password"
+          type="password"
+          autoComplete="new-password"
+          value={form.password}
+          onChange={setField("password")}
+          error={fieldErrors.password}
+          hint="Minimum 8 characters."
+        />
+
+        <AuthField
+          id="signup-gstin"
+          label="Firm GSTIN — optional"
+          value={form.gstin}
+          maxLength={15}
+          mono
+          onChange={(event) => {
+            setForm((prev) => ({ ...prev, gstin: normalizeGstin(event.target.value) }));
+            setFieldErrors((prev) => (prev.gstin ? { ...prev, gstin: undefined } : prev));
+          }}
+          error={fieldErrors.gstin}
+          status={gstinStatus}
+          hint="Checked locally against the GSTIN checksum — nothing is sent until you submit."
+        />
+
+        <label className="flex cursor-pointer items-start gap-3 pt-1">
+          <input
+            type="checkbox"
+            checked={acceptedTerms}
+            onChange={(event) => {
+              setAcceptedTerms(event.target.checked);
+              if (event.target.checked) setError("");
+            }}
+            className="mt-[3px] h-[17px] w-[17px] flex-none cursor-pointer rounded-[4px] border-hairline-strong
+                       bg-surface text-brand-500 focus:ring-2 focus:ring-brand-500 focus:ring-offset-2
+                       focus:ring-offset-canvas"
+          />
+          <span className="text-[0.8125rem] leading-[1.6] text-carbon-500">
+            I agree to the{" "}
+            <Link
+              to="/security"
+              className="rounded font-medium text-carbon-900 underline decoration-carbon-300 underline-offset-4 hover:decoration-carbon-900"
+            >
+              Terms of Service
+            </Link>{" "}
+            and{" "}
+            <Link
+              to="/security"
+              className="rounded font-medium text-carbon-900 underline decoration-carbon-300 underline-offset-4 hover:decoration-carbon-900"
+            >
+              Privacy Policy
             </Link>
+            .
+          </span>
+        </label>
 
-            <h1 className="relative mt-6 max-w-lg text-3xl font-extrabold leading-tight sm:text-4xl">
-              Start managing your practice{" "}
-              <span className="text-mint-400">smarter</span> today
-            </h1>
-
-            <p className="relative mt-4 max-w-md text-base text-sand-100/70">
-              Join hundreds of CA firms using Verax to streamline their document workflows and Tally exports.
-            </p>
-
-            <ul className="relative mt-8 space-y-4 text-sm text-sand-100/90">
-              <li className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-mint-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Free 14-day trial, no credit card required
-              </li>
-              <li className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-mint-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                AI-powered OCR document extraction
-              </li>
-              <li className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-mint-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Secure multi-tenant data isolation
-              </li>
-              <li className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-mint-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                One-click TallyPrime XML export
-              </li>
-            </ul>
-          </div>
-        </section>
-
-        {/* Signup Form */}
-        <section className="panel p-6 sm:p-8">
-          <h2 className="text-2xl font-extrabold text-ink-900">Create your account</h2>
-          <p className="mt-1 text-sm text-[#607086]">Get started with Verax in minutes.</p>
-
-          <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="label" htmlFor="signup-name">
-                  Full Name
-                </label>
-                <input
-                  id="signup-name"
-                  className="field"
-                  type="text"
-                  autoComplete="name"
-                  value={form.name}
-                  onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-                  placeholder="Rajesh Patel"
-                />
-              </div>
-              <div>
-                <label className="label" htmlFor="signup-firm">
-                  Firm Name
-                </label>
-                <input
-                  id="signup-firm"
-                  className="field"
-                  type="text"
-                  value={form.firmName}
-                  onChange={(event) => setForm((prev) => ({ ...prev, firmName: event.target.value }))}
-                  placeholder="Patel & Associates"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="label" htmlFor="signup-email">
-                Work Email
-              </label>
-              <input
-                id="signup-email"
-                className="field"
-                type="email"
-                autoComplete="email"
-                value={form.email}
-                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-                placeholder="rajesh@firm.in"
-              />
-            </div>
-
-            <div>
-              <label className="label" htmlFor="signup-password">
-                Password
-              </label>
-              <input
-                id="signup-password"
-                className="field"
-                type="password"
-                autoComplete="new-password"
-                value={form.password}
-                onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-                placeholder="Minimum 8 characters"
-              />
-            </div>
-
-            {error ? (
-              <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
+        <AnimatePresence initial={false}>
+          {error ? (
+            <motion.div
+              initial={reduced ? false : { opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25, ease: EASE }}
+              className="overflow-hidden"
+            >
+              <p
+                role="alert"
+                className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3
+                           text-[0.875rem] font-medium leading-[1.5] text-red-700"
+              >
+                <span className="mt-[3px] text-red-600">
+                  <Caret size={13} />
+                </span>
                 {error}
-              </div>
-            ) : null}
+              </p>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
 
-            <button type="submit" disabled={loading} className="btn-accent w-full py-3 text-sm">
-              {loading ? "Creating account..." : "Create Account"}
-            </button>
-          </form>
+        <button type="submit" disabled={loading} className="vx-cta w-full disabled:opacity-60">
+          {loading ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white"
+              />
+              Creating account…
+            </>
+          ) : (
+            "Create firm account"
+          )}
+        </button>
 
-          <div className="mt-6 flex items-center gap-3">
-            <hr className="flex-1 border-[#e7dcc8]" />
-            <span className="text-xs font-medium text-[#7f8a99]">or</span>
-            <hr className="flex-1 border-[#e7dcc8]" />
-          </div>
+        <p className="flex items-center justify-center gap-2 text-[0.75rem] text-carbon-400">
+          <span className="text-verify-600">
+            <Tick size={11} />
+          </span>
+          No card required while we&apos;re in the founding-customer phase.
+        </p>
+      </motion.form>
 
-          <p className="mt-5 text-center text-sm text-[#72829a]">
-            Already have an account?{" "}
-            <Link className="font-semibold text-ink-900 underline transition hover:text-mint-600" to="/login">
-              Sign in
-            </Link>
-          </p>
-
-          <p className="mt-4 text-center text-xs text-[#9aa5b4]">
-            By creating an account, you agree to our Terms of Service and Privacy Policy.
-          </p>
-        </section>
-      </div>
-    </div>
+      <motion.div {...enter(0.26)} className="mt-10 border-t border-hairline pt-7">
+        <p className="text-[0.875rem] text-carbon-500">
+          Already have an account?{" "}
+          <Link
+            to="/login"
+            className="rounded font-medium text-carbon-900 underline decoration-carbon-300
+                       underline-offset-4 transition-colors hover:decoration-carbon-900
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500
+                       focus-visible:ring-offset-4 focus-visible:ring-offset-canvas"
+          >
+            Log in
+          </Link>
+        </p>
+      </motion.div>
+    </AuthShell>
   );
 };
 

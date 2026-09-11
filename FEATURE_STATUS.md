@@ -1,5 +1,5 @@
 # Verax TallyOCR — Feature Status
-Last updated: 2026-08-08
+Last updated: 2026-08-09
 Audited by: Claude Code (automated scan)
 
 ## Legend
@@ -15,18 +15,18 @@ Mount table confirmed in `backend/src/app.js:45-61`. No route files exist for "i
 ## AUTH
 
 ### Firm signup
-Status: 🔧 Needs Fix
-Backend: `POST /api/auth/signup` — `auth.routes.js:64-91`, `requireAuth` n/a (public), `authRateLimiter` applied, `signupSchema` (`auth.routes.js:35-40`) → `registerFirm` (`auth.service.js:394-451`)
+Status: ✅ Production Ready
+Backend: `POST /api/auth/signup` — `auth.routes.js:64-91`, `requireAuth` n/a (public), `authRateLimiter` applied, `signupSchema` (`auth.routes.js:35-40`) → `registerFirm` (`auth.service.js:394-460`)
 Frontend: `pages/SignupPage.jsx`, `api/auth-api.js:4-55` — Zod validation, loading/error states, redirects on success
 Migration: `20260311163000_initial_schema.js` (firms, users tables + RLS)
-Notes: Works end-to-end but **no `audit_logs` entry is written on signup** (`registerFirm` uses manual `pool.connect()`/BEGIN/COMMIT rather than the shared `withTenantTransaction` helper — functionally equivalent RLS context but structurally inconsistent with every other service). Password hashed bcrypt cost 12 (hardcoded, not env-configurable).
+Notes: **Fixed 2026-08-08** — `registerFirm` now writes a `firm_registered` audit log entry (`auth.service.js`, inside the same manual transaction, before `COMMIT`) with `metadata: {firmName, userEmail}`. Password hashed bcrypt cost 12 (hardcoded, not env-configurable) — unchanged, not in scope.
 
 ### Login
-Status: ⚠️ Partial
-Backend: `POST /api/auth/login` — `auth.routes.js:93-112`, `authRateLimiter`, `loginSchema` (`:42-45`) → `loginUser` (`auth.service.js:453-516`), tenant-scoped (`:456`)
+Status: ✅ Production Ready
+Backend: `POST /api/auth/login` — `auth.routes.js:93-112`, `authRateLimiter`, `loginSchema` (`:42-45`) → `loginUser` (`auth.service.js`), tenant-scoped
 Frontend: `pages/LoginPage.jsx` — Zod validation, loading/error states, redirect to `location.state.from`
 Migration: n/a (uses `users` table)
-Notes: **No audit log on login** — no record of successful/failed login attempts in `audit_logs`, a gap for a compliance-oriented product.
+Notes: **Fixed 2026-08-08** — `loginUser` now writes `login_success` on success and `login_failed` (`reason: "invalid_password"`) when a known user supplies the wrong password, both via the same transaction `client` (not a separate connection). The failure case returns an `{authFailed: true}` sentinel from the transaction handler instead of throwing inside it, since throwing there would have rolled back the audit insert along with everything else — the caller checks the sentinel and throws `ApiError.unauthorized` after the transaction commits. One deliberate gap remains: a login attempt against an **unknown email** cannot be audit-logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm — there is no firm to attribute the row to. This is a schema-level constraint, not an oversight.
 
 ### Logout
 Status: ✅ Production Ready
@@ -35,11 +35,11 @@ Frontend: No dedicated page; implemented as header button in `components/layout/
 Notes: Confirmed working.
 
 ### JWT refresh
-Status: ✅ Production Ready
-Backend: `POST /api/auth/refresh` — `auth.routes.js:114-131` → `refreshAccessToken` (`auth.service.js:518-653`). Full chain rotation: verifies token hash, detects reuse and revokes the entire token family on mismatch (`:566-571`), marks old token `revoked_at`/`replaced_by_token_id` (`:606-614`), inserts new row (`:616-645`)
+Status: 🔧 Needs Fix
+Backend: `POST /api/auth/refresh` — `auth.routes.js:114-131` → `refreshAccessToken` (`auth.service.js:518-653`). Chain rotation: verifies token hash, marks old token `revoked_at`/`replaced_by_token_id`, inserts new row. Happy path is correct.
 Frontend: `lib/api-client.js:66-119` (`request()`) implements transparent 401→refresh→retry on every authenticated call except the two `ToolsPage.jsx` raw-`fetch` calls (see Standalone Tools)
 Migration: `20260311171500_auth_infra.js` (refresh_tokens table + RLS)
-Notes: Correctly implemented with reuse detection, a real security feature many SaaS apps skip.
+Notes: **Bug found 2026-08-09 while building the client portal (not introduced by it).** The advertised reuse detection does not actually persist. In `refreshAccessToken`, the token-hash-mismatch and already-revoked branches call `revokeRefreshTokenFamily(client, ...)` and then `throw` — but both statements run inside the same `withTenantTransaction` handler, and throwing there triggers the `ROLLBACK` in `tenant-context.js:27-29`, which discards the family revocation along with everything else. The caller still gets a correct 401, so the failure is invisible from the outside: a stolen refresh token that triggers reuse detection leaves every sibling token in the family still live. This is the identical trap already documented on the `loginUser` audit-log entry, whose fix was to return a sentinel from the handler and throw after the transaction commits. The same pattern was applied to the new `clientRefreshToken` (`client-auth.service.js`), where it is verified working by test; the firm-side function was deliberately left untouched because changing firm auth behaviour was outside the client-portal task's scope. **Recommended fix: mirror the sentinel pattern in `refreshAccessToken`.**
 
 ### Password reset (forgot password + reset flow)
 Status: ⚠️ Partial
@@ -83,36 +83,36 @@ Notes: **`PlanBadge` only renders inside the admin-gated panel (`SettingsPage.js
 
 ## CLIENT MANAGEMENT
 
-### Client list with search and status filter
-Status: ⚠️ Partial
-Backend: `GET /api/clients` — `clients.routes.js:48-63`, `listClientsQuerySchema` (`:19-24`) → `listClients` (`clients.service.js:63-121`)
-Frontend: `pages/ClientsPage.jsx:308-323` (search + status filter), `TableRowsSkeleton` loading, empty state (`:206-218`), pagination
-Notes: Search re-fetches on every keystroke via `useEffect` dependency array (`:68-70`) with no debounce — works, but generates one API call per character typed (the GSTIN lookup elsewhere in the same page *is* debounced 800ms, an inconsistency).
+### Client list — search, status filter, table/card UI, overflow actions
+Status: ✅ Production Ready
+Backend: `GET /api/clients` — `clients.routes.js`, `listClientsQuerySchema` → `listClients` (`clients.service.js`), unchanged search/status/pagination contract
+Frontend: `pages/ClientsPage.jsx` redesigned — debounced (300ms) search box, status select, a real "Client / Contact / Status / Documents / Last activity / Actions" table (`hidden md:block`) with a responsive card fallback (`md:hidden`) below tablet width, sticky-feel header row, per-row `OverflowMenu` (new `components/ui/OverflowMenu.jsx`, keyboard accessible: arrow keys/Enter/Escape, click-outside close) replacing the 5 stacked action buttons. Add/Edit moved into a right-side `Drawer` (new `components/ui/Drawer.jsx`, Escape/backdrop/✕ to close) opened via a header "+ Add client" button or the row menu's "Edit client" — same Zod schema, same debounced GSTIN lookup, same create/update calls. Distinct empty states for "no clients at all" (with an Add-client CTA) vs "no results for current filters" (with a Clear-filters action), a dedicated load-error state with Try again, and a `TableRowsSkeleton` loading state.
+Notes: 🔧 Fixed — search previously fired one request per keystroke with no debounce (now matches the 800ms-debounced GSTIN-lookup pattern already used elsewhere on this page); load failures and delete success/failure previously only rendered inside the always-visible edit panel, so they were silently invisible to non-admins and often unreachable in practice — now surfaced as a page-level banner (`pageError`/`pageToast`) independent of the drawer's own `formError`/`formToast`. Delete confirmation modal now stays open with an inline error and a "Deleting..." disabled state while the request is in flight, closing only on success (previously closed immediately on click, before the request even resolved).
 
 ### Create client
 Status: ✅ Production Ready
-Backend: `POST /api/clients` — `clients.routes.js:65-79`, `requireAdmin`, `createClientBodySchema` (`:26-32`) → `createClient` (`clients.service.js:123-180`, audit `client_created`)
-Frontend: `ClientsPage.jsx:372` admin-gated form panel, Zod schema (`:14-32`)
+Backend: `POST /api/clients` — `clients.routes.js`, `requireAdmin`, `createClientBodySchema` → `createClient` (`clients.service.js`, audit `client_created`)
+Frontend: `ClientsPage.jsx` — form now lives in the Add/Edit `Drawer` (opened via "+ Add client"), same Zod schema, same API call
 
 ### View client details
 Status: ✅ Production Ready
-Backend: `GET /api/clients/:id` — `clients.routes.js:81-93` → `getClientById` (`clients.service.js:182-232`)
-Frontend: `pages/ClientDetailPage.jsx`, loading skeleton, not-found empty state (`:656-658`)
+Backend: `GET /api/clients/:id` — `clients.routes.js` → `getClientById` (`clients.service.js`)
+Frontend: `pages/ClientDetailPage.jsx` — untouched (separate route, reached via the client name link or the list's "View details" menu item), loading skeleton, not-found empty state
 
 ### Update client details
 Status: ✅ Production Ready
-Backend: `PUT /api/clients/:id` — `clients.routes.js:95-111`, `requireAdmin`, `updateClientBodySchema` (`:34-40`) → `updateClient` (`clients.service.js:234-293`, audit `client_updated`)
-Frontend: `ClientDetailPage.jsx:688-761`, admin-gated edit form
+Backend: `PUT /api/clients/:id` — `clients.routes.js`, `requireAdmin`, `updateClientBodySchema` → `updateClient` (`clients.service.js`, audit `client_updated`)
+Frontend: `ClientDetailPage.jsx` (unchanged, its own edit form) and `ClientsPage.jsx` (list's own Add/Edit Drawer, "Edit client" row-menu item pre-fills and opens it) — two independent entry points to the same endpoint, both preserved
 
 ### Soft delete client
 Status: ✅ Production Ready
-Backend: `DELETE /api/clients/:id` — `clients.routes.js:113-127`, `requireAdmin` → `deleteClient` (`clients.service.js:295-320`, soft delete, audit `client_deleted`)
-Frontend: `ClientDetailPage.jsx:325-346,852-859` confirm modal, admin-gated
+Backend: `DELETE /api/clients/:id` — `clients.routes.js`, `requireAdmin` → `deleteClient` (`clients.service.js`, soft delete, audit `client_deleted`)
+Frontend: `ClientDetailPage.jsx` (own confirm modal, unchanged) and `ClientsPage.jsx` (confirm modal now triggered from the row's overflow menu instead of an always-visible row button — see loading/error fix above)
 
 ### Client document summary
 Status: ✅ Production Ready
-Backend: `getClientById`/`listClients` returns `totalDocuments`/`processingDocuments`/`reviewedDocuments`/`exportedDocuments` (`clients.service.js:222-229`)
-Frontend: `ClientDetailPage.jsx:662-667` StatCards — field names confirmed matching backend
+Backend: `getClientById` returns the full breakdown (`totalDocuments`/`processingDocuments`/`reviewedDocuments`/`exportedDocuments`/`lastUploadedAt`, `clients.service.js`). `listClients` now also returns a lighter per-row `documentSummary` (`totalDocuments`/`pendingDocuments`/`lastActivityAt`) via a single indexed `LEFT JOIN` aggregate over `documents` grouped by `client_id` — one extra query for the whole page, not one per row, so it stays cheap at 100+ clients. `pendingDocuments` uses the same `extracted`+`review_required` definition as the dashboard's "Awaiting review" tile.
+Frontend: `ClientDetailPage.jsx` StatCards (full breakdown, unchanged) and `ClientsPage.jsx` table/card "Documents"/"Last activity" columns (new, uses the lighter summary — shows "12 total · 2 pending" or "N documents"/"No documents", and a formatted last-activity date or "No activity yet")
 
 ### GSTIN live lookup on client form
 Status: ✅ Production Ready
@@ -125,10 +125,10 @@ Notes: Lookup logic duplicated between the two pages rather than shared — work
 ## DOCUMENT UPLOADS
 
 ### Authenticated upload for firm users
-Status: ⚠️ Partial
+Status: ✅ Production Ready
 Backend: `POST /api/documents/upload` + `/confirm` — `documents.routes.js:144-214`, `uploadRateLimiter` (50/hr), Joi schemas (`:36-46`) → `initiateUploadForFirm`/`confirmUploadForFirm` (`documents.service.js:182-198,283-393`, audit `document_upload_initiated`/`document_upload_confirmed`)
-Frontend: `pages/ClientDocumentsPage.jsx` — single-file only
-Notes: **No multi-file queue, no client-side extension/size validation, and no upload-progress bar** on this page — `uploadFileToSignedUrl` is called without the `onProgress` callback (`:84`), only a static "Uploading..." label shows. This is asymmetric with the public magic-link upload page, which has all three. Functionally uploads succeed, but the UX checklist items (multi-file queue, progress tracking, client-side file validation) are missing here specifically.
+Frontend: `pages/ClientDocumentsPage.jsx` — rewritten 2026-08-08 to match `PublicUploadPage.jsx`'s pattern
+Notes: **Fixed 2026-08-08.** `ClientDocumentsPage.jsx` now supports multi-file selection (`<input type="file" multiple>`), a per-item queue state machine (`pending → preparing → uploading → confirming → success/error`, plus an `invalid` state for files rejected before upload), a per-file progress bar driven by `uploadApi.uploadFileToSignedUrl`'s existing `onProgress` callback, and client-side extension/size validation (same whitelist and 50MB cap as the public page) that shows an inline per-file error and never attempts to upload a rejected file. No backend or `upload-api.js` changes were needed — `uploadFileToSignedUrl` already accepted a progress callback.
 
 ### Public upload via magic link
 Status: ✅ Production Ready
@@ -147,17 +147,17 @@ Backend: `documents.service.js confirmUploadForFirm`/`confirmUploadWithMagicToke
 Frontend: both upload pages handle confirm step with success/error UI
 
 ### Multi-file upload queue
-Status: ⚠️ Partial
-Frontend: fully built on `PublicUploadPage.jsx` (`:60-162`); **absent** on `ClientDocumentsPage.jsx` (authenticated upload is single-file only)
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx` (`:60-162`) and, as of 2026-08-08, `ClientDocumentsPage.jsx` (same `pending/preparing/uploading/confirming/success/error/invalid` state machine, multi-select file input)
 
 ### Upload progress tracking
-Status: ⚠️ Partial
-Frontend: fully built on `PublicUploadPage.jsx` via `upload-api.js:9-13` XHR progress events; **absent** on `ClientDocumentsPage.jsx`
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx` via `upload-api.js:9-13` XHR progress events; as of 2026-08-08, `ClientDocumentsPage.jsx` passes the same `onProgress` callback into `uploadApi.uploadFileToSignedUrl` and renders a per-file progress bar
 
 ### File validation (extension, MIME, size)
-Status: ⚠️ Partial
-Frontend: `PublicUploadPage.jsx:8-9,69-77` — extension whitelist + 50MB cap, client-side; `ClientDocumentsPage.jsx:111` only sets an `accept` attribute, no JS-level validation before calling the API
-Backend: not confirmed whether the upload-init endpoints re-validate extension/MIME server-side (not explicitly traced by the research pass) — recommend verifying `documents.service.js createUploadSession` for server-side validation as defense-in-depth.
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx:8-9,69-77` and, as of 2026-08-08, `ClientDocumentsPage.jsx` — both apply the same extension whitelist and 50MB cap client-side, marking rejected files `invalid` with an inline per-file message and never attempting to upload them
+Backend: not confirmed whether the upload-init endpoints re-validate extension/MIME server-side (out of scope for this fix pass) — recommend verifying `documents.service.js createUploadSession` for server-side validation as defense-in-depth.
 
 ### Supported types: PDF, JPG, JPEG, PNG, XLSX
 Status: ✅ Production Ready
@@ -179,11 +179,13 @@ Backend: `document-processing.worker.js` — marks `processing` (`:54-59`), call
 Status: ✅ Production Ready
 AI Service: `ai-service/app/services/ocr_service.py:163-175` — PaddleOCR primary (`_ocr_with_paddle`, `:144-151`), genuine try/except around the Paddle call (`:31-45`, returns `""` on failure rather than crashing), falls through to Tesseract (`_ocr_with_tesseract`, `:153-161`) if Paddle text `< 50` chars
 Notes: **Task description says "Textract primary" — this is stale.** Recent commits (`4992f08`, `571cd38`) replaced AWS Textract with PaddleOCR and OpenAI with Groq; current code and CLAUDE.md both accurately reflect PaddleOCR + Groq, no leftover Textract/OpenAI code found anywhere in `ai-service/app/`.
+**Operational caveat found 2026-08-08:** PaddleOCR downloads its detection/recognition/classification models from `paddleocr.bj.bcebos.com` on **first OCR call**, not at build time (~16MB across 3 archives). A first-run environment therefore needs egress to that host, and the download adds ~25s to the first document only. When it fails, `run_paddle_ocr`'s try/except returns `""` and the pipeline silently falls through to Tesseract — correct resilience, but the cause only appears in the AI-service log. Consider baking the models into the image for offline/air-gapped deploys.
 
 ### LLM structured extraction
-Status: ⚠️ Partial
-AI Service: `llm_service.py:403-418` — Groq `llama-3.1-70b-versatile` (hardcoded model string, not env-configurable), key from `settings.groq_api_key` (env-sourced, good)
-Notes: `settings.llm_timeout_seconds` (`config.py:25`, default 60s) exists but is **never actually applied** to the Groq client call — no request timeout is enforced. No try/except around the Groq call itself inside `llm_service.py`; failures propagate to `main.py`'s top-level handler which returns `HTTPException(500, detail=str(error))` — structured, but `str(error)` may leak internal SDK error text to the caller. No retry logic.
+Status: ✅ Production Ready
+AI Service: `llm_service.py:407-412` — Groq `llama-3.3-70b-versatile`, now read from `os.getenv("GROQ_MODEL", ...)`, key from `settings.groq_api_key` (env-sourced)
+Notes: **Fixed 2026-08-08 (demo-prep pass), verified live end to end.** The pinned model `llama-3.1-70b-versatile` had been **decommissioned by Groq** and returned `400 model_decommissioned` on every call, so extraction silently produced `confidence: 0.0` and an empty result for every document — the graceful-degradation path added earlier masked this as `review_required` rather than an error, which is why it was not obvious. Replaced with `llama-3.3-70b-versatile` and made it overridable via a `GROQ_MODEL` env var so the next Groq deprecation needs no code change. Also pinned `httpx==0.27.2` in `requirements.txt`: `groq==0.11.0` passes `proxies=` to `httpx.Client`, removed in httpx 0.28, so an unpinned resolve crashed the service at startup with `TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`. Confirmed working: a live magic-link upload now returns `status=extracted`, `confidence≈0.85`, with correct `supplier_name` and `invoice_number`.
+Notes: **Fixed 2026-08-08.** `settings.llm_timeout_seconds` is now passed as `timeout=` on the `chat.completions.create(...)` call, so a hung Groq request no longer blocks a worker slot indefinitely. The call is now wrapped in its own `try/except`: on failure it logs `Groq extraction failed: {e}` and returns `{"document_type_detected": "unknown", "confidence": 0.0, "_llm_error": str(e)}` directly (same short-circuit shape as the existing `is_ocr_garbage` path) instead of propagating to `main.py`'s generic 500 handler — a Groq outage now degrades a single document to `review_required` rather than surfacing as a raw 500.
 
 ### Confidence score generation
 Status: ✅ Production Ready
@@ -207,9 +209,9 @@ Status: ✅ Production Ready
 Backend: `document-processing.service.js:115-176` (`markDocumentProcessingFailed`) increments `documents.processing_attempts`, writes `audit_logs` row `document_processing_failed` on every failure
 
 ### Permanent failure notification to admin
-Status: ❌ Not Built
-Backend: on `processing_attempts >= 3`, `document-processing.service.js:156-170` writes a second audit row `document_processing_alert` and the worker does `process.stderr.write(...)` (`document-processing.worker.js:164-168`) — **no email is sent and no `notifications` row is created**, unlike the other three notification triggers (document_ready, client_upload, export_ready) which all call `createNotification` + send an email. Document status resets to `'uploaded'` with nothing auto-retrying or paging anyone.
-Notes: This is the most concrete gap in the processing pipeline — a firm's admin has no way to learn a document permanently failed short of manually checking the audit log.
+Status: ✅ Production Ready
+Backend: on `processing_attempts >= 3`, `document-processing.service.js:156-170` writes the `document_processing_alert` audit row as before, and — as of 2026-08-08 — `document-processing.worker.js` (after the existing `process.stderr.write`) fetches the firm's admins via the existing `getDocumentReadyEmailContext` helper and, per admin, calls `createNotification({type: "document_failed", title: "Document processing failed", message: "A document failed to process after 3 attempts and needs manual review.", entityType: "document", entityId})` and sends an email built from the new `backend/src/templates/documentFailed.template.js` (subject "Document processing failed — manual review needed", includes document name, client name, failure reason, and a link to `/audit-logs`). A new `recordDocumentFailedEmailAudit` (`document-processing.service.js`) logs the email send outcome as `document_failed_emailed`. Both the notification call and the email call are individually wrapped in try/catch (mirroring the existing `document_ready` pattern) so a failure in either cannot affect the worker or the job's success/failure outcome.
+Notes: Closes the gap flagged in the original audit — an admin now receives both an in-app notification and an email when a document permanently fails, matching the other three notification triggers.
 
 ---
 
@@ -289,10 +291,10 @@ Status: ✅ Production Ready
 Backend: `compliance.service.js:173-204` `checkDuplicateInvoice` — matches `vendor_gstin` + `invoice_number` among prior reviewed extractions within the same firm
 
 ### GSTR-2B matching per document
-Status: 🔧 Needs Fix
-Backend: `POST /api/compliance/gstr2b/match` — `compliance.routes.js:427-495` → `gspService.matchGSTR2B` (`gsp.service.js:280-295`), audit `gstr2b_matched`
+Status: ✅ Production Ready
+Backend: `POST /api/compliance/gstr2b/match` — `compliance.routes.js:427-496` → `gspService.matchGSTR2B` (`gsp.service.js:280-295`), audit `gstr2b_matched`
 Migration: `20260507000000_gstr2b_match_columns.js` — adds `gstr2b_match_status`/`gstr2b_match_details` columns directly onto `documents` (no dedicated reconciliation table, so no history across repeated match attempts)
-Notes: **This route mutates document rows but only requires `requireAuth`, not `requireAdmin`** — inconsistent with the sibling `GET /gstr2b/reconciliation/export` route which does require admin. Worth confirming intended RBAC before shipping.
+Notes: **Fixed 2026-08-08** — `requireAdmin` added immediately after `requireAuth` on this route, matching the sibling `GET /gstr2b/reconciliation/export` route. The frontend "Verify GST" button on the review page (`ReviewPage.jsx`, near the GSTIN field) was previously visible to staff too; it is now wrapped in the same `canAdmin` check used for Approve/Reprocess, so staff no longer see a button that would 403.
 
 ### GST match status badge on review page
 Status: ✅ Production Ready
@@ -349,6 +351,7 @@ Frontend: `ExportPage.jsx:232-271`, `ClientDetailPage.jsx:428-469` — warnings 
 ### Single document export
 Status: ✅ Production Ready
 Frontend: `ExportPage.jsx:360-433` — client + optional date range + checkbox document selection
+Client picker: `ExportPage.jsx:368-372` uses `components/ui/ClientSearchSelect.jsx` (new, client-side filtered searchable combobox — the already-loaded `clients` list from `clientsApi.list`, no new API); replaces the old plain `<select>`, keyboard accessible (arrow keys/Enter/Escape), selected client shown as a chip with a clear (×) button. `form.client_id` state and the `loadClientDocuments` effect keyed on it are unchanged.
 
 ### Bulk export with date range
 Status: ✅ Production Ready
@@ -486,9 +489,9 @@ Status: ✅ Production Ready
 Frontend: `AppShell.jsx:107` `window.setInterval(fetchNotifications, 30000)`, cleanup via `clearInterval` (`:109-112`) plus an `active` flag guard against post-unmount state updates (`:99-106`)
 
 ### Triggers: document ready, client upload, export ready, document permanently failed
-Status: ⚠️ Partial
-Backend: `document_ready` — `document-processing.worker.js:132-140`; `client_upload` — `public-upload.routes.js:228-236`; `export_ready` — `exports.service.js:497-505` (single) and `:603-611` (bulk). **`document permanently failed` — NOT WIRED.** No `createNotification` call exists for the permanent-failure path (see Document Processing section above).
-Notes: 3 of 4 triggers are fully implemented; the 4th (permanent failure) is a genuine gap, not a partial implementation.
+Status: ✅ Production Ready
+Backend: `document_ready` — `document-processing.worker.js:132-140`; `client_upload` — `public-upload.routes.js:228-236`; `export_ready` — `exports.service.js:497-505` (single) and `:603-611` (bulk); `document_failed` — **added 2026-08-08**, `document-processing.worker.js` inside the `failure.alertTriggered` branch (after the existing stderr write), one `createNotification` call per firm admin.
+Notes: All 4 triggers are now wired. `document_failed` reuses the existing `getDocumentReadyEmailContext` helper to fetch admins and is individually try/catch-wrapped per admin, consistent with the other three trigger sites.
 
 ---
 
@@ -563,6 +566,16 @@ Frontend: `TeamPage.jsx:18-32,289-291` role badges, `296-297` non-admin "view on
 
 ---
 
+## DASHBOARD
+
+### Overview stats (Total clients / Awaiting review / Approved this session / Exports this month)
+Status: ✅ Production Ready
+Backend: `GET /api/dashboard/overview` — `dashboard.routes.js`, `requireAuth` → `getDashboardOverview` (`dashboard.service.js`), a single firm-scoped CTE query returning all 4 counts server-side
+Frontend: `dashboard-api.js` calls the new endpoint plus `exportsApi.history({limit:6})` for the separate "recent activity" list; `DashboardPage.jsx` unchanged (same `{totalClients, pendingDocs, reviewedDocs, exportedThisMonth, activity}` shape)
+Notes: 🔧 Fixed — previously computed entirely client-side from `Promise.allSettled` over `clientsApi`/`documentsApi`/`exportsApi` calls (`dashboard-api.js`, old version). Two real bugs: (1) "Approved this session" had no date filter at all — it was an all-time count of `status='reviewed'` docs, and even that undercounted because a doc's status flips to `exported` after export, dropping it out of the count; now backed by `extractions.reviewed_at` scoped to the current day in `Asia/Kolkata`, which survives the later status change. (2) "Exports this month" filtered a capped 20-row `exportsApi.history()` page client-side using **UTC** month boundaries — both a truncation bug (>20 lifetime exports silently undercounts the month) and a timezone bug (IST exports near month boundaries miscounted); now a firm-scoped `COUNT(*)` in the DB bucketed by IST calendar month, excluding `status='failed'`. "Total clients" and "Awaiting review" were already correct and are unchanged in definition, just moved server-side. Verified against raw SQL counts for a real firm (5/3/2/10) — see PR notes.
+
+---
+
 ## AUDIT LOGS
 
 ### Audit log page (admin only)
@@ -574,9 +587,17 @@ Status: ✅ Production Ready
 Backend: `GET /api/audit-logs` — `audit.routes.js:19-35`, `requireAdmin`, `listAuditLogsQuerySchema` (`:10-15`) → `listAuditLogs` (`audit.service.js:1-67`)
 Frontend: loading skeleton, empty state, pagination (`:144-247`)
 
-### Filter by action
+### Search audit logs (free text)
 Status: ✅ Production Ready
-Frontend: `AuditLogPage.jsx:114-119` free-text filter
+Backend: `GET /api/audit-logs?search=` — `audit.routes.js` (`search` added to `listAuditLogsQuerySchema`) → `listAuditLogs` (`audit.service.js`) runs an `ILIKE` match across `action`, `entity_type`, `entity_id`, `metadata::text`, `user.name`, `user.email`
+Frontend: `AuditLogPage.jsx:118-135` — debounced (300ms) free-text input with a clear button, resets to page 1 on change
+Notes: 🔧 Fixed — this box previously did an exact-equality filter on the raw `action` column only (e.g. required typing the literal `document_approved`), so any partial text or search across user/entity/details silently returned zero rows. It now does a partial, case-insensitive match across the fields actually shown in the table.
+
+### Client attribution for client-portal / magic-link actions
+Status: ✅ Production Ready
+Backend: `listAuditLogs` (`audit.service.js`) `LEFT JOIN clients` on `(metadata->>'clientId')::uuid` (regex-guarded so a malformed/missing value can't break the query), falling back to `entity_id` when `entity_type='client'`; returns `clientName`. `document-processing.service.js`'s `document_processed`/`document_processing_failed`/`document_processing_alert` audit inserts now include `clientId` in metadata (previously had `client_id` in scope via `RETURNING` but never wrote it) — `document_upload_initiated`/`document_upload_confirmed` (`documents.service.js`) already had it.
+Frontend: `AuditLogPage.jsx` — `getActorDisplay()` shows the client's name as the Actor for client-initiated actions (`document_upload_initiated/confirmed`, `client_portal_login/login_failed/logout/password_changed`) when there's no firm-user actor, and "System" + "Client: {name}" for system/worker-triggered actions tied to a client (`document_processed`, `document_processing_failed`, `document_processing_alert`)
+Notes: 🔧 Fixed — client-portal/magic-link-triggered rows always have `user_id = NULL` (a client isn't a `users` row), so Actor showed "-" even though `metadata.clientId` was already being written for the upload events. Verified against real DB rows for two different clients (no cross-client mixups) and via a mocked call confirming the AI-processing insert sites now include `clientId`.
 
 ### Filter by entity type
 Status: ✅ Production Ready
@@ -611,8 +632,9 @@ Status: ✅ Production Ready
 Frontend: same effect, cleanup via `window.clearInterval` (`:78`), correctly derives "terminal" from the same status-mapping as the backend
 
 ### Link from upload success page
-Status: ⚠️ Partial
-Notes: Not independently confirmed in this research pass whether `PublicUploadPage.jsx`'s success state links to `/upload/:token/status` — recommend a quick manual check of the post-upload success UI in `PublicUploadPage.jsx`.
+Status: ✅ Production Ready
+Frontend: `PublicUploadPage.jsx:284-291` — confirmed while implementing Fix 2: once `successCount > 0`, a "View upload status →" link to `/upload/${activeUploadToken || token}/status` renders below the upload queue.
+Notes: Corrected from the original audit's "not independently confirmed" note — verified present on direct code read.
 
 ---
 
@@ -623,9 +645,9 @@ Status: ✅ Production Ready
 Backend: `clients.service.js:26` `createUploadToken()` — `crypto.randomBytes(32).toString("hex")` (64-char hex, confirmed)
 
 ### Request documents from client (admin only)
-Status: ⚠️ Partial
-Backend: `POST /api/clients/:id/request-docs` — `clients.routes.js:129-143`, `requireAdmin` → `requestClientDocuments` (`clients.service.js:322-440`, audit `client_request_docs` + `client_magic_link_emailed`)
-Notes: **No body schema is applied** — only `clientIdParamSchema` — so `documentTypes` is never actually read from `req.body`, meaning `requestClientDocuments` always falls back to `DEFAULT_REQUESTED_DOCUMENT_TYPES` (`clients.service.js:28-33`) regardless of what a caller sends. If the frontend or product intent is to let admins choose which document types to request, this is silently ignored today.
+Status: ✅ Production Ready
+Backend: `POST /api/clients/:id/request-docs` — `clients.routes.js:129-146`, `requireAdmin` + new `requestDocsBodySchema` → `requestClientDocuments` (`clients.service.js:322-440`, audit `client_request_docs` + `client_magic_link_emailed`)
+Notes: **Fixed 2026-08-08** — added `requestDocsBodySchema` (`documentTypes: Joi.array().items(Joi.string().valid("invoice","bank_statement","bill","other")).min(1).optional()`) and applied `validate(requestDocsBodySchema)` on the route; the route now passes `req.body.documentTypes` through to `requestClientDocuments`. The service function already accepted a `documentTypes` parameter and already fell back to `DEFAULT_REQUESTED_DOCUMENT_TYPES` via `toRequestedDocumentLabels` when it was absent (`clients.service.js:28-45`) — the only missing piece was the route never reading or forwarding the field, which is now fixed.
 
 ### Send magic link email
 Status: ✅ Production Ready
@@ -642,11 +664,297 @@ Backend: `env.MAGIC_LINK_EXPIRY_HOURS` (default 24), enforced both at the query 
 
 ---
 
+## CLIENT PORTAL
+
+*Added 2026-08-09. A second, completely separate auth world for the SME clients of
+a CA firm. Two rules govern every entry below: a firm JWT must never work on
+`/api/client-portal/*`, and a client JWT must never work on `/api/*` firm routes.
+Both are enforced by construction (different signing key, different JWT
+issuer/audience, different middleware) and both are covered by tests.*
+
+### Client portal schema + RLS
+Status: ✅ Production Ready
+Migration: `20260516000000_client_portal_auth.js` — adds `portal_email` / `portal_password_hash` / `portal_enabled` / `portal_last_login_at` to `clients` (unique partial index `uq_clients_portal_email_active` on `lower(portal_email)` among live rows, matching the `uq_users_email_active` pattern); creates `client_refresh_tokens` (id, client_id CASCADE, token_hash, expires_at, revoked_at, created_at) with RLS enabled + forced; adds `app.current_client_id()` alongside the existing `app.current_firm_id()`.
+Notes: Two RLS decisions worth recording. (1) `client_refresh_tokens_isolation_policy` has **two** branches — `client_id = app.current_client_id()` for the client's own session, plus an `EXISTS` subquery through `clients.firm_id = app.current_firm_id()` so the owning CA firm can revoke a client's sessions when it resets that client's portal password. Without the firm branch, `enableClientPortal` (which runs in a firm-scoped transaction) would have silently revoked zero rows and left old sessions alive across a password reset. (2) `clients_isolation_policy` gains a third branch, `app.auth_context = 'client_portal_login'`, so an unauthenticated portal login can find its own row by `portal_email` before any firm context exists — the exact shape of the existing `login` hatch on `users` and `magic_link` hatch on `clients`. `tenant-context.js` now also sets `app.current_client_id` and `app.portal_email`.
+
+### Separate client JWT signing key
+Status: ✅ Production Ready
+Backend: `config/env.js` requires `CLIENT_JWT_SECRET` (min 32) and **refuses to boot if it equals `JWT_SECRET` or `JWT_REFRESH_SECRET`** (`Joi.invalid(Joi.ref(...))`). `CLIENT_JWT_EXPIRY` (default `15m`) and `CLIENT_REFRESH_TOKEN_EXPIRY_DAYS` (default 30) are env-driven. `utils/client-token-utils.js` signs with issuer `verax-client-portal` / audience `verax-clients` — distinct from the firm portal's `ca-saas-platform` / `ca-saas-users`, so the two token families are structurally incompatible even before the `role`/`type` claim checks.
+Env: added to root `.env.example`, root `.env`, `backend/.env`, and both `docker-compose.yml` and `docker-compose.prod.yml` (backend + worker services), since those enumerate env vars explicitly and the backend now fails validation without it.
+
+### Enable client portal (admin only)
+Status: ✅ Production Ready
+Backend: `POST /api/clients/:id/enable-portal` — `clients.routes.js`, `requireAdmin` + `enablePortalBodySchema` (Joi email) → `enableClientPortal` (`client-auth.service.js`). Generates a 12-char temp password via `crypto.randomInt` (guaranteed one letter + one digit, ambiguous glyphs `0/O/1/l/I` excluded because it gets read off a screen and typed by hand), hashes it bcrypt cost 12, revokes any existing client sessions, audit-logs `client_portal_enabled` and `client_portal_invite_emailed`, and emails the client from `templates/clientPortalInvite.template.js`. A duplicate `portal_email` surfaces as a 409, not a raw 23505.
+Frontend: `ClientDetailPage.jsx` — admin-gated "Client Portal" panel showing Enabled/Not enabled, the portal email, and last login; modal captures the email and then shows the temp password **once** with a copy button and the "will not be shown again" warning. `closeEnablePortalModal` clears the password from React state on close.
+Migration: `20260516000000_client_portal_auth.js`
+Notes: `getClientById` now returns a `portal: {enabled, email, lastLoginAt}` object. `portal_password_hash` is never selected by any read path — verified by test that the client-detail response body contains no hash field.
+
+### Client portal login
+Status: ✅ Production Ready
+Backend: `POST /api/client-portal/auth/login` — `client-auth.routes.js`, own `clientAuthRateLimiter` (10 per 15 min per IP, separate from the firm portal's budget), Joi-validated → `clientLogin`. Looks the client up by `portal_email` with `portal_enabled = true AND deleted_at IS NULL`, bcrypt-compares, mints a 15-min access token and a 30-day rotating refresh token, stamps `portal_last_login_at`, audit-logs `client_portal_login`.
+Frontend: `pages/ClientPortalLoginPage.jsx` — Zod validation, loading/error states, "Forgot password" reveals "Contact your CA firm to reset your password".
+Notes: Unknown email, wrong password, and inactive client all return the byte-identical generic `Invalid email or password` — verified by test that the unknown-email and wrong-password responses match exactly. Failures against a *known* client are audit-logged as `client_portal_login_failed` with a reason; an unknown email cannot be, for the same `audit_logs.firm_id NOT NULL` reason documented on the firm-side Login entry.
+
+### Client portal refresh with rotation + reuse detection
+Status: ✅ Production Ready
+Backend: `POST /api/client-portal/auth/refresh` → `clientRefreshToken`. The refresh JWT carries its `client_refresh_tokens` row id as its `jti`; the handler re-hashes the presented token, compares, rotates (new row + old row revoked), and on hash mismatch / already-revoked / portal-disabled revokes the **entire** token family.
+Frontend: `lib/client-portal-client.js` — its own module-scope token and its own 401→refresh→retry, deliberately not sharing `lib/api-client.js`'s `tokenStore`.
+Notes: The family revocation is applied via a **sentinel return, not a throw** — throwing inside the `withTenantTransaction` handler would `ROLLBACK` the revocation, which is exactly the live bug now recorded against the firm-side `JWT refresh` entry. Verified by test: replaying a rotated token 401s, and the token issued by that same rotation is then also dead.
+
+### Client portal logout + change password
+Status: ✅ Production Ready
+Backend: `POST /api/client-portal/auth/logout` (revokes the presented token, audit `client_portal_logout`, clears cookie) and `POST /api/client-portal/auth/change-password` (`requireClientAuth`, Joi min 8 on `newPassword`) → `clientChangePassword`, which verifies the current password, re-hashes bcrypt 12, revokes **all** sessions including the caller's, and audit-logs `client_portal_password_changed`.
+Frontend: `pages/ClientPortalSettingsPage.jsx` — change-password form with confirm field, then clears the session and redirects to the login page.
+Notes: Verified end to end — wrong current password 401s, a <8-char new password 400s, and after a successful change the old password stops working while the new one succeeds.
+
+### Client refresh cookie isolation
+Status: ✅ Production Ready
+Backend: `getClientRefreshCookieOptions` (`client-auth.service.js`) — `httpOnly`, `sameSite: strict`, `secure` in production, cookie name `verax_client_refresh_token`, **`path: /api/client-portal/auth`** so it is never sent to (and can never clobber) the firm cookie scoped at `/api/auth`.
+Notes: All four properties asserted by test against the real `Set-Cookie` header.
+
+### Client auth middleware / cross-world rejection
+Status: ✅ Production Ready
+Backend: `middlewares/client-auth.middleware.js` `requireClientAuth` — verifies with `CLIENT_JWT_SECRET` + client issuer/audience, requires `type === 'client_access'` and `role === 'client'`, sets `req.clientId` / `req.firmId`, and exposes `req.withClientTransaction` which opens a transaction with **both** `app.current_firm_id` and `app.current_client_id` set. Shares no code with `requireAuth`.
+Notes: Verified by test — a firm admin JWT on `GET /api/client-portal/me` returns 401, and a client JWT on both `GET /api/clients` and `GET /api/auth/me` returns 401.
+
+### Client portal dashboard + stats
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/stats` — `client-portal.routes.js`, returns `totalDocuments`, `processingCount`, `reviewCount`, `completedCount`, `thisMonthDocuments`, all scoped to `firm_id` **and** `client_id`.
+Frontend: `pages/ClientPortalDashboardPage.jsx` — greeting, 4 stat tiles, last-5 recent documents, quick links; loading/error/empty states.
+
+### Client portal document list, detail, download
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/documents` (Joi-validated `status`/`fromDate`/`toDate`/`page`/`limit`), `GET /documents/:id` (adds a plain-English `statusMessage`), `GET /documents/:id/download` (presigned URL for the original upload only).
+Frontend: `pages/ClientPortalDocumentsPage.jsx` — All/Processing/Under Review/Complete filter, card layout that reflows on mobile, per-row download button, `components/ui/ClientStatusBadge.jsx` (Processing→blue, Under Review→amber, Complete→green).
+Notes: **`extracted_data` is never returned** — the routes select only `file_name`, `doc_type`, `status`, timestamps, `confidence_score` and the upload `source`; `structured_data`, `raw_text` and `s3_key` appear nowhere in any response, asserted by test. Internal statuses are collapsed to the three client-facing labels, and the Joi enum accepts only the client-facing filter names, so `?status=reviewed` is a 400 rather than a leak of firm workflow vocabulary.
+
+### Client portal reconciliation + Excel export
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/reconciliation?period=MMYYYY` returns `{totalDocuments, matched, notFound, mismatched, totalITC}` (`mismatched` folds in `partial`, which reads as "doesn't agree" to a client); `GET /api/client-portal/reconciliation/export` streams the same xlsx the firm portal produces. Audit actions `client_portal_reconciliation_viewed` / `_exported`.
+Frontend: `pages/ClientPortalReconciliationPage.jsx` — month+year picker defaulting to last month, four summary cards, ITC total, Excel download, read-only.
+Notes: The matching logic was **extracted, not duplicated** — `getReconciliationData` / `writeReconciliationWorkbook` and their helpers moved from `compliance.routes.js` into the new `services/reconciliation.service.js`, which both route files now import; `compliance.routes.js` behaviour is unchanged. A client with no GSTIN on file gets a friendly `available: false` payload instead of the firm-facing 400.
+
+### Client portal exports history
+Status: ✅ Production Ready
+Backend: `GET /api/client-portal/exports` — `tally_exports` rows for this client only, exposing just `exportedAt`, `documentCount` and a human `period` label. `xml_s3_key` is never returned, so a client can see *that* a filing happened but can never fetch the Tally XML.
+Frontend: shown as "Filed to your accounts" on `ClientPortalSettingsPage.jsx`.
+
+### Client portal frontend shell + routing
+Status: ✅ Production Ready
+Frontend: `contexts/ClientPortalAuthContext.jsx` (bootstrap via refresh cookie, `login`/`logout`/`clearSession`, `isAuthenticated`/`isLoading`), `components/layout/ClientPortalShell.jsx` (header with logo + client name + sign out, horizontal nav, no sidebar, mobile-first `max-w-4xl` layout), `components/layout/ProtectedClientRoute.jsx` (loading spinner during bootstrap, redirect to `/client-portal/login` otherwise), `api/client-portal-api.js`.
+Routing: `App.jsx` mounts `/client-portal/*` under its own `ClientPortalAuthProvider` via an `Outlet` layout route, so the firm `AuthProvider` in `main.jsx` and the client session never share state. `/client-portal/login` is public; dashboard/documents/reconciliation/settings are wrapped in `ProtectedClientRoute`.
+Notes: The portal deliberately reuses the app's existing design tokens (`panel`, `field`, `btn-primary`, ink/sand/mint palette) at a larger base type size (`text-base`/`text-lg` rather than `text-sm`) with no AppShell, no sidebar, and no technical jargon.
+
+---
+
+## PUBLIC / MARKETING SURFACE
+
+Scope note: this group covers the unauthenticated pages only (`/`, `/features`, `/pricing`,
+`/about`, `/security`, `/login`, `/signup`, `/client-portal/login`, `/upload/:token`,
+`/upload/:token/status`). Two design systems coexist by design: **V2 ("The Ledger")** on the
+marketing surface, **V1** on the auth and magic-link upload pages. Every token is namespaced
+(`vx-*`, `canvas`/`surface`/`well`/`hairline`) so no authenticated dashboard page is affected —
+verified by grep: `zinc-*` and `verify-*` have no call sites outside the public surface, and the
+dashboard's `ink`/`sand`/`mint`/`ember`/`graphite` scales are untouched.
+
+### Public design system — V2 ("The Ledger", marketing surface)
+Status: ✅ Production Ready for the marketing surface (`/` + shared nav/footer chrome on
+`/features`, `/pricing`, `/about`, `/security`); the four secondary pages' own *body* content is
+still on the pre-V1 sand/ink/mint palette — see "Secondary marketing pages" below.
+Added 2026-08-09.
+Docs: `frontend/DESIGN_SYSTEM.md` §§0.5, 9–12 (V2 supplement; V1 sections below it still describe
+`/login`, `/signup`, `/client-portal/login` and the magic-link upload pages, which V2 does not
+touch).
+Concept: three drawn primitives repeated at every scale — Sheet (ruled paper = an unread
+document), Field (bracketed label/value in mono = something lifted out of one), Mark (teal tick =
+validated / amber caret = needs a human) — connected by Rail (a dashed track). Implemented in
+`frontend/src/components/marketing/ledger.jsx`, which every marketing section imports. No icon
+grids, no screenshots-as-identity, no stock imagery, no gradient blobs.
+Tokens: `frontend/tailwind.config.js` — new `carbon` scale (`carbon-950 #08090B` … `carbon-100
+#E4E6EA`), the V2 primary: it carries every marketing headline and every full-bleed contrast
+section. Purely additive — `navy`, `brand`, `zinc`, `graphite`, `verify`, `sky`, `canvas`,
+`surface`, `well`, `hairline*` and the dashboard's `ink`/`sand`/`mint`/`ember` are all unchanged,
+so no V1 page and no dashboard page shifted.
+Type/utilities: `frontend/src/index.css` — new `.vx-display-xl` (hero, `clamp(2.5rem, 6.2vw,
+5.75rem)`; the 92px ceiling is set by the longest line the page contains so headlines stay two
+lines), `.vx-h2-xl`, `.vx-mono` (IBM Plex Mono + tabular figures — reserved for extracted values,
+never headlines or body), `.vx-sheet`/`.vx-sheet-dark` (ruled paper), `.vx-dark`,
+`.vx-cta`/`.vx-cta-invert`/`.vx-link-action`, `.vx-index`; new keyframes `vx-rail-flow`,
+`vx-rail-flow-v`, `vx-scan`, `vx-float-y` with `.vx-rail`/`.vx-rail-v`/`.vx-scan-line`/
+`.vx-float-y`. All V1 `.vx-*` classes left in place.
+Motion: unchanged contract (`components/public/motion.jsx`, expo-out, 40px, 0.8s, 0.1s stagger).
+Three CSS loops on the marketing page — the hero sheets' float, the two scan bands, the rail
+dashes — all inside `.vx-page`, so the existing `prefers-reduced-motion` kill switch in
+`index.css` disables them, and every Framer entrance additionally checks `useReducedMotion()`.
+Notes: `primitives.jsx` (the V1 additive primitive layer) is still unimported by anything — V2
+sections compose from `ledger.jsx` instead. It is now dead code and can be deleted once nothing
+plans to migrate the secondary pages onto it.
+
+### Public design system — V1 (light-first, auth + upload surface)
+Status: ⚠️ Partial — still the system for `/login`, `/signup`, `/client-portal/login`,
+`/upload/:token`, `/upload/:token/status`. Superseded by V2 on the marketing surface. The
+secondary marketing pages' bodies remain on the pre-V1 shell (see below).
+Docs: `frontend/DESIGN_SYSTEM.md` — supersedes its own previous (dark-canvas) version. Palette with
+hex values, type scale, spacing rhythm, borders/radius/shadows, layout primitives, animation
+contract, migration status, logo rationale.
+Tokens: `frontend/tailwind.config.js` — `canvas #F7F6F2`, `surface #FFFFFF`, `well #F0EEE7`,
+`hairline #E5E3DD`, `hairline-strong #D6D2C6`; `zinc` ramp retuned in place to the three text
+tones for a light background (`zinc-100 #111827` headings, `zinc-400 #5F6675` body, `zinc-600`
+lightest/muted); new `brand` scale retuned to the V1 violet accent (`brand-500 #6657D9`, 900/950
+kept at their pre-V1 values per the brief); new `graphite` scale (same hex ladder as `zinc`, used
+by the new primitives + `DemoRequestForm`'s previously-dormant `tone="light"` branch); new `navy`
+scale for dark-contrast sections (`navy-800 #11182D`); new `sky` scale for the secondary muted-blue
+accent (`sky-500 #4D8DFF`). `indigo-400/500/600 #818CF8/#6366F1/#4F46E5` deliberately left
+unchanged — shared with the authenticated dashboard (`DashboardPage`, `TeamPage`, `ExportPage`,
+etc.), so retuning it would have silently changed dashboard UI.
+Type/utilities: `frontend/src/index.css` — same `.vx-*` classes as before; `.vx-mockup`'s shadow
+retuned from a black+indigo glow to a restrained navy-tinted contact shadow (no colour bloom on a
+light surface); `brandGlow` retuned to the violet accent and reduced from a bloom to a tight CTA
+contact shadow.
+Primitives: `frontend/src/components/marketing/primitives.jsx` (new) — `MarketingContainer`,
+`Section`, `SectionHeader`, `SplitSection`, `ProductShowcase`, `Eyebrow`, `PrimaryButton`,
+`SecondaryButton`, `Metric`, `ProductFrame`. Deliberately no feature-card-grid primitive. Additive
+only — nothing imports these yet.
+Motion: `frontend/src/components/public/motion.jsx` — unchanged from the dark pass (single
+expo-out curve, `REVEAL_Y = 40`, `REVEAL_DURATION = 0.8`, 0.1s stagger, full `prefers-reduced-motion`
+support).
+Image assets: `frontend/public/images/{documents,photography,editorial}/` and
+`frontend/public/product/{document-processing,reconciliation,classification,gst,tally,dashboard,
+whatsapp}/` — directory structure + READMEs documenting intended contents only, no assets
+populated.
+Notes: `components/layout/PublicLayout.jsx` was `@deprecated` here; as of 2026-08-09 it has been
+replaced by a thin `LandingNav`/`LandingFooter` wrapper — see "Secondary marketing pages" above.
+`.hero-gradient`, `.orb*`,
+`.gradient-text`/`.gradient-text-accent`, `pulse-glow`/`shimmer`/`gradient-shift`/`spin-slow`
+remain in `index.css` (still used by the unmigrated pages) — do not delete until `/features`,
+`/pricing`, `/about`, `/security`, `/404` move onto the primitives above. `.hover-lift`/
+`.card-shine` are NOT deprecated despite the similar naming — shared with the dashboard's
+`StatCard.jsx`.
+
+### Brand mark (chevron lockup)
+Status: ⚠️ Partial — React component is V1-correct; static SVG assets are not.
+Frontend: `components/brand/VeraxLogo.jsx` (exports `VeraxLogo` + `VeraxMark`; default `tone`
+flipped from `"light"` to `"dark"` for V1 — every call site now renders correctly on the light
+canvas with no prop changes needed), `public/verax-logo.svg`, `public/verax-icon.svg`,
+`public/favicon.svg`.
+Notes: Two overlapping angular chevrons; the overlap is drawn as an explicit clipped third path
+rather than `mix-blend-mode`. `VeraxMark` now takes a `tone` prop too (`dark` = navy right
+chevron for the ivory canvas, `light` = light right chevron for a navy contrast section), so the
+mark and wordmark always match. **The three static `public/*.svg` files still encode the pre-V1
+dark-canvas coloring** and were not regenerated in this pass — low priority since favicon/OG
+chrome is browser-drawn, but they should be brought in line with the component before any of them
+render inline on the light surface.
+
+### Landing page (`/`) — rebuilt on V2, 2026-08-09
+Status: ✅ Production Ready
+Frontend: `pages/HomePage.jsx` — rewritten as composition only (~140 lines: hero + eleven imported
+sections). Every section owns its own markup, copy and motion, so no section can grow into the
+others. Order: hero (`DocumentFlowVisual`) → `ProofBand` → `ProblemSection` →
+`TransformationSection` → `DocumentTypes` → `VeraxEngine` → `DocumentDecode` →
+`ReviewExperience` → `ClientWorkflow` → `TallySection` → `Outcomes` → `ClosingCTA`.
+Section components (all new, `components/marketing/`):
+- `ledger.jsx` — the shared atoms (Sheet/Field/Tick/Caret/Rail/FlowRail/Eyebrow/SectionHead/Section).
+- `DocumentFlowVisual.jsx` — the hero: a drifting pile of six mismatched sheets → a carbon Verax
+  slab with a scan band → a ledger of validated fields. HTML/CSS/SVG, no images, no canvas.
+- `ProblemSection.jsx` — the manual eight-step loop with three ghosted repeats stacked behind it.
+- `TransformationSection.jsx` — 216-cell field resolving to ticks and nine amber carets; the split
+  is **explicitly labelled illustrative**, since nothing in the repo measures a real document mix.
+- `DocumentTypes.jsx` — four document types, each with its own drawing (captured invoice, txn run,
+  spreadsheet grid, two-column reconciliation) rather than a shared icon card.
+- `VeraxEngine.jsx` — the six stages on near-black, each naming what it actually produces.
+- `DocumentDecode.jsx` — the signature visual: a drawn invoice whose capture brackets render
+  *around the real field elements* (so they stay aligned at any width) → `structured_data` →
+  the compliance checks.
+- `ReviewExperience.jsx` — the only place real product UI appears, reusing the existing live
+  `mockups/ReviewMockup` as evidence rather than as the site's identity.
+- `ClientWorkflow.jsx`, `TallySection.jsx` (real `tally-xml.service.js` tag shapes, figures
+  reconciling with the rest of the page), `Outcomes.jsx`, `ClosingCTA.jsx`, `ProofBand.jsx`.
+Chrome: `LandingNav.jsx` (retuned to `carbon`; nav items now How it works / Documents / Security /
+Pricing — every one resolves to a real anchor or route, replacing the Solutions/Resources
+placeholders), `LandingFooter.jsx` (rebuilt: Product / Company / Get started columns, all links
+real). `DemoRequestForm.jsx` gained a third `tone="onDark"` variant for the closing CTA — the two
+pre-existing tones are both light-ground and failed contrast on carbon.
+Removed deliberately: the fabricated "Trusted by CA firms across India" avatar row and city
+trust-bar (implied customers that don't exist) — replaced by `ProofBand`, which says the product
+is in its founding-customer phase and lists verifiable capabilities instead. The WhatsApp roadmap
+section was also dropped from the homepage; the feature is still unbuilt.
+Notes: The demo CTA still posts to the existing public `POST /api/waitlist/join`, Gmail addresses
+only — no API change was made for the redesign. Footer "Privacy"/"Terms" still render as plain
+text because those routes still don't exist.
+Dead code (verified by grep, 2026-08-09 — zero importers each): `HeroVisual.jsx` (already unused
+before this pass), and, as a result of the `HomePage` rewrite, `WorkflowStrip.jsx`,
+`FlowSteps.jsx`, `primitives.jsx`, `mockups/LedgerMockup.jsx`, `mockups/ReconMockup.jsx` and
+`mockups/PortalMockup.jsx`. All are safe to delete; they were left in place rather than removed in
+the same pass as the redesign so the deletion is a reviewable change on its own. Still live:
+`mockups/ReviewMockup.jsx` (its one consumer is now `ReviewExperience`) and
+`mockups/InvoiceDocument.jsx` + `mockups/MockupFrame.jsx`, which it depends on.
+
+### Secondary marketing pages (`/features`, `/pricing`, `/about`, `/security`)
+Status: ⚠️ Partial — shared chrome is V2; page bodies are still pre-V1.
+Frontend: `components/layout/PublicLayout.jsx` was rewritten from a 232-line self-contained shell
+(glass navbar, gradient-box text logo, dark cream footer) to a 9-line wrapper that renders
+`LandingNav` + `children` + `LandingFooter` inside `.vx-page`. All four pages therefore now share
+one navbar, one footer, one canvas and Inter with the homepage.
+Notes: Their **body** content still uses the older `sand`/`ink`/`mint` palette, `.hero-gradient`,
+`.orb*` and icon-in-tinted-chip feature grids — they render correctly and are not broken, but they
+read as an older design language next to `/`. Migrating that content onto `ledger.jsx` is the
+obvious next pass. The deprecated CSS (`.hero-gradient`, `.orb*`, `.gradient-text*`,
+`pulse-glow`/`shimmer`/`gradient-shift`/`spin-slow`) still cannot be deleted from `index.css` for
+the same reason. `.hover-lift`/`.card-shine` remain NOT deprecated — shared with the dashboard's
+`StatCard.jsx`.
+
+### Marketing bundle size (route-level code splitting)
+Status: ✅ Production Ready — added 2026-08-09
+Frontend: `src/App.jsx` — the sixteen authenticated pages (eleven dashboard + five client-portal)
+are now `React.lazy`; public/marketing pages stay eager so the homepage paints without a second
+request. `<Suspense>` wraps `<Routes>` with a near-empty `RouteFallback` (`min-h-screen`,
+`role="status"`) so a fast connection never flashes a spinner between click and page.
+Effect: main bundle 728 kB → 545 kB (gzip 203 kB → 160 kB); `ReviewPage`, `ClientDetailPage`,
+`ExportPage`, `AppShell` etc. now load only behind a login.
+Notes: No routing, guard or auth behaviour changed — `ProtectedRoute`/`ProtectedClientRoute` and
+the `ClientPortalAuthProvider` branch are untouched.
+
+### Product mockups (no screenshots, no stock imagery)
+Status: ✅ Production Ready (V1 retheme complete; architecture unchanged)
+Frontend: `components/marketing/mockups/` — `MockupFrame.jsx` (shared shell, top bar, label,
+row-stagger hook, confidence bar), `ReviewMockup.jsx`, `LedgerMockup.jsx`, `ReconMockup.jsx`,
+`PortalMockup.jsx`. All HTML/CSS/SVG.
+Notes: Each mockup is authored at a fixed design size and scaled to its container by a
+`ResizeObserver` in `ScaledFrame` — unchanged, not rebuilt for V1 per instruction. What changed:
+literal `bg-white/[0.0x]` row/card fills (invisible on a light surface) moved to `bg-black/[0.0x]`,
+and status/confidence text that was a light tint for dark-canvas legibility (`indigo-300`,
+`verify-300`, `amber-300`, `red-300`) moved to `-700` shades so it stays readable on their pale
+translucent chip backgrounds. `public/product/` now exists for eventually supplementing/replacing
+these with real screenshots — see the image-asset note above.
+
+### Auth pages (V1, light-first)
+Status: ✅ Production Ready
+Frontend: `pages/LoginPage.jsx`, `pages/SignupPage.jsx`, `pages/ClientPortalLoginPage.jsx`,
+`components/public/AuthSplitLayout.jsx`, `components/public/FloatingField.jsx`.
+Notes: Presentation only — no validation, submit, or session logic was touched. The form column is
+now the light canvas; the brand column (desktop only) is the `navy-800` dark-contrast background
+(not a `canvas`/`surface` gradient, which would have gone light and made its white text
+illegible) with its two blurred accent-colour orbs removed — the V1 brief rules those out
+explicitly, and the panel didn't need them once it had a real dark background of its own.
+
+### Magic-link upload pages
+Status: ⚠️ Partial — shell (`PublicPageShell`) is V1; page-level literal-white cosmetic debt not
+addressed this pass.
+Frontend: `pages/PublicUploadPage.jsx`, `pages/PublicUploadStatusPage.jsx`.
+Notes: These pages render on the light canvas automatically (their shared `PublicPageShell`,
+`hairline`/`zinc`/`indigo` tokens all retuned for V1), which is a coherent look now rather than the
+2026-08-09 dark/light-shell mismatch fixed previously. Not addressed in this pass: both files still
+contain some of the same literal `white/opacity` decorative utilities called out for `HomePage.jsx`
+above — same reasoning, page content was out of scope for a tokens/primitives change. Upload queue,
+progress, validation and polling logic are untouched either way.
+
+---
+
 ## ROLE PERMISSIONS
 
 ### requireAdmin on all admin-only routes
-Status: 🔧 Needs Fix
-Backend: `requireAdmin` (`middlewares/auth.middleware.js:39-47`) confirmed applied correctly across 9 route files. **One confirmed gap**: `POST /api/compliance/gstr2b/match` (`compliance.routes.js:427-495`) mutates document rows with only `requireAuth`, missing `requireAdmin` unlike its sibling reconciliation-export route.
+Status: ✅ Production Ready
+Backend: `requireAdmin` (`middlewares/auth.middleware.js:39-47`) confirmed applied correctly across all route files, including `POST /api/compliance/gstr2b/match` as of the 2026-08-08 fix (see Compliance & Validation section).
 
 ### Staff can upload, view, edit fields
 Status: ✅ Production Ready
@@ -672,8 +980,8 @@ Frontend: `SettingsPage.jsx:291-330`, admin-only, purely informational checkmark
 ### Register cleaner (Excel → cleaned xlsx)
 Status: ✅ Production Ready
 AI Service: `ai-service/app/services/register_cleaner_service.py` (559 lines) — header-row detection via keyword scoring, multi-block extraction per sheet, per-block cleaning, cross-block column-name unification, styled xlsx output with SUM formulas. Entry point `process_bytes()` (`:526-559`)
-Backend: `POST /api/tools/register-clean` — `tools.routes.js:150-160`, `requireAuth`, proxies to AI service, streams xlsx back
-Frontend: `pages/ToolsPage.jsx:28-62` — `.xlsx`/`.xls` extension check, blob download
+Backend: `POST /api/tools/register-clean` — `tools.routes.js`, `requireAuth` + `toolsRateLimiter` (added 2026-08-08), proxies to AI service, streams xlsx back
+Frontend: `pages/ToolsPage.jsx` — `.xlsx`/`.xls` extension check, blob download via `lib/api-client.js`'s `request()` with `responseType: "blob"` (as of 2026-08-08)
 
 ### Bank statement PDF → Tally XML
 Status: ✅ Production Ready (all sub-items confirmed implemented)
@@ -685,9 +993,9 @@ AI Service: `ai-service/app/services/bank_statement_xml_service.py` (484 lines)
 - **Footer row filtering**: `SKIP_NARRATIONS` list (`:40-52`) + `should_skip_row`/`_is_summary_narration` (`:103-105,297-303`)
 - **Password protected PDF → 422 error**: `_open_pdf` (`:108-118`) catches the exception, inspects for "password"/"encrypted", raises `HTTPException(422, ...)`
 - **Structured JSON response with warnings**: `process_bytes()` (`:454-483`) returns `{xml, voucherCount, skippedRows, warnings, isScanned}`
-Backend: `POST /api/tools/bank-statement-xml` — `tools.routes.js:162-172`
-Frontend: `ToolsPage.jsx:140-272` — PDF-only check, company-name/bank-ledger inputs, surfaces `warnings`/`skippedRows`/`voucherCount`
-Notes: Both tools have smoke-test coverage (`tests/test-bank-statement.js`, `tests/test-excel-to-xml.js` at repo root). Two cross-cutting gaps apply to both: (1) `tools.routes.js` has no `express-rate-limit` guard, unlike auth/upload/waitlist routes; (2) `ToolsPage.jsx`'s raw-`fetch` calls (`:44-53,159-167`) don't implement the app-wide 401-refresh-retry pattern that `lib/api-client.js`'s `request()` provides everywhere else — a user whose access token expires mid-session will see a hard failure here instead of a silent refresh.
+Backend: `POST /api/tools/bank-statement-xml` — `tools.routes.js`, `requireAuth` + `toolsRateLimiter` (added 2026-08-08)
+Frontend: `ToolsPage.jsx` — PDF-only check, company-name/bank-ledger inputs, surfaces `warnings`/`skippedRows`/`voucherCount`, now calls `request()` instead of raw `fetch()` (as of 2026-08-08)
+Notes: Both tools have smoke-test coverage (`tests/test-bank-statement.js`, `tests/test-excel-to-xml.js` at repo root). **Fixed 2026-08-08** — both former gaps are closed: (1) `tools.routes.js` now applies a `toolsRateLimiter` (1hr window, max 20) to both routes; (2) `ToolsPage.jsx` no longer uses raw `fetch()` — both calls go through `lib/api-client.js`'s `request()`, which now supports a `responseType: "blob"` option (added specifically for the binary register-clean response) alongside its existing JSON handling (used as-is for the bank-statement-xml JSON response), so both tool calls now get the same 401-refresh-retry behavior as the rest of the app.
 
 ---
 
@@ -718,6 +1026,18 @@ Backend: `document-processing.worker.js:104-115` → audit `document_ready_email
 Status: ⚠️ Partial
 Backend: 3 of 4 email call sites record `sent`/`provider`/`error` in their audit row; user-invite does not (see above)
 
+### Request Demo — lead capture, persistence, and notification
+Status: ✅ Production Ready
+Backend: `POST /api/waitlist/join` — `waitlist.routes.js` (`firmName`/`contactName`/`phone` added as optional Joi fields, kept optional so the plain "Join Waitlist" entry points still work with email only) → `addToWaitlist` (`waitlist.service.js`) upserts into `waitlist` (new nullable `firm_name`/`contact_name`/`phone`/`status` columns, migration `20260809000000_add_lead_fields_to_waitlist.js`), then calls the existing `email.service.js` `sendEmail` twice: internal notification to `env.DEMO_NOTIFICATION_EMAIL` (default `verax.hello@gmail.com`) via `demoRequest.template.js`, and a requester confirmation via `demoRequestConfirmation.template.js`. Failures are logged (`console.error`, no secrets) and don't roll back the already-persisted lead.
+Frontend: `DemoRequestForm.jsx` — two-step reveal (email, then firm name + contact name) so the landing page keeps its original single-field look until someone commits to requesting a demo; posts via new `frontend/src/api/waitlist-api.js`. `WaitlistForm.jsx` (AboutPage, plain email-only join) intentionally untouched — same endpoint, new fields simply omitted.
+Notes: 🔧 Fixed — previously only collected an email, saved it to `waitlist`, and never sent any email at all (`waitlist.service.js` had zero reference to `email.service.js`), so `verax.hello@gmail.com` never received leads and a CA firm was represented only by an anonymous address. Verified end-to-end against the running dev backend: lead persisted with all 4 fields, both emails returned `{sent:true, provider:"smtp"}` from the real configured SMTP credentials.
+
+### Request Demo / Waitlist — email domain restriction removed
+Status: ✅ Production Ready
+Backend: `waitlist.routes.js` Joi schema now just `Joi.string().email().required()`; `waitlist.service.js`'s duplicate `@gmail.com` check removed. Any well-formed address is accepted (Gmail, Outlook, company domains, `.in`, `.co.in`, etc.); malformed addresses still rejected with a 400.
+Frontend: `DemoRequestForm.jsx` and `WaitlistForm.jsx` both replaced their `.endsWith("@gmail.com")` gate with a generic `EMAIL_PATTERN` regex check and dropped the "Gmail addresses only" hint/placeholder text, so client-side behavior matches the backend.
+Notes: 🔧 Fixed — the Gmail-only restriction (both the Joi `.custom()` validator and a duplicate check in the service, plus matching client-side gates in both forms) rejected real CA-firm leads using company-domain emails, which is most of them. Verified via direct Joi-schema validation (8 cases: gmail/company/`.in`/`.co.in`/outlook accepted, 3 malformed variants rejected) and live `POST /api/waitlist/join` calls for gmail/company-domain/`.co.in`, all persisted correctly with `notificationSent`/`confirmationSent` both `true`. No test framework exists in this repo (no Jest/Mocha/test scripts) — verification was ad hoc (schema + live HTTP checks) rather than a committed test suite.
+
 ---
 
 ## SECURITY & PLATFORM
@@ -742,7 +1062,7 @@ Backend: `auth.routes.js:23-33` — 15 min window, max 10, applied to all 8 auth
 ### Upload rate limiting
 Status: ✅ Production Ready
 Backend: `documents.routes.js:24-34` and `public-upload.routes.js:19-29` — 1 hr window, max 50, applied to both authenticated and magic-link upload/confirm endpoints
-Notes: `waitlist.routes.js` has its own 1hr/5 limiter. `/api/tools/*` has **no** rate limiting (see Standalone Tools).
+Notes: `waitlist.routes.js` has its own 1hr/5 limiter. `/api/tools/*` now has its own 1hr/20 `toolsRateLimiter` as of 2026-08-08 (see Standalone Tools).
 
 ### HttpOnly refresh cookies
 Status: ✅ Production Ready
@@ -754,30 +1074,66 @@ Frontend: `lib/token-store.js:1-27` — access token and user object kept in mod
 
 ---
 
+---
+
+## LOCAL / DEPLOY ENVIRONMENT
+
+*Added 2026-08-08 during a demo-prep verification pass. These are setup-and-packaging
+defects rather than feature gaps, but each one independently prevented the app from
+running at all on a clean machine, so they belong in this file.*
+
+### Reproducible local bring-up from a clean checkout
+Status: 🔧 Needs Fix
+Notes: A clean checkout could not be started. Every one of these had to be fixed by hand: (1) **no `.env` existed** and root `.env.example` is missing `LOCAL_STORAGE` entirely (the backend supports it via `env.js:13`, and it is required for S3-free local dev) — `ai-service/.env.example` does document `LOCAL_STORAGE`/`LOCAL_STORAGE_PATH` correctly; (2) `backend/package.json` declares `"seed:admin": "node scripts/seed-admin.js"` and CLAUDE.md documents `npm run seed:admin`, but **`backend/scripts/` did not exist at all** — the command fails outright, so there is no documented way to create a first admin except `POST /api/auth/signup`; (3) `ai-service/requirements.txt` pinned `paddlepaddle==2.6.1`, which **no longer exists on PyPI** (available versions start at 2.6.2), so the image could never build — now `2.6.2`; (4) `paddle` imports `setuptools` at runtime but `python:3.12-slim` stopped bundling it, so the container crashed on startup with `ModuleNotFoundError: setuptools` — now pinned explicitly in `requirements.txt`; (5) `httpx` was unpinned and incompatible with `groq==0.11.0` (see LLM structured extraction). Items 3–5 mean the AI service image was **unbuildable and unbootable as committed**, independent of any network issue.
+
+### docker-compose ai-service cannot read LOCAL_STORAGE uploads
+Status: ✅ Production Ready
+Notes: **Fixed 2026-08-08.** The backend writes uploads to a hardcoded `backend/local-storage/<key>` (`s3.service.js:28`), and the AI service reads `settings.local_storage_path + s3_key` (`s3_service.py:23-24`) — but `docker-compose.yml`'s `ai-service` block set **neither `LOCAL_STORAGE` nor `LOCAL_STORAGE_PATH`, and did not mount that directory**, so with `LOCAL_STORAGE=true` the containerised AI service could never see an uploaded file and every document failed. Added `LOCAL_STORAGE`, `LOCAL_STORAGE_PATH=/mnt/local-storage`, and a `./backend/local-storage:/mnt/local-storage` bind mount. Also pinned the container's `DATABASE_URL` to the compose-internal `postgres` hostname, since the root `.env` value points at `localhost` for the host-side backend/worker and would not resolve inside the container.
+
+### Verification tooling
+Status: ✅ Production Ready
+Notes: Added 2026-08-08: `backend/scripts/demo-smoke-test.js` walks the whole path (login → client → magic link → upload → confirm → processing → extraction → approve → Tally export → download, asserting the payload is real XML) and is idempotent so it can be re-run before a demo; `backend/scripts/make-test-invoice.js` generates a text-bearing invoice PDF (the repo had no PDF fixture); `backend/scripts/seed-demo-extraction.js` seeds a realistic extraction so review/approve/export can be exercised without a live OCR round trip. Local-only, git-ignored support files: `docker-compose.override.yml`, `ai-service/Dockerfile.local`, `ai-service/corp-ca.pem`.
+
+---
+
 ## Summary
 
 | Status | Count |
 |--------|-------|
-| ✅ Production Ready | 96 |
-| ⚠️ Partial | 24 |
-| ❌ Not Built | 1 |
-| 🔧 Needs Fix | 8 |
-| **Total** | 129 |
+| ✅ Production Ready | 142 |
+| ⚠️ Partial | 9 |
+| ❌ Not Built | 0 |
+| 🔧 Needs Fix | 6 |
+| **Total** | 157 |
+
+*(2026-08-09, marketing redesign: the landing page was rebuilt on a new V2 design system
+("The Ledger") — 13 new marketing components, `HomePage` reduced to composition, `PublicLayout`
+replaced by the shared marketing chrome, fabricated social proof removed, and route-level code
+splitting added. See PUBLIC / MARKETING SURFACE. No backend, API, schema or authenticated-app
+behaviour was touched.)*
+
+*(2026-08-09: +13 new ✅ entries for the CLIENT PORTAL section, and "JWT refresh" moved ✅→🔧 after a real rollback bug was found in its reuse detection while building the portal — see that entry. Previous pass, 2026-08-08: 1 item moved ❌→✅, 9 items ⚠️→✅, 3 items 🔧→✅.)*
 
 ## Top Gaps to Address
 
-1. **No notification/email on permanent document-processing failure** (❌ Not Built) — after 3 failed attempts, only an audit log row and a stderr line exist; no admin is actually alerted. This is the single clearest "not built" item and directly undermines operational reliability for a document pipeline.
-2. **`POST /api/compliance/gstr2b/match` missing `requireAdmin`** — mutates document state with only `requireAuth`, inconsistent with the rest of the compliance/export permission model.
-3. **Scheduled-requests cron worker has no standalone process** — it only runs because it happens to be instantiated inside the document-processing worker file; deploying the two workers separately (a natural scaling move) would silently break the 08:00 UTC daily job.
-4. **Authenticated (non-magic-link) document upload lacks progress tracking, multi-file queue, and client-side file validation** — a materially worse UX than the public upload page for the exact same underlying feature, and the primary upload path most staff will use day to day.
-5. **`request-docs` endpoint ignores caller-supplied `documentTypes`** — no Joi body schema is applied, so the field is silently dropped and the default document-type list is always used regardless of intent.
-6. **Staff cannot see the firm's plan** on Settings — likely an over-broad admin gate rather than intentional design; worth a quick product call.
-7. **LLM extraction has no request timeout enforced** (config value exists but is dead code) and no retry — a slow/hung Groq call will block a worker slot until the process-level default eventually errors.
-8. **`/api/tools/*` has no rate limiting and no 401-refresh-retry on the frontend** — both standalone tools are otherwise complete, but a firm heavily using them could hit unbounded request volume, and any user with an expired token will see a hard failure instead of a silent refresh.
-9. **No audit log on signup or login**, and no audit log on extraction edits (only version snapshots) — reduces traceability for a compliance-positioned product.
+*Updated 2026-08-08 — 7 items from the previous list were fixed in this pass (see each entry's "Fixed 2026-08-08" note for detail): permanent-failure notification/email, `gstr2b/match` admin gate, authenticated-upload UX (queue/progress/validation), `request-docs` `documentTypes`, LLM request timeout + Groq failure handling, `/api/tools/*` rate limiting + frontend 401-refresh, and signup/login audit logs. Remaining gaps, in priority order:*
+
+0. **Firm-side refresh-token reuse detection silently rolls back** (added 2026-08-09, now the highest-priority item) — `refreshAccessToken` revokes the token family and then throws inside the same transaction, so the `ROLLBACK` in `withTenantTransaction` discards the revocation. The caller still sees a correct 401, which is why this has gone unnoticed. Fix is mechanical: return a sentinel from the handler and throw after the commit, exactly as `loginUser` already does and as the new `clientRefreshToken` does. See the AUTH → JWT refresh entry.
+1. **Scheduled-requests cron worker has no standalone process** — it only runs because it happens to be instantiated inside the document-processing worker file; deploying the two workers separately (a natural scaling move) would silently break the 08:00 UTC daily job.
+2. **Staff cannot see the firm's plan** on Settings — likely an over-broad admin gate rather than intentional design; worth a quick product call.
+3. **No audit log on extraction edits** (only version snapshots exist) — reduces traceability for a compliance-positioned product; signup and login are now logged as of this pass, but field-level edits on `PUT /api/extractions/:documentId` still are not.
+4. **Login audit logging has one intentional blind spot**: a failed login against an email that doesn't exist in the system cannot be logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm. Known-user wrong-password attempts and all successful logins are logged; unknown-email attempts are not. Closing this fully would require a schema change (e.g. a nullable `firm_id` or a sentinel "system" firm), which was out of scope for this fix pass.
+5. **"Dropdown with last 20 notifications" limit was not independently re-verified** against `notifications.service.js`'s SQL `LIMIT` clause — carried over from the original audit, unaffected by this fix pass.
+6. **Clean-machine bring-up is broken** (added 2026-08-08) — see the new "Local / Deploy Environment" section. Highest-value items: restore the missing `backend/scripts/seed-admin.js` that `package.json` and CLAUDE.md both reference, and add `LOCAL_STORAGE` to root `.env.example`.
+7. **Third-party version drift is unguarded** (added 2026-08-08) — a decommissioned Groq model and an unpinned `httpx` each broke the AI service silently or fatally, and a since-removed `paddlepaddle` pin broke the image build. There is no CI step that builds `ai-service` or makes one live extraction call, so all three failed only at runtime on a clean environment. A single smoke job running `docker compose build ai-service` plus `scripts/demo-smoke-test.js` would have caught every one.
+8. **Tally XML has no `<?xml ?>` declaration** (added 2026-08-08) — `buildTallyXml` output begins directly with `<ENVELOPE>`. TallyPrime accepts this, so it is not a functional break, but any consumer or test asserting a leading `<?xml` will fail.
 
 ## What Can Be Piloted Today
 
-The core document lifecycle — magic-link and authenticated upload → OCR/LLM extraction with confidence gating → review/edit/approve → Tally XML export (single and bulk) — is fully wired end to end across all three services, with real RLS-backed multi-tenancy, working JWT refresh with reuse detection, and a genuinely complete PaddleOCR→Tesseract fallback plus Groq extraction pipeline. GSTIN validation (local + live GSP), tax-math/TDS/duplicate-invoice compliance checks, GSTR-2B reconciliation with Excel export, item-name-mapping with fuzzy suggestions, full document version history with diff view, notifications (except the failure-alert trigger), scheduled recurring document requests, team management, and audit logging are all built and connected. Both standalone tools (register cleaner, bank-statement-to-XML) are production-adapted with real edge-case handling (password-protected PDFs, scanned-vs-digital detection, footer filtering).
+The core document lifecycle — magic-link and authenticated upload → OCR/LLM extraction with confidence gating → review/edit/approve → Tally XML export (single and bulk) — is fully wired end to end across all three services, with real RLS-backed multi-tenancy, working JWT refresh with reuse detection, and a genuinely complete PaddleOCR→Tesseract fallback plus Groq extraction pipeline (now with an enforced request timeout and graceful degradation on failure). GSTIN validation (local + live GSP), tax-math/TDS/duplicate-invoice compliance checks, GSTR-2B reconciliation with Excel export, item-name-mapping with fuzzy suggestions, full document version history with diff view, all four notification triggers (including permanent-failure alerting as of this pass), scheduled recurring document requests, team management, and audit logging (now including signup/login) are all built and connected. Both standalone tools (register cleaner, bank-statement-to-XML) are production-adapted with real edge-case handling and are now rate-limited with proper session-refresh behavior on the frontend.
 
-A CA firm could pilot the full upload → review → export workflow today. The two things worth fixing before a pilot rather than during one: (1) permanent-failure alerting, so a stuck document doesn't sit invisible until someone manually checks, and (2) the authenticated-upload UX gap (progress/validation/multi-file), since that's the primary daily-use surface for firm staff rather than their clients.
+A CA firm can pilot the full upload → review → export workflow today, on either the authenticated staff-upload page or the client-facing magic-link page — both now have matching queue/progress/validation UX. The two items flagged in the previous audit as pre-pilot blockers (permanent-failure alerting and the authenticated-upload UX gap) are resolved.
+
+As of 2026-08-09 the **client portal** is also pilot-ready: a firm admin can enable portal access for a client from the client detail page, hand over the one-time temp password, and that client can sign in at `/client-portal/login` to see their own documents in plain English, download their originals, check their GST reconciliation, download it as Excel, and change their password. The two worlds are provably separate — a firm JWT is rejected on every client-portal route and a client JWT on every firm route, verified by test, as is the rule that one client can never see a sibling client's documents even within the same firm.
+
+What remains is lower-priority operational hardening (the scheduled-requests worker's process-topology assumption, extraction-edit audit coverage) plus the one real bug this pass surfaced in the firm-side refresh-token reuse detection, which is listed first under Top Gaps.
