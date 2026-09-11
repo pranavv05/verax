@@ -573,7 +573,7 @@ const refreshAccessToken = async ({ refreshToken, userAgent, ipAddress }) => {
     throw ApiError.unauthorized("Invalid refresh token payload");
   }
 
-  return withTenantTransaction({ firmId: payload.firm_id }, async (client) => {
+  const result = await withTenantTransaction({ firmId: payload.firm_id }, async (client) => {
     const sessionResult = await client.query(
       `
         SELECT
@@ -608,7 +608,10 @@ const refreshAccessToken = async ({ refreshToken, userAgent, ipAddress }) => {
         firmId: sessionRow.firm_id,
         userId: sessionRow.user_id
       });
-      throw ApiError.unauthorized("Refresh token mismatch");
+      // Returned (not thrown) so the revocation above commits with the
+      // transaction instead of being rolled back by the catch in
+      // withTenantTransaction; the sentinel is checked after commit below.
+      return { reuseDetected: true, message: "Refresh token mismatch" };
     }
 
     if (sessionRow.revoked_at) {
@@ -616,7 +619,7 @@ const refreshAccessToken = async ({ refreshToken, userAgent, ipAddress }) => {
         firmId: sessionRow.firm_id,
         userId: sessionRow.user_id
       });
-      throw ApiError.unauthorized("Refresh token has been revoked");
+      return { reuseDetected: true, message: "Refresh token has been revoked" };
     }
 
     if (new Date(sessionRow.expires_at) <= new Date()) {
@@ -691,6 +694,12 @@ const refreshAccessToken = async ({ refreshToken, userAgent, ipAddress }) => {
       user: mapUserResponse(user)
     };
   });
+
+  if (result.reuseDetected) {
+    throw ApiError.unauthorized(result.message);
+  }
+
+  return result;
 };
 
 const logoutSession = async ({ refreshToken }) => {
