@@ -18,7 +18,7 @@ Core capabilities:
 - Client magic-link uploads and public upload status
 - S3 pre-signed uploads/downloads
 - Async document processing with Redis + BullMQ
-- OCR pipeline with AWS Textract primary and tuned Tesseract fallback
+- OCR pipeline with PaddleOCR primary and tuned Tesseract fallback
 - LLM extraction for Indian invoices and bills with wrong-document detection
 - Confidence gating: low-confidence or unknown documents become `review_required`
 - Review workflow with edit history, confidence indicators, warnings, and approval
@@ -31,8 +31,8 @@ Core capabilities:
 
 - Frontend: React 18, Vite, TailwindCSS, Zod
 - Backend: Node.js, Express, PostgreSQL 15, Knex, BullMQ, Redis
-- AI Service: Python 3.12, FastAPI, OpenCV, PyMuPDF, pdfplumber, pdf2image, Tesseract, AWS Textract, OpenAI
-- Storage: AWS S3
+- AI Service: Python 3.12, FastAPI, OpenCV, PyMuPDF, pdfplumber, pdf2image, Tesseract, PaddleOCR, Groq (Llama)
+- Storage: AWS S3 (or local disk via `LOCAL_STORAGE=true`)
 - Email: SMTP or Resend
 
 ## Project Structure
@@ -71,9 +71,11 @@ Copy-Item .env.example .env
 - `AWS_S3_BUCKET`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
+
+  (AWS credentials and `AWS_S3_BUCKET` are only required when `LOCAL_STORAGE=false` — set `LOCAL_STORAGE=true` on the backend and ai-service to store files on local disk instead of S3 for dev.)
 - `JWT_SECRET`
 - `JWT_REFRESH_SECRET`
-- `OPENAI_API_KEY`
+- `GROQ_API_KEY`
 - `AI_SERVICE_API_KEY`
 - `FRONTEND_URL`
 - `VITE_API_BASE_URL`
@@ -126,6 +128,7 @@ AI service:
 
 ```bash
 cd ai-service
+cp .env.example .env   # fill in DATABASE_URL, GROQ_API_KEY, AI_SERVICE_API_KEY, AWS_S3_BUCKET (or set LOCAL_STORAGE=true)
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -164,11 +167,11 @@ source .venv/bin/activate
 
 ## OCR And AI Notes
 
-- Textract is the primary OCR engine.
-- Tesseract is the fallback when Textract fails or returns too little text.
-- Docker installs English and Hindi Tesseract language packs.
+- PaddleOCR is the primary OCR engine (CPU-only, lazy-loaded on first use — no model download at service startup).
+- Tesseract is the fallback when PaddleOCR fails or returns too little text.
+- Docker installs English and Hindi Tesseract language packs, plus `libgomp1` for PaddlePaddle.
 - PDF fallback rendering supports up to 15 pages and skips blank pages.
-- LLM extraction prompt is tuned for Indian invoices, bills, GST, TDS, HSN, OCR corrections, and wrong-document detection.
+- LLM extraction uses Groq (`llama-3.1-70b-versatile`) with a prompt tuned for Indian invoices, bills, GST, TDS, HSN, OCR corrections, and wrong-document detection.
 - Server-side confidence adjustment caps confidence for missing critical fields, invalid GSTIN, and tax math mismatch.
 
 ## Standalone Tools

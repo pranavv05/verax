@@ -51,7 +51,7 @@ JWT access tokens (15 min) + httpOnly refresh token cookies (7 days) with chain 
 1. Browser uploads directly to S3 via presigned URL (backend never touches file bytes)
 2. Backend creates `documents` record + enqueues BullMQ job
 3. Worker (`backend/src/workers/document-processing.worker.js`) calls AI service `/process`
-4. AI service: S3 download → image preprocessing → OCR (Textract primary, Tesseract fallback) → LLM extraction (GPT-4O) → structured JSON
+4. AI service: S3 (or local disk, if `LOCAL_STORAGE=true`) download → image preprocessing → OCR (PaddleOCR primary, Tesseract fallback) → LLM extraction (Groq `llama-3.1-70b-versatile`) → structured JSON
 5. Extraction stored in `extractions` table as JSONB `structured_data`
 6. User reviews/edits on ReviewPage, approves → status becomes `reviewed`
 7. Export: reviewed docs → Tally XML with inventory entries → S3 → presigned download
@@ -72,7 +72,7 @@ When users correct item names (vendor's raw name → Tally stock item name) and 
 
 ## Environment
 
-Copy `.env.example` to `.env`. Required: `DATABASE_URL`, `REDIS_URL`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `OPENAI_API_KEY`. Full validation in `backend/src/config/env.js`.
+Copy `.env.example` to `.env`. Required: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `GROQ_API_KEY` (ai-service). `AWS_S3_BUCKET`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are required unless `LOCAL_STORAGE=true`. Full validation in `backend/src/config/env.js` (backend) and `ai-service/app/config.py` (ai-service).
 
 ## Database
 

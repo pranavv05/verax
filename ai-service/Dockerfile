@@ -20,6 +20,7 @@ RUN echo "Acquire::http::Pipeline-Depth 0;" > /etc/apt/apt.conf.d/99custom \
     libxext6 \
     libxrender-dev \
     libgl1-mesa-glx \
+    libgomp1 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

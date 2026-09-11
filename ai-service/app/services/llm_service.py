@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from openai import OpenAI
+from groq import Groq
 
 from app.config import settings
 from app.utils.json_parser import parse_json_object
@@ -279,7 +279,7 @@ def validate_and_adjust_confidence(extracted: dict) -> dict:
 
 class LLMService:
     def __init__(self) -> None:
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._client = Groq(api_key=settings.groq_api_key)
 
     # ── normalisation helpers ──────────────────────────────────────────────────
 
@@ -400,9 +400,9 @@ class LLMService:
             # invoice, bill, other all use the invoice prompt
             prompt = INVOICE_PROMPT
 
-        response = self._client.responses.create(
-            model=settings.openai_model,
-            input=[
+        response = self._client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
+            messages=[
                 {
                     "role": "system",
                     "content": "You are a strict JSON extraction engine for Indian financial documents.",
@@ -412,10 +412,12 @@ class LLMService:
                     "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
                 },
             ],
-            temperature=0,
+            temperature=0.1,
+            max_tokens=2000,
+            response_format={"type": "json_object"},
         )
 
-        raw_output = response.output_text or ""
+        raw_output = response.choices[0].message.content or ""
         parsed = parse_json_object(raw_output)
 
         if doc_type == "bank_statement":

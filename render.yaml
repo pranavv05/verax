@@ -8,7 +8,7 @@
 #   - AWS_S3_BUCKET
 #   - AWS_ACCESS_KEY_ID
 #   - AWS_SECRET_ACCESS_KEY
-#   - OPENAI_API_KEY
+#   - GROQ_API_KEY
 #   - FRONTEND_URL         (your Vercel URL, e.g. https://your-app.vercel.app)
 #   - AI_SERVICE_URL       (https://verax-ai-service.onrender.com — set after AI service deploys)
 #   - AI_SERVICE_API_KEY   (same random 32+ char value on backend, AI service, and worker)
@@ -101,22 +101,18 @@ services:
         value: ap-south-1
       - key: AI_SERVICE_PORT
         value: 8001
-      - key: OPENAI_MODEL
-        value: gpt-4o
       - key: AI_SERVICE_API_KEY
         sync: false
       - key: AI_WRITE_BACK_ENABLED
         value: "true"
       - key: LLM_TIMEOUT_SECONDS
         value: 60
-      - key: TEXTRACT_TIMEOUT_SECONDS
-        value: 60
       - key: MAX_PDF_PAGES_FOR_FALLBACK
         value: 3
       - key: MAX_TOOL_UPLOAD_MB
         value: 25
       # Set these manually in the Render dashboard after deploy:
-      - key: OPENAI_API_KEY
+      - key: GROQ_API_KEY
         sync: false
       - key: AWS_S3_BUCKET
         sync: false
