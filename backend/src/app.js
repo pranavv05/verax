@@ -1,3 +1,4 @@
+const Sentry = require("@sentry/node");
 const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
@@ -79,6 +80,11 @@ if (env.LOCAL_STORAGE) {
 }
 
 app.use(notFoundHandler);
+
+if (process.env.SENTRY_DSN) {
+  Sentry.setupExpressErrorHandler(app);
+}
+
 app.use(errorHandler);
 
 module.exports = app;

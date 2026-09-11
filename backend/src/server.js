@@ -1,3 +1,13 @@
+const Sentry = require("@sentry/node");
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1
+  });
+}
+
 const app = require("./app");
 const env = require("./config/env");
 const pool = require("./db/pool");
