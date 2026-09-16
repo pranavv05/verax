@@ -6,15 +6,23 @@ const notFoundHandler = (req, res, next) => {
 
 const errorHandler = (error, req, res, next) => {
   const statusCode = error.statusCode || 500;
+  const isDev = process.env.NODE_ENV !== "production";
+  const isKnownError = error instanceof ApiError;
+
+  // An unexpected (non-ApiError) 5xx can be a raw DB/AWS/upstream exception —
+  // its .message is not written to be client-facing, so never echo it in production.
+  const message =
+    !isDev && statusCode >= 500 && !isKnownError
+      ? "Internal server error"
+      : error.message || "Internal server error";
+
   const response = {
     error: error.error || "INTERNAL_SERVER_ERROR",
-    message: error.message || "Internal server error",
-    statusCode
+    message,
+    statusCode,
+    ...(isDev && { stack: error.stack }),
+    ...(isDev && { details: error.details })
   };
-
-  if (statusCode >= 500 && process.env.DEBUG_ERRORS === "true") {
-    response.details = error.stack;
-  }
 
   res.status(statusCode).json(response);
 };

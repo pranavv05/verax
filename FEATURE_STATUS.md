@@ -42,11 +42,11 @@ Migration: `20260311171500_auth_infra.js` (refresh_tokens table + RLS)
 Notes: **Bug found 2026-08-09 while building the client portal (not introduced by it).** The advertised reuse detection does not actually persist. In `refreshAccessToken`, the token-hash-mismatch and already-revoked branches call `revokeRefreshTokenFamily(client, ...)` and then `throw` — but both statements run inside the same `withTenantTransaction` handler, and throwing there triggers the `ROLLBACK` in `tenant-context.js:27-29`, which discards the family revocation along with everything else. The caller still gets a correct 401, so the failure is invisible from the outside: a stolen refresh token that triggers reuse detection leaves every sibling token in the family still live. This is the identical trap already documented on the `loginUser` audit-log entry, whose fix was to return a sentinel from the handler and throw after the transaction commits. The same pattern was applied to the new `clientRefreshToken` (`client-auth.service.js`), where it is verified working by test; the firm-side function was deliberately left untouched because changing firm auth behaviour was outside the client-portal task's scope. **Recommended fix: mirror the sentinel pattern in `refreshAccessToken`.**
 
 ### Password reset (forgot password + reset flow)
-Status: ⚠️ Partial
+Status: ✅ Production Ready
 Backend: `POST /api/auth/forgot-password` (`auth.routes.js:144-157`) → `requestPasswordReset` (`auth.service.js:122-256`, audit `password_reset_requested` + `password_reset_emailed`); `GET /api/auth/reset-password/:token` (`:159-167`) → `validatePasswordResetToken` (`:283-326`); `POST /api/auth/reset-password` (`:169-181`) → `resetPassword` (`:328-392`, audit `password_reset_completed`, revokes all refresh tokens on reset)
 Frontend: `pages/ForgotPasswordPage.jsx`, `pages/ResetPasswordPage.jsx` — full loading/error/success states
 Migration: `20260506000000_password_reset_tokens.js` (+ RLS escape hatch for the unauthenticated token-validation lookup)
-Notes: Full flow is implemented and token TTL is a hardcoded 15 min (`PASSWORD_RESET_TOKEN_TTL_MINUTES`, `auth.service.js:20`, inconsistent with `ACCESS_TOKEN_TTL_MINUTES` which *is* env-driven). **Flag for verification**: `ForgotPasswordPage.jsx:37-39,86-93` renders a `result.devResetLink` directly in the UI if the API response includes it — confirm this is gated behind `NODE_ENV !== 'production'` server-side before shipping, since if not it would leak reset tokens to anyone who submits the form.
+Notes: Full flow is implemented and token TTL is a hardcoded 15 min (`PASSWORD_RESET_TOKEN_TTL_MINUTES`, `auth.service.js:20`, inconsistent with `ACCESS_TOKEN_TTL_MINUTES` which *is* env-driven — acceptable, not a functional gap). **Verified 2026-09-16 (production-readiness audit)**: the previous entry's "flag for verification" is resolved. `auth.service.js:254` gates `devResetLink` behind `env.NODE_ENV !== "production"` (returns `undefined` in production, which `res.json()` drops from the payload entirely, confirmed by direct read and an isolated test harness); the email send at `:225-233` is unconditional on environment, so delivery is unaffected. `ForgotPasswordPage.jsx:37-39,86-93` only renders the dev-link banner when the field is actually present in the response, so it is safe by construction — no separate frontend gate was needed. The success message returned in both environments (`PASSWORD_RESET_SUCCESS_MESSAGE`, `auth.service.js:21-22`) is already deliberately vague and does not confirm whether the email exists.
 
 ### Session protection on dashboard routes
 Status: ✅ Production Ready
@@ -1106,8 +1106,8 @@ Notes: **Fixed 2026-09-11.** `docker-compose.prod.yml`'s `backend` and `worker` 
 
 | Status | Count |
 |--------|-------|
-| ✅ Production Ready | 143 |
-| ⚠️ Partial | 9 |
+| ✅ Production Ready | 144 |
+| ⚠️ Partial | 8 |
 | ❌ Not Built | 0 |
 | 🔧 Needs Fix | 6 |
 | **Total** | 158 |
