@@ -1,15 +1,20 @@
 const path = require("path");
 const ApiError = require("./api-error");
 const env = require("../config/env");
+const { matchesExpectedSignature } = require("./file-signature");
 
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "image/jpeg",
   "image/png",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  "image/webp",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel"
 ]);
 
-const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".xlsx"]);
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".xlsx", ".xls"]);
+
+const UNSUPPORTED_FILE_MESSAGE = "Only PDF, JPG, PNG, and Excel files are allowed";
 
 const sanitizeFileName = (fileName) => {
   const trimmed = (fileName || "").trim();
@@ -52,9 +57,32 @@ const assertAllowedFile = ({ fileName, fileType, fileSize }) => {
   return safeFileName;
 };
 
+// Validates a file whose bytes the backend actually received (as opposed to
+// assertAllowedFile, which only checks client-declared metadata ahead of a
+// presigned-URL upload). Checks the declared MIME type, the extension on the
+// original filename, and the file's real byte signature, so a payload
+// disguised with a spoofed Content-Type and a renamed extension is rejected.
+const assertUploadedFileContent = ({ mimetype, fileName, buffer }) => {
+  const extension = path.extname(fileName || "").toLowerCase();
+
+  if (!ALLOWED_EXTENSIONS.has(extension)) {
+    throw ApiError.invalidFileType(UNSUPPORTED_FILE_MESSAGE);
+  }
+
+  if (!ALLOWED_MIME_TYPES.has(mimetype)) {
+    throw ApiError.invalidFileType(UNSUPPORTED_FILE_MESSAGE);
+  }
+
+  if (!matchesExpectedSignature(buffer, extension)) {
+    throw ApiError.invalidFileType(UNSUPPORTED_FILE_MESSAGE);
+  }
+};
+
 module.exports = {
   ALLOWED_MIME_TYPES,
   ALLOWED_EXTENSIONS,
+  UNSUPPORTED_FILE_MESSAGE,
   sanitizeFileName,
-  assertAllowedFile
+  assertAllowedFile,
+  assertUploadedFileContent
 };

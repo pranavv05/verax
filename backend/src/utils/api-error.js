@@ -25,6 +25,10 @@ class ApiError extends Error {
   static conflict(message) {
     return new ApiError(409, message, "CONFLICT");
   }
+
+  static invalidFileType(message = "Only PDF, JPG, PNG, and Excel files are allowed") {
+    return new ApiError(422, message, "INVALID_FILE_TYPE");
+  }
 }
 
 module.exports = ApiError;
