@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (install + syntax check)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # No lint tooling exists yet (see FEATURE_STATUS.md) — this syntax
+      # check is a minimal stand-in. Real unit tests run below; the RLS
+      # integration test (the highest-risk path in this codebase) runs in
+      # the separate backend-integration job, which needs a live Postgres.
+      - name: Syntax-check all source files
+        run: find src -name "*.js" -print0 | xargs -0 -n1 node --check
+      - run: npm test
+
+  backend-integration:
+    name: Backend (RLS integration test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ca_user
+          POSTGRES_PASSWORD: ca_password
+          POSTGRES_DB: ca_saas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ca_user -d ca_saas"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://ca_user:ca_password@localhost:5432/ca_saas
+      APP_DATABASE_URL: postgresql://ca_app:ca_app_ci_password@localhost:5432/ca_saas
+      APP_DB_PASSWORD: ca_app_ci_password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run migrate:latest
+      - run: npm run test:integration
+
+  frontend:
+    name: Frontend (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_API_BASE_URL: http://localhost:3000
+
+  ai-service:
+    name: AI service (syntax check)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Full `pip install -r requirements.txt` pulls in paddlepaddle/paddleocr
+      # (several hundred MB) — too slow/heavy for a per-PR gate on its own,
+      # so OCR-engine code (app/services/ocr_service.py) only gets the syntax
+      # check below. requirements-dev.txt installs just what the pytest suite
+      # actually needs (groq/httpx/python-dotenv + pytest) to test the LLM
+      # JSON-parsing/retry/confidence logic without the ML install cost.
+      - name: Syntax-check all source files
+        run: python -m compileall -q app
+      - name: Install test dependencies (light subset, no ML libs)
+        run: |
+          grep -E '^(groq|httpx|python-dotenv)==' requirements.txt > requirements-light.txt
+          pip install -r requirements-dev.txt -r requirements-light.txt
+      - run: python -m pytest tests/ -v

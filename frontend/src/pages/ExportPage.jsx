@@ -191,7 +191,11 @@ const ExportPage = () => {
       setPreviewExportPayload(null);
       setToast("Tally XML generated successfully.");
       if (result.download_url) {
-        triggerFileDownload(result.download_url, "tally-export.xml");
+        try {
+          await triggerFileDownload(result.download_url, "tally-export.xml");
+        } catch (downloadError) {
+          setError(parseApiError(downloadError, "Export was generated but the download failed"));
+        }
       }
       const refreshedHistory = await exportsApi.history({ page: 1, limit: 20 });
       setHistory(refreshedHistory.data || []);
@@ -207,7 +211,7 @@ const ExportPage = () => {
     setError("");
     try {
       const result = await exportsApi.download(exportId);
-      triggerFileDownload(result.download_url, "tally-export.xml");
+      await triggerFileDownload(result.download_url, "tally-export.xml");
     } catch (downloadError) {
       setError(parseApiError(downloadError, "Unable to create download link"));
     }
@@ -441,7 +445,11 @@ const ExportPage = () => {
               <button
                 type="button"
                 className="btn-primary w-full"
-                onClick={() => triggerFileDownload(latestExport.download_url, "tally-export.xml")}
+                onClick={() =>
+                  triggerFileDownload(latestExport.download_url, "tally-export.xml").catch((downloadError) =>
+                    setError(parseApiError(downloadError, "Unable to download export"))
+                  )
+                }
               >
                 Download XML
               </button>

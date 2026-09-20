@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 from groq import Groq
@@ -10,6 +11,12 @@ from app.config import settings
 from app.utils.json_parser import parse_json_object
 
 logger = logging.getLogger("ai-service")
+
+# A single transient Groq hiccup (rate limit, brief 5xx, connection reset)
+# would otherwise fail the whole document with no automatic recovery. Two
+# retries with a short backoff absorbs that without adding a dependency.
+GROQ_MAX_ATTEMPTS = 3
+GROQ_RETRY_BACKOFF_SECONDS = 2
 
 # ── Invoice / Bill ────────────────────────────────────────────────────────────
 
@@ -440,38 +447,66 @@ class LLMService:
             # invoice, bill, other all use the invoice prompt
             prompt = INVOICE_PROMPT
 
-        try:
-            response = self._client.chat.completions.create(
-                # llama-3.1-70b-versatile was decommissioned by Groq and now
-                # returns 400 model_decommissioned. llama-3.3-70b-versatile is
-                # its direct replacement. Overridable so the next deprecation
-                # does not require a code change.
-                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a strict JSON extraction engine for Indian financial documents.",
-                    },
-                    {
-                        "role": "user",
-                        "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
-                    },
-                ],
-                temperature=0.1,
-                max_tokens=2000,
-                timeout=settings.llm_timeout_seconds,
-                response_format={"type": "json_object"},
-            )
-        except Exception as e:
-            logger.error(f"Groq extraction failed: {e}")
+        response = None
+        last_error: Exception | None = None
+        for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    # llama-3.1-70b-versatile was decommissioned by Groq and now
+                    # returns 400 model_decommissioned. llama-3.3-70b-versatile is
+                    # its direct replacement. Overridable so the next deprecation
+                    # does not require a code change.
+                    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a strict JSON extraction engine for Indian financial documents.",
+                        },
+                        {
+                            "role": "user",
+                            "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
+                        },
+                    ],
+                    temperature=0.1,
+                    max_tokens=2000,
+                    timeout=settings.llm_timeout_seconds,
+                    response_format={"type": "json_object"},
+                )
+                break
+            except Exception as e:  # noqa: BLE001
+                last_error = e
+                # A 4xx like bad-request/auth/model-not-found will fail identically
+                # on retry — only worth retrying once we know it's worth trying at all.
+                status_code = getattr(e, "status_code", None)
+                if status_code is not None and 400 <= status_code < 500:
+                    break
+                if attempt < GROQ_MAX_ATTEMPTS:
+                    logger.warning(
+                        f"Groq extraction attempt {attempt}/{GROQ_MAX_ATTEMPTS} failed, retrying: {e}"
+                    )
+                    time.sleep(GROQ_RETRY_BACKOFF_SECONDS * attempt)
+
+        if response is None:
+            logger.error(f"Groq extraction failed after {GROQ_MAX_ATTEMPTS} attempt(s): {last_error}")
             return {
                 "document_type_detected": "unknown",
                 "confidence": 0.0,
-                "_llm_error": str(e),
+                "_llm_error": str(last_error),
             }
 
         raw_output = response.choices[0].message.content or ""
-        parsed = parse_json_object(raw_output)
+        try:
+            parsed = parse_json_object(raw_output)
+        except (ValueError, TypeError) as e:
+            # A truncated or malformed Groq response (e.g. hit max_tokens
+            # mid-object) must degrade like an API failure, not bubble up as
+            # an unhandled 500 that loses the OCR text and confidence.
+            logger.error(f"Failed to parse LLM JSON response: {e}")
+            return {
+                "document_type_detected": "unknown",
+                "confidence": 0.0,
+                "_llm_error": f"malformed_json_response: {e}",
+            }
 
         if doc_type == "bank_statement":
             return self._normalize_bank_payload(parsed)

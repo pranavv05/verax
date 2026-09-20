@@ -42,6 +42,12 @@
       NODE_ENV: development
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL:-postgresql://ca_user:ca_password@postgres:5432/ca_saas}
+      # Least-privilege role for the app's runtime queries — see the
+      # APP_DATABASE_URL comment in backend/src/config/env.js. DATABASE_URL
+      # above (the postgres bootstrap superuser) is still what `npm run
+      # migrate:latest` uses, since migrations need DDL rights this role
+      # intentionally lacks.
+      APP_DATABASE_URL: postgresql://ca_app:${APP_DB_PASSWORD:-ca_app_dev_password_change_me}@postgres:5432/${POSTGRES_DB:-ca_saas}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       AWS_REGION: ${AWS_REGION:-ap-south-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
@@ -113,6 +119,9 @@
       # DATABASE_URL points at localhost for the host-side backend/worker, which
       # would not resolve to postgres from inside this container.
       DATABASE_URL: postgresql://${POSTGRES_USER:-ca_user}:${POSTGRES_PASSWORD:-ca_password}@postgres:5432/${POSTGRES_DB:-ca_saas}
+      # Least-privilege role for extraction write-backs — see APP_DATABASE_URL
+      # comment in backend/src/config/env.js.
+      APP_DATABASE_URL: postgresql://ca_app:${APP_DB_PASSWORD:-ca_app_dev_password_change_me}@postgres:5432/${POSTGRES_DB:-ca_saas}
       AWS_REGION: ${AWS_REGION:-ap-south-1}
       AI_SERVICE_PORT: 8001
       # The backend writes uploads to backend/local-storage/<key>; that directory
@@ -146,6 +155,7 @@
     environment:
       NODE_ENV: development
       DATABASE_URL: ${DATABASE_URL:-postgresql://ca_user:ca_password@postgres:5432/ca_saas}
+      APP_DATABASE_URL: postgresql://ca_app:${APP_DB_PASSWORD:-ca_app_dev_password_change_me}@postgres:5432/${POSTGRES_DB:-ca_saas}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       AWS_REGION: ${AWS_REGION:-ap-south-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}

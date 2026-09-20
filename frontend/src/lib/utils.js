@@ -42,7 +42,7 @@ export const parseApiError = (error, fallback = "Something went wrong") => {
 
 export const cn = (...parts) => parts.filter(Boolean).join(" ");
 
-export const triggerFileDownload = (url, filename) => {
+export const triggerFileDownload = async (url, filename) => {
   if (!url) {
     return;
   }
@@ -52,16 +52,17 @@ export const triggerFileDownload = (url, filename) => {
   // setting a.href directly to the remote URL just navigates the tab to it
   // instead of downloading. Fetching the bytes and downloading from a same-
   // origin blob: URL forces a real download regardless of origin.
-  fetch(url)
-    .then((res) => res.blob())
-    .then((blob) => {
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename || "download";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
-    });
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Download failed with status ${res.status}`);
+  }
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename || "download";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(blobUrl);
 };

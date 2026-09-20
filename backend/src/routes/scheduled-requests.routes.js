@@ -3,6 +3,7 @@ const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
+const { standardApiLimiter } = require("../middlewares/rate-limit.middleware");
 const {
   createSchedule,
   getScheduleForClient,
@@ -13,6 +14,7 @@ const {
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(standardApiLimiter);
 
 const uuidSchema = Joi.string().uuid({ version: ["uuidv4", "uuidv5"] });
 const docTypeSchema = Joi.string().valid("invoice", "bank_statement", "bill", "other");

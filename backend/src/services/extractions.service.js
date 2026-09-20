@@ -116,6 +116,15 @@ const updateExtraction = async (db, { firmId, documentId, structuredData, userId
     throw ApiError.notFound("Extraction not found — document may not have been processed yet");
   }
 
+  await insertAuditLog(db, {
+    firmId,
+    userId,
+    action: "extraction_updated",
+    entityType: "document",
+    entityId: documentId,
+    metadata: {}
+  });
+
   return { success: true };
 };
 

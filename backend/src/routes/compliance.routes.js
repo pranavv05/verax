@@ -3,6 +3,7 @@ const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
+const { standardApiLimiter } = require("../middlewares/rate-limit.middleware");
 const ApiError = require("../utils/api-error");
 const gspService = require("../services/gsp.service");
 const {
@@ -13,6 +14,7 @@ const {
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(standardApiLimiter);
 
 const gstinVerifySchema = Joi.object({
   gstin: Joi.string().trim().uppercase().length(15).required()

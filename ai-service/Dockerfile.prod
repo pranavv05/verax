@@ -8,7 +8,11 @@ RUN apt-get update \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-eng \
+    tesseract-ocr-hin \
     libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    curl \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -22,6 +26,17 @@ RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, la
 
 COPY app/ ./app/
 
+# Run as non-root. PaddleOCR's model cache was downloaded to /root/.paddleocr
+# during the build step above, so it has to move with the user switch.
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+  && cp -r /root/.paddleocr /home/appuser/.paddleocr \
+  && chown -R appuser:appuser /home/appuser /app
+ENV HOME=/home/appuser
+USER appuser
+
 EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8001/health || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]

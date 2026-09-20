@@ -4,6 +4,7 @@ const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
+const { standardApiLimiter } = require("../middlewares/rate-limit.middleware");
 const {
   listClients,
   createClient,
@@ -98,6 +99,7 @@ const importConfirmBodySchema = Joi.object({
 });
 
 router.use(requireAuth);
+router.use(standardApiLimiter);
 
 router.get(
   "/",

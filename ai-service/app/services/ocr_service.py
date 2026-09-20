@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 import cv2
 import numpy as np
@@ -11,6 +12,21 @@ from PIL import Image
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# A pathological image (huge dimensions, adversarial input) can make PaddleOCR
+# or Tesseract hang indefinitely with no library-level timeout of their own.
+# Running each engine in a worker thread lets us bound it with a wall-clock
+# timeout instead of hanging the whole /process request forever.
+_ocr_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ocr-engine")
+
+
+def _run_with_timeout(func, *args, timeout_seconds: int, label: str):
+    future = _ocr_executor.submit(func, *args)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        logger.error("%s timed out after %ds", label, timeout_seconds)
+        return ""
 
 _paddle_ocr: PaddleOCR | None = None
 
@@ -195,7 +211,12 @@ class OCRService:
 
     def extract_text(self, processed_images: list[np.ndarray]) -> tuple[str, str]:
         logger.info("OCR starting: %d preprocessed page(s), trying PaddleOCR first", len(processed_images))
-        paddle_text = self._ocr_with_paddle(processed_images)
+        paddle_text = _run_with_timeout(
+            self._ocr_with_paddle,
+            processed_images,
+            timeout_seconds=settings.ocr_timeout_seconds,
+            label="PaddleOCR",
+        )
         if len(paddle_text) >= 50:
             logger.info("OCR result: engine=paddleocr chars=%d", len(paddle_text))
             return self._normalize_whitespace(paddle_text), "paddleocr"
@@ -203,7 +224,12 @@ class OCRService:
         logger.info(
             "PaddleOCR returned only %d char(s) (<50), falling back to Tesseract", len(paddle_text)
         )
-        fallback_text = self._ocr_with_tesseract(processed_images)
+        fallback_text = _run_with_timeout(
+            self._ocr_with_tesseract,
+            processed_images,
+            timeout_seconds=settings.ocr_timeout_seconds,
+            label="Tesseract",
+        )
         if fallback_text:
             logger.info("OCR result: engine=tesseract chars=%d", len(fallback_text))
             return self._normalize_whitespace(fallback_text), "tesseract"

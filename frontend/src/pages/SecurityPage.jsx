@@ -231,7 +231,7 @@ const SecurityPage = () => (
                 },
                 {
                   title: "Passwords",
-                  detail: "Hashed with bcrypt (12 rounds). We never store plaintext passwords. Password reset requires re-registration (email-based flow coming soon).",
+                  detail: "Hashed with bcrypt (12 rounds). We never store plaintext passwords. Self-service, email-based password reset is available from the login page.",
                   icon: "🔑",
                 },
                 {
