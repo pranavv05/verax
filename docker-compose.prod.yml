@@ -9,6 +9,17 @@
 #   GROQ_API_KEY, AI_SERVICE_API_KEY
 #   VITE_API_BASE_URL  (public URL of backend, e.g. https://api.example.com)
 #   FRONTEND_URL       (public URL of frontend, e.g. https://example.com)
+#
+# APP_DATABASE_URL — set this or tenant isolation does not work:
+#   DATABASE_URL above connects as the postgres image's bootstrap role, which
+#   is a Postgres SUPERUSER. Postgres never applies Row Level Security to a
+#   superuser, so without APP_DATABASE_URL, every firm's data is readable by
+#   every other firm through this deployment path — the RLS policies exist
+#   but are silently bypassed. Run migrations first (they create the
+#   least-privilege `ca_app` role), then set:
+#     APP_DB_PASSWORD=<a strong random password>
+#     APP_DATABASE_URL=postgresql://ca_app:<APP_DB_PASSWORD>@postgres:5432/${POSTGRES_DB:-ca_saas}
+#   Migrations still need DATABASE_URL's DDL rights, so keep both set.
 
 services:
   postgres:
@@ -54,6 +65,9 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL}
+      # See the APP_DATABASE_URL comment block at the top of this file —
+      # required for RLS tenant isolation to actually apply.
+      APP_DATABASE_URL: ${APP_DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       AWS_REGION: ${AWS_REGION:-ap-south-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET}
@@ -121,12 +135,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      APP_DATABASE_URL: ${APP_DATABASE_URL}
       AWS_REGION: ${AWS_REGION:-ap-south-1}
       AI_SERVICE_PORT: 8001
       GROQ_API_KEY: ${GROQ_API_KEY}
       AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY}
       AI_WRITE_BACK_ENABLED: ${AI_WRITE_BACK_ENABLED:-true}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      OCR_TIMEOUT_SECONDS: ${OCR_TIMEOUT_SECONDS:-120}
       MAX_PDF_PAGES_FOR_FALLBACK: ${MAX_PDF_PAGES_FOR_FALLBACK:-3}
       MAX_TOOL_UPLOAD_MB: ${MAX_TOOL_UPLOAD_MB:-25}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -154,6 +170,7 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL}
+      APP_DATABASE_URL: ${APP_DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       AWS_REGION: ${AWS_REGION:-ap-south-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET}

@@ -5,7 +5,15 @@ const path = require("path");
 
 const rootDir = path.resolve(__dirname, "..");
 const fixturePath = path.join(__dirname, "fixtures", "bank-statement-sample.txt");
-const pythonExe = path.join(rootDir, "ai-service", ".venv", "Scripts", "python.exe");
+// Picks up a local ai-service/.venv on whichever platform created it
+// (Scripts/python.exe on Windows, bin/python elsewhere), and falls back to
+// whatever python3 is on PATH so this runs in CI/Linux/macOS too, not just
+// on a Windows dev machine with that exact venv layout.
+const venvPython = [
+  path.join(rootDir, "ai-service", ".venv", "Scripts", "python.exe"),
+  path.join(rootDir, "ai-service", ".venv", "bin", "python")
+].find((candidate) => fs.existsSync(candidate));
+const pythonExe = venvPython || process.env.PYTHON || "python3";
 
 const rows = fs
   .readFileSync(fixturePath, "utf8")

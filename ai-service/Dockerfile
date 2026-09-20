@@ -1,3 +1,5 @@
+# Development image only (hot-reload via --reload, no non-root user, no
+# healthcheck). Production/deploy configs must build from Dockerfile.prod.
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1

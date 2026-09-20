@@ -3,6 +3,7 @@ const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
+const { standardApiLimiter } = require("../middlewares/rate-limit.middleware");
 const {
   getExtraction,
   updateExtraction,
@@ -14,6 +15,7 @@ const complianceService = require("../services/compliance.service");
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(standardApiLimiter);
 
 const lineItemSchema = Joi.object({
   description: Joi.string().allow("", null).optional(),

@@ -11,6 +11,11 @@ def _as_bool(value: str, default: bool = False) -> bool:
 class Settings:
     def __init__(self) -> None:
         self.database_url = os.getenv("DATABASE_URL", "").strip()
+        # See backend/src/config/env.js's APP_DATABASE_URL comment: RLS only
+        # isolates tenants when the connecting role isn't a Postgres
+        # superuser. Prefer a least-privilege role (the `ca_app` role from
+        # backend migration 20260825000000) for this service's writes too.
+        self.app_database_url = os.getenv("APP_DATABASE_URL", "").strip() or self.database_url
         self.local_storage = _as_bool(os.getenv("LOCAL_STORAGE", "false"))
         self.local_storage_path = os.getenv("LOCAL_STORAGE_PATH", "").strip()
         self.aws_region = os.getenv("AWS_REGION", "ap-south-1").strip()
@@ -23,6 +28,7 @@ class Settings:
         self.ai_service_port = int(os.getenv("AI_SERVICE_PORT", "8001"))
         self.tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip() or None
         self.llm_timeout_seconds = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+        self.ocr_timeout_seconds = int(os.getenv("OCR_TIMEOUT_SECONDS", "120"))
         self.max_pdf_pages_for_fallback = int(os.getenv("MAX_PDF_PAGES_FOR_FALLBACK", "3"))
         self.max_tool_upload_mb = int(os.getenv("MAX_TOOL_UPLOAD_MB", "25"))
 

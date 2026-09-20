@@ -11,7 +11,7 @@ from app.config import settings
 
 class PersistenceService:
     def __init__(self) -> None:
-        self._database_url = settings.database_url
+        self._database_url = settings.app_database_url
 
     def _connect(self):
         return psycopg2.connect(self._database_url)

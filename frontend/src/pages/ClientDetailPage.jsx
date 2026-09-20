@@ -317,7 +317,7 @@ const ClientDetailPage = () => {
       setBulkExportForm({ fromDate: "", toDate: "" });
       setToast(`${result.documentCount} documents exported successfully.`);
       if (result.downloadUrl) {
-        triggerFileDownload(result.downloadUrl, "tally-export.xml");
+        await triggerFileDownload(result.downloadUrl, "tally-export.xml");
       }
       await loadClient();
     } catch (exportError) {

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { waitlistApi } from "../../api/waitlist-api";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -20,28 +21,14 @@ const WaitlistForm = () => {
     setMessage("");
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/waitlist/join`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setStatus("success");
-        setMessage(data.message || "You've been added to the waitlist!");
-        setEmail("");
-      } else {
-        setStatus("error");
-        setMessage(data.message || "Something went wrong. Please try again.");
-      }
+      const data = await waitlistApi.join({ email });
+      setStatus("success");
+      setMessage(data.message || "You've been added to the waitlist!");
+      setEmail("");
     } catch (error) {
       console.error("Waitlist submission error:", error);
       setStatus("error");
-      setMessage("Failed to connect to the server.");
+      setMessage(error.data?.message || "Something went wrong. Please try again.");
     }
   };
 

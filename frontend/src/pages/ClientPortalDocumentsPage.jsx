@@ -58,7 +58,7 @@ const ClientPortalDocumentsPage = () => {
     setError("");
     try {
       const result = await clientPortalApi.documentDownload(document.id);
-      triggerFileDownload(result.downloadUrl, result.originalFilename);
+      await triggerFileDownload(result.downloadUrl, result.originalFilename);
     } catch (downloadError) {
       setError(parseApiError(downloadError, "We couldn't prepare that download."));
     } finally {

@@ -12,6 +12,17 @@ const envSchema = Joi.object({
   NODE_ENV: Joi.string().valid("development", "test", "production").default("development"),
   PORT: Joi.number().port().default(3000),
   DATABASE_URL: Joi.string().uri().required(),
+  // Optional: a separate, least-privilege connection string for the app's
+  // runtime pool. DATABASE_URL is also used by knex to run migrations,
+  // which need DDL rights (CREATE TABLE/POLICY/ROLE). If the role behind
+  // DATABASE_URL is a Postgres superuser (as it is for the bootstrap role
+  // in the official postgres Docker image, which self-hosted docker-compose
+  // deploys use), Row Level Security is silently bypassed for the app,
+  // since Postgres never applies RLS to superusers. Set APP_DATABASE_URL to
+  // the `ca_app` role created by migration 20260825000000 to close that
+  // hole. Managed Postgres (e.g. Render) already provisions a non-superuser
+  // connection role, so this is not required there.
+  APP_DATABASE_URL: Joi.string().uri().allow("").optional(),
   REDIS_URL: Joi.string().uri().required(),
   LOCAL_STORAGE: Joi.boolean().truthy("true").falsy("false").default(false),
   AWS_REGION: Joi.string().default("ap-south-1"),
@@ -84,6 +95,7 @@ module.exports = Object.freeze({
   NODE_ENV: value.NODE_ENV,
   PORT: value.PORT,
   DATABASE_URL: value.DATABASE_URL,
+  APP_DATABASE_URL: value.APP_DATABASE_URL,
   REDIS_URL: value.REDIS_URL,
   LOCAL_STORAGE: value.LOCAL_STORAGE,
   AWS_REGION: value.AWS_REGION,

@@ -98,9 +98,17 @@ docker compose exec backend npm run migrate:latest
 docker compose exec backend npm run seed:admin
 ```
 
-## Production Build (Railway Deployment Target)
+## Production Deployment
 
-`docker-compose.prod.yml` builds the same four application images (`backend`, `worker`, `frontend`, `ai-service`) from their Dockerfiles for production use — `restart: unless-stopped` on every service, no bind mounts to the local filesystem (S3 is required; there is no `LOCAL_STORAGE` fallback), Postgres/Redis with no ports exposed externally, and Docker healthchecks on all six services. `frontend` builds the Vite app and serves it with nginx (`frontend/Dockerfile`, `frontend/nginx.conf`); `ai-service` builds from `ai-service/Dockerfile.prod`, which pre-fetches the PaddleOCR models at build time instead of on first request.
+**Primary deployment target: Render + Vercel.** `render.yaml` is a Render Blueprint that deploys `backend`, `worker`, `ai-service`, Postgres, and Redis in one pass. The frontend is a static Vite build and deploys separately on Vercel (root directory `frontend`, build command `npm run build`, output directory `dist`).
+
+1. In Render, create a new Blueprint from this repo — it reads `render.yaml` automatically.
+2. Set the manual (`sync: false`) env vars listed in the comment block at the top of `render.yaml`: JWT/CLIENT_JWT secrets, AWS credentials, `GROQ_API_KEY`, `AI_SERVICE_API_KEY`, `FRONTEND_URL`, and the `SMTP_*` vars — without the SMTP vars, magic-link/password-reset/notification emails will not send.
+3. **Set the `verax-ai-service` instance to a paid, always-on plan before going live.** Render's free tier spins down on idle; the resulting cold start reloads PaddleOCR's models and will fail or time out the first request after any idle period.
+4. In Vercel, import the repo, set the root directory to `frontend`, and set `VITE_API_BASE_URL` to the deployed `verax-backend` URL from Render.
+5. Back in Render, set `verax-backend`'s and `verax-worker`'s `FRONTEND_URL` to the Vercel URL, and `AI_SERVICE_URL` to the deployed `verax-ai-service` URL.
+
+**Self-hosted alternative: `docker-compose.prod.yml`.** Builds the same four application images (`backend`, `worker`, `frontend`, `ai-service`) from their Dockerfiles for production use — `restart: unless-stopped` on every service, no bind mounts to the local filesystem (S3 is required; there is no `LOCAL_STORAGE` fallback), Postgres/Redis with no ports exposed externally, and Docker healthchecks on all six services. `frontend` builds the Vite app and serves it with nginx (`frontend/Dockerfile`, `frontend/nginx.conf`); `ai-service` builds from `ai-service/Dockerfile.prod`, which pre-fetches the PaddleOCR models at build time instead of on first request.
 
 Build and verify locally before deploying:
 
@@ -110,7 +118,7 @@ docker compose -f docker-compose.prod.yml build
 
 Required env vars (see the comment block at the top of `docker-compose.prod.yml`): `POSTGRES_PASSWORD`, `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `CLIENT_JWT_SECRET`, `AWS_S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GROQ_API_KEY`, `AI_SERVICE_API_KEY`, `VITE_API_BASE_URL`, `FRONTEND_URL`.
 
-This repo's `backend/Dockerfile`, `frontend/Dockerfile`, and `ai-service/Dockerfile.prod` are each deployable as a standalone Railway service (Railway builds directly from a Dockerfile per service rather than from `docker-compose.yml`). Actual Railway project setup — creating the services, wiring env vars and a Postgres/Redis plugin or external instances, and assigning domains — is a dashboard/CLI step outside this repo.
+Use this path only if you have the operational capacity to run and monitor your own VPS/host — patching, failover, and uptime are on you, not a managed platform.
 
 ## Local Development Without Docker
 

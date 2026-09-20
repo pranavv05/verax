@@ -1,0 +1,10 @@
+# Test-only dependencies, on top of requirements.txt.
+#
+# Deliberately does NOT include requirements.txt's heavy ML deps
+# (paddlepaddle/paddleocr/opencv, several hundred MB) — the current test
+# suite covers the LLM JSON-parsing/retry/confidence logic (app/services/
+# llm_service.py, app/utils/json_parser.py), which only needs groq/httpx/
+# python-dotenv, already pinned in requirements.txt. OCR-engine tests
+# (ocr_service.py) would need requirements.txt installed in full; add them
+# as a separate, slower CI job if that coverage becomes worth the install cost.
+pytest==9.1.1
