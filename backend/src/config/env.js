@@ -79,7 +79,15 @@ const envSchema = Joi.object({
   TALLY_EXPORT_URL_EXPIRY_SECONDS: Joi.number().integer().min(60).max(86400).default(900),
   MAX_UPLOAD_MB: Joi.number().integer().min(1).max(100).default(50),
   MAX_TOOL_UPLOAD_MB: Joi.number().integer().min(1).max(100).default(25),
-  DOCUMENT_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(50).default(3)
+  DOCUMENT_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(50).default(3),
+  // Controls whether document-processing.worker.js also runs the
+  // scheduled-requests BullMQ worker in-process (the default, matching the
+  // single verax-worker service in render.yaml). Set to "false" only when
+  // running backend/src/workers/scheduled-requests.worker.js as its own
+  // deployable process — leaving both on by default is redundant-but-safe
+  // (BullMQ delivers each job to exactly one consumer), not double-processing.
+  SCHEDULED_REQUESTS_EMBEDDED: Joi.boolean().truthy("true").falsy("false").default(true),
+  REVIEW_CONFIDENCE_THRESHOLD: Joi.number().min(0).max(1).default(0.4)
 }).unknown(true);
 
 const { value, error } = envSchema.validate(process.env, {
@@ -135,5 +143,7 @@ module.exports = Object.freeze({
   TALLY_EXPORT_URL_EXPIRY_SECONDS: value.TALLY_EXPORT_URL_EXPIRY_SECONDS,
   MAX_UPLOAD_MB: value.MAX_UPLOAD_MB,
   MAX_TOOL_UPLOAD_MB: value.MAX_TOOL_UPLOAD_MB,
-  DOCUMENT_WORKER_CONCURRENCY: value.DOCUMENT_WORKER_CONCURRENCY
+  DOCUMENT_WORKER_CONCURRENCY: value.DOCUMENT_WORKER_CONCURRENCY,
+  SCHEDULED_REQUESTS_EMBEDDED: value.SCHEDULED_REQUESTS_EMBEDDED,
+  REVIEW_CONFIDENCE_THRESHOLD: value.REVIEW_CONFIDENCE_THRESHOLD
 });

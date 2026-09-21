@@ -8,7 +8,7 @@ import { extractionsApi } from "../api/extractions-api";
 import { complianceApi } from "../api/compliance-api";
 import { documentVersionsApi } from "../api/document-versions-api";
 import { useAuth } from "../contexts/AuthContext";
-import { parseApiError } from "../lib/utils";
+import { parseApiError, triggerFileDownload } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 /* ─── field configs by doc type ────────────────────────────────────────────── */
@@ -524,6 +524,23 @@ const ReviewPage = () => {
     return payload;
   }, [form, isBankStatement, lineItems, transactions]);
 
+  const [downloadError, setDownloadError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadOriginal = async () => {
+    const url = document?.preview_url || document?.download_url || document?.downloadUrl;
+    if (!url) return;
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      await triggerFileDownload(url, document?.file_name || "document");
+    } catch (downloadErr) {
+      setDownloadError(parseApiError(downloadErr, "Unable to download this document"));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const openHistory = async () => {
     setHistoryOpen(true);
     setVersionError("");
@@ -802,8 +819,21 @@ const ReviewPage = () => {
                 </span>
               )}
               <StatusBadge status={document?.status || "uploaded"} />
+              {previewUrl && (
+                <button
+                  type="button"
+                  onClick={handleDownloadOriginal}
+                  disabled={downloading}
+                  className="rounded-md border border-[#d8c8a8] bg-white px-2.5 py-1 text-xs font-semibold text-ink-700 hover:bg-sand-50 disabled:opacity-60"
+                >
+                  {downloading ? "Downloading..." : "Download"}
+                </button>
+              )}
             </div>
           </div>
+          {downloadError && (
+            <p className="mb-2 text-xs font-semibold text-rose-600">{downloadError}</p>
+          )}
           {previewNode}
         </article>
 

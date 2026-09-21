@@ -264,7 +264,7 @@ const PublicUploadPage = () => {
             This upload link isn't working
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-zinc-400">{tokenError}</p>
-          <p className="mt-5 rounded-xl bg-white/[0.04] px-4 py-3 text-sm text-zinc-400">
+          <p className="mt-5 rounded-xl bg-well px-4 py-3 text-sm text-zinc-400">
             Upload links expire for your security. Ask your CA firm to send you a fresh one.
           </p>
         </motion.div>
@@ -347,7 +347,7 @@ const PublicUploadPage = () => {
             className={`relative w-full overflow-hidden rounded-2xl border-2 border-dashed px-5 py-9 text-center transition-colors duration-200 sm:py-12 ${
               dragging
                 ? "border-indigo-500 bg-indigo-500/[0.07]"
-                : "border-white/[0.12] bg-surface hover:border-indigo-500/50 hover:bg-white/[0.03]"
+                : "border-hairline bg-surface hover:border-indigo-500/50 hover:bg-well"
             }`}
           >
             <motion.div
@@ -422,7 +422,7 @@ const PublicUploadPage = () => {
           </div>
 
           {items.length === 0 ? (
-            <div className="mt-4 rounded-xl border border-dashed border-hairline bg-white/[0.02] px-4 py-8 text-center">
+            <div className="mt-4 rounded-xl border border-dashed border-hairline bg-well px-4 py-8 text-center">
               <p className="text-sm text-zinc-500">
                 Files you choose will appear here before they're sent.
               </p>
@@ -442,7 +442,7 @@ const PublicUploadPage = () => {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, x: -12 }}
                       transition={{ duration: 0.28, ease: EASE }}
-                      className="rounded-xl border border-hairline bg-white/[0.02] p-3.5"
+                      className="rounded-xl border border-hairline bg-well p-3.5"
                     >
                       <div className="flex items-start gap-3">
                         <FileTypeIcon extension={fileExtension(item.file.name)} size={26} />
@@ -475,7 +475,7 @@ const PublicUploadPage = () => {
                             {formatBytes(item.file.size)} · {item.message}
                           </p>
 
-                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-hairline-strong">
                             <motion.div
                               className={`h-full rounded-full ${
                                 item.status === "error"

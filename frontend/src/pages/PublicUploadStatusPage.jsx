@@ -18,7 +18,7 @@ const DOC_TYPE_LABELS = {
 const STATUS_ORDER = ["Received", "Processing", "Under Review", "Complete"];
 
 const STATUS_STYLES = {
-  Received: "bg-white/[0.06] text-zinc-300",
+  Received: "bg-well text-zinc-300",
   Processing: "bg-amber-500/15 text-amber-300",
   "Under Review": "bg-indigo-500/15 text-indigo-300",
   Complete: "bg-verify-500/15 text-verify-300"
@@ -57,7 +57,7 @@ const StatusTrack = ({ status }) => {
   return (
     <div className="mt-3 flex items-center gap-1.5" aria-hidden="true">
       {STATUS_ORDER.map((step, index) => (
-        <div key={step} className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+        <div key={step} className="h-1 flex-1 overflow-hidden rounded-full bg-hairline-strong">
           <motion.div
             className={`h-full rounded-full ${STATUS_BAR[status] || STATUS_BAR.Received}`}
             initial={{ scaleX: 0 }}
@@ -153,7 +153,7 @@ const PublicUploadStatusPage = () => {
               : "Everything you've sent to your CA firm, and where each file has got to."}
           </p>
           {data?.clientName ? (
-            <span className="mt-4 inline-flex items-center gap-2 rounded-full border border-hairline bg-white/[0.04] px-3 py-1.5 text-xs font-semibold text-zinc-300">
+            <span className="mt-4 inline-flex items-center gap-2 rounded-full border border-hairline bg-well px-3 py-1.5 text-xs font-semibold text-zinc-300">
               {data.clientName}
             </span>
           ) : null}
@@ -165,13 +165,13 @@ const PublicUploadStatusPage = () => {
             {[0, 1, 2].map((index) => (
               <div key={index} className="rounded-2xl border border-hairline bg-surface p-4">
                 <div className="flex items-center gap-3">
-                  <div className="h-9 w-7 animate-pulse rounded-md bg-white/[0.06]" />
+                  <div className="h-9 w-7 animate-pulse rounded-md bg-hairline-strong" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-4 w-2/5 animate-pulse rounded bg-white/[0.09]" />
-                    <div className="h-3 w-1/4 animate-pulse rounded bg-white/[0.06]" />
+                    <div className="h-4 w-2/5 animate-pulse rounded bg-hairline-strong" />
+                    <div className="h-3 w-1/4 animate-pulse rounded bg-hairline-strong" />
                   </div>
                 </div>
-                <div className="mt-3 h-1 w-full animate-pulse rounded-full bg-white/[0.06]" />
+                <div className="mt-3 h-1 w-full animate-pulse rounded-full bg-hairline-strong" />
               </div>
             ))}
             <span className="sr-only">Loading your document status…</span>

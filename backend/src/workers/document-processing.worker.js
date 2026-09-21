@@ -29,8 +29,17 @@ const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.jo
 const redisConnection = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null
 });
-const scheduledRequestsWorker = createScheduledRequestsWorker();
-const CONFIDENCE_THRESHOLD = 0.4;
+// Runs the scheduled-requests worker in this same process by default
+// (matching the single verax-worker service in render.yaml). Set
+// SCHEDULED_REQUESTS_EMBEDDED=false when running
+// src/workers/scheduled-requests.worker.js as its own deployable process
+// instead — without this flag, splitting document-processing and
+// scheduled-requests into separate services would run two independent
+// scheduled-requests workers with no way to turn either off.
+const scheduledRequestsWorker = env.SCHEDULED_REQUESTS_EMBEDDED
+  ? createScheduledRequestsWorker()
+  : null;
+const CONFIDENCE_THRESHOLD = env.REVIEW_CONFIDENCE_THRESHOLD;
 
 const validateJobPayload = (data) => {
   const documentId = data && typeof data.document_id === "string" ? data.document_id : null;
@@ -275,8 +284,10 @@ worker.on("error", (error) => {
 const shutdown = async () => {
   process.stdout.write("Shutting down document worker...\n");
   await worker.close();
-  await scheduledRequestsWorker.worker.close();
-  await scheduledRequestsWorker.connection.quit();
+  if (scheduledRequestsWorker) {
+    await scheduledRequestsWorker.worker.close();
+    await scheduledRequestsWorker.connection.quit();
+  }
   await redisConnection.quit();
   process.exit(0);
 };
@@ -298,7 +309,11 @@ process.on("SIGTERM", () => {
 (async () => {
   try {
     await assertRuntimeRoleIsNotSuperuser();
-    await Promise.all([worker.run(), scheduledRequestsWorker.worker.run()]);
+    const runs = [worker.run()];
+    if (scheduledRequestsWorker) {
+      runs.push(scheduledRequestsWorker.worker.run());
+    }
+    await Promise.all(runs);
   } catch (error) {
     process.stderr.write(`Worker failed to start: ${error.message}\n`);
     process.exit(1);

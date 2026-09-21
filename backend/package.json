@@ -8,6 +8,8 @@
     "start": "node src/server.js",
     "worker:documents": "node src/workers/document-processing.worker.js",
     "worker:documents:dev": "nodemon src/workers/document-processing.worker.js",
+    "worker:scheduled-requests": "node src/workers/scheduled-requests.worker.js",
+    "worker:scheduled-requests:dev": "nodemon src/workers/scheduled-requests.worker.js",
     "seed:admin": "node scripts/seed-demo.js",
     "migrate:latest": "knex migrate:latest",
     "migrate:rollback": "knex migrate:rollback",

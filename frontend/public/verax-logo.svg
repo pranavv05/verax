@@ -8,6 +8,11 @@
     the app). Inside the app the lockup is rendered by
     src/components/brand/VeraxLogo.jsx, which uses the real Inter webfont for
     the wordmark instead of relying on the viewer having Inter installed.
+
+    V1 colouring (matches VeraxLogo tone="dark", the default for the ivory/
+    white canvas): brand violet left chevron, dark navy right chevron and
+    wordmark. The light-mode media query below is kept as a defensive fallback
+    for a viewer that forces dark colour scheme on an embedded SVG.
   -->
   <defs>
     <clipPath id="veraxLogoOverlap">
@@ -19,24 +24,23 @@
         font-weight: 700;
         font-size: 22px;
         letter-spacing: -0.44px;
-        fill: #F2F2F3;
+        fill: #111827;
       }
-      /* The mark carries its own colour; only the wordmark adapts. */
-      @media (prefers-color-scheme: light) {
-        .verax-wordmark { fill: #0A0A0B; }
+      @media (prefers-color-scheme: dark) {
+        .verax-wordmark { fill: #F7F6F2; }
       }
     </style>
   </defs>
 
-  <!-- Left chevron — indigo -->
-  <path d="M10 5 19.5 16 10 27 4 27 13.5 16 4 5Z" fill="#6366F1"/>
+  <!-- Left chevron — brand violet -->
+  <path d="M10 5 19.5 16 10 27 4 27 13.5 16 4 5Z" fill="#6657D9"/>
 
-  <!-- Right chevron — white -->
-  <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#F2F2F3"/>
+  <!-- Right chevron — dark navy, for the light canvas -->
+  <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#111827"/>
 
-  <!-- Overlap: indigo at 60%, giving a layered third tone -->
+  <!-- Overlap: brand violet at 60%, giving a layered third tone -->
   <g clip-path="url(#veraxLogoOverlap)">
-    <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#6366F1" fill-opacity="0.6"/>
+    <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#6657D9" fill-opacity="0.6"/>
   </g>
 
   <text class="verax-wordmark" x="41" y="24">Verax</text>
