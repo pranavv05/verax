@@ -3,6 +3,7 @@ const { Worker } = require("bullmq");
 const env = require("../config/env");
 const { DOCUMENT_PROCESSING_QUEUE } = require("../constants/queues");
 const { withTenantTransaction } = require("../db/tenant-context");
+const { assertRuntimeRoleIsNotSuperuser } = require("../db/assert-safe-role");
 const { processDocumentWithAiService } = require("../services/ai.service");
 const { sendEmail } = require("../services/email.service");
 const { createNotification } = require("../services/notifications.service");
@@ -241,7 +242,11 @@ const worker = new Worker(
   },
   {
     connection: redisConnection,
-    concurrency: env.DOCUMENT_WORKER_CONCURRENCY
+    concurrency: env.DOCUMENT_WORKER_CONCURRENCY,
+    // Held off until assertRuntimeRoleIsNotSuperuser() passes, below — see
+    // that check's comment for why a worker running as a superuser would
+    // silently defeat Row Level Security for every job it processes.
+    autorun: false
   }
 );
 
@@ -289,3 +294,13 @@ process.on("SIGTERM", () => {
     process.exit(1);
   });
 });
+
+(async () => {
+  try {
+    await assertRuntimeRoleIsNotSuperuser();
+    await Promise.all([worker.run(), scheduledRequestsWorker.worker.run()]);
+  } catch (error) {
+    process.stderr.write(`Worker failed to start: ${error.message}\n`);
+    process.exit(1);
+  }
+})();

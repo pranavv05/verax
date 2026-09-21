@@ -104,7 +104,10 @@ const createScheduledRequestsWorker = () => {
     maxRetriesPerRequest: null
   });
   const worker = new Worker(SCHEDULED_REQUESTS_QUEUE, processScheduledRequests, {
-    connection
+    connection,
+    // Held off until the caller has verified the runtime DB role is not a
+    // superuser — see document-processing.worker.js's startup gate.
+    autorun: false
   });
 
   worker.on("ready", () => {

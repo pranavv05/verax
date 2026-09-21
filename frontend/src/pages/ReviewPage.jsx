@@ -552,6 +552,7 @@ const ReviewPage = () => {
   const confidenceStyle = confidenceTone(confidence);
   const showConfidencePanel = ["extracted", "review_required"].includes(document?.status);
   const taxMathWarning = structuredData?._tax_math_warning || "";
+  const pageTruncationWarning = structuredData?._page_truncation_warning || "";
   const lowConfidenceFields = Array.isArray(structuredData?.low_confidence_fields)
     ? structuredData.low_confidence_fields
     : [];
@@ -841,6 +842,12 @@ const ReviewPage = () => {
                     ⚠ Tax math mismatch detected — verify amounts before approving
                   </p>
                   <p className="mt-1">{taxMathWarning}</p>
+                </div>
+              )}
+              {pageTruncationWarning && (
+                <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  <p className="font-semibold">⚠ Document truncated — some pages were not processed</p>
+                  <p className="mt-1">{pageTruncationWarning}</p>
                 </div>
               )}
             </div>

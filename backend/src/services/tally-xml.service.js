@@ -156,8 +156,16 @@ const buildInvoiceVoucherXml = (document) => {
   const sgst = toNumber(extraction.sgst) ?? 0;
   const igst = toNumber(extraction.igst) ?? 0;
   const taxAmount = cgst + sgst + igst;
-  const taxableAmount =
-    toNumber(extraction.taxable_amount ?? extraction.subtotal) ?? Math.max(totalAmount - taxAmount, 0);
+  // Always derived from total - tax, never taken from the extracted
+  // taxable_amount/subtotal field directly: a voucher's party-ledger leg
+  // (totalAmount) must equal its purchase-ledger + tax legs by construction,
+  // or Tally's double-entry import is unbalanced. Taking the LLM/OCR's
+  // taxable_amount verbatim let an internally-inconsistent extraction (the
+  // exact case the Review page's own tax-math warning flags) still export
+  // into books that don't balance. Genuinely bad extractions (e.g. a
+  // missing total_amount) are caught before this point by
+  // assertDocumentsPassTaxMath in exports.service.js, not papered over here.
+  const taxableAmount = totalAmount - taxAmount;
   const purchaseLedgerName = getPurchaseLedgerName(extraction);
 
   const gstin = extraction.vendor_gstin || extraction.supplierGSTIN || extraction.supplier_gstin;
@@ -169,15 +177,23 @@ const buildInvoiceVoucherXml = (document) => {
     : "";
 
   const inventoryXml = buildInventoryEntries(extraction, safeVoucherType);
+  // Numeric negation (-x), not string-concatenating a literal "-": totalAmount
+  // and taxableAmount can legitimately be negative (a credit note misfiled as
+  // an invoice, or a missing total_amount driving taxableAmount below zero —
+  // see the taxableAmount comment above). Prepending a literal "-" to an
+  // already-negative formatted string produces a garbage double-negative
+  // like "--900.00", which is not a valid Tally AMOUNT.
+  const partyAmount = safeVoucherType === "Purchase" ? totalAmount : -totalAmount;
+  const purchaseAmount = -taxableAmount;
   const partyEntry = `
               <ALLLEDGERENTRIES.LIST>
                 <LEDGERNAME>${escapeXml(partyLedgerName)}</LEDGERNAME>
-                <AMOUNT>${safeVoucherType === "Purchase" ? "" : "-"}${escapeXml(totalAmount.toFixed(2))}</AMOUNT>
+                <AMOUNT>${escapeXml(partyAmount.toFixed(2))}</AMOUNT>
               </ALLLEDGERENTRIES.LIST>`;
   const purchaseEntry = `
               <ALLLEDGERENTRIES.LIST>
                 <LEDGERNAME>${escapeXml(purchaseLedgerName)}</LEDGERNAME>
-                <AMOUNT>-${escapeXml(taxableAmount.toFixed(2))}</AMOUNT>
+                <AMOUNT>${escapeXml(purchaseAmount.toFixed(2))}</AMOUNT>
               </ALLLEDGERENTRIES.LIST>`;
   const ledgerXml = partyEntry + purchaseEntry + buildTaxLedgerEntries(extraction);
 
@@ -241,6 +257,8 @@ const buildBankStatementVouchersXml = (document) => {
       closingBalance !== null && openingBalance !== null
         ? closingBalance - openingBalance
         : toNumber(extraction.total_amount) ?? 0;
+    const isCredit = amount >= 0;
+    const absAmount = Math.abs(amount);
 
     const bankLedger = extraction.bank_name
       ? `${extraction.bank_name} - ${extraction.account_number || "Bank"}`.trim()
@@ -249,15 +267,24 @@ const buildBankStatementVouchersXml = (document) => {
       extraction.statement_period_to || extraction.statement_period_from,
       document.uploaded_at
     );
+    // Same two-legged shape as buildBankTransactionVoucherXml below — the
+    // previous version of this fallback emitted only the bank-ledger leg
+    // with no offsetting entry at all, a structurally single-sided voucher
+    // that TallyPrime's double-entry import would very likely reject.
+    const counterLedger = isCredit ? "Sales Account" : "Purchase Account";
     return `
         <TALLYMESSAGE>
-          <VOUCHER VCHTYPE="${amount >= 0 ? "Receipt" : "Payment"}" ACTION="Create">
+          <VOUCHER VCHTYPE="${isCredit ? "Receipt" : "Payment"}" ACTION="Create">
             <DATE>${escapeXml(voucherDate)}</DATE>
             <NARRATION>${escapeXml(`Bank Statement - ${extraction.bank_name || ""} ${extraction.account_number || ""}`.trim() || "Bank Statement")}</NARRATION>
             <PARTYLEDGERNAME>${escapeXml(bankLedger)}</PARTYLEDGERNAME>
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${escapeXml(bankLedger)}</LEDGERNAME>
-              <AMOUNT>${escapeXml(Math.abs(amount).toFixed(2))}</AMOUNT>
+              <AMOUNT>${isCredit ? "" : "-"}${escapeXml(absAmount.toFixed(2))}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>${escapeXml(counterLedger)}</LEDGERNAME>
+              <AMOUNT>${isCredit ? "-" : ""}${escapeXml(absAmount.toFixed(2))}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>
           </VOUCHER>
         </TALLYMESSAGE>`;

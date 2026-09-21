@@ -93,8 +93,10 @@ const snapshotCurrentExtraction = async (db, { documentId, snapshotReason, creat
 const updateExtraction = async (db, { firmId, documentId, structuredData, userId = null }) => {
   const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId });
 
-  if (doc.status === "exported") {
-    throw ApiError.badRequest("Cannot edit an extraction that has already been exported");
+  if (doc.status === "exported" || doc.status === "reviewed") {
+    throw ApiError.badRequest(
+      "Cannot edit an extraction that has already been approved or exported. Reprocess it first."
+    );
   }
 
   await snapshotCurrentExtraction(db, {

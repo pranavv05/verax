@@ -11,12 +11,14 @@ if (process.env.SENTRY_DSN) {
 const app = require("./app");
 const env = require("./config/env");
 const pool = require("./db/pool");
+const { assertRuntimeRoleIsNotSuperuser } = require("./db/assert-safe-role");
 const { addScheduledRequestsJob } = require("./jobs/scheduled-requests.job");
 
 let server;
 
 const startServer = async () => {
   await pool.query("SELECT 1");
+  await assertRuntimeRoleIsNotSuperuser();
   await addScheduledRequestsJob();
   server = app.listen(env.PORT, () => {
     process.stdout.write(`Backend API listening on port ${env.PORT}\n`);

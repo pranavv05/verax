@@ -96,12 +96,13 @@ jobs:
       # (several hundred MB) — too slow/heavy for a per-PR gate on its own,
       # so OCR-engine code (app/services/ocr_service.py) only gets the syntax
       # check below. requirements-dev.txt installs just what the pytest suite
-      # actually needs (groq/httpx/python-dotenv + pytest) to test the LLM
-      # JSON-parsing/retry/confidence logic without the ML install cost.
+      # actually needs (groq/httpx/python-dotenv + opencv-python-headless +
+      # PyMuPDF + pytest) to test the LLM JSON-parsing/retry/confidence logic
+      # and the PDF/image preprocessing logic without the full ML install cost.
       - name: Syntax-check all source files
         run: python -m compileall -q app
       - name: Install test dependencies (light subset, no ML libs)
         run: |
-          grep -E '^(groq|httpx|python-dotenv)==' requirements.txt > requirements-light.txt
+          grep -E '^(groq|httpx|python-dotenv|opencv-python-headless|PyMuPDF)==' requirements.txt > requirements-light.txt
           pip install -r requirements-dev.txt -r requirements-light.txt
       - run: python -m pytest tests/ -v

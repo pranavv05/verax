@@ -40,6 +40,50 @@ describe("buildTallyXml — invoice vouchers", () => {
     assertBalanced(xml);
   });
 
+  test("stays balanced even when the extracted taxable_amount disagrees with total - tax", () => {
+    // Regression test: taxableAmount used to be taken from the extracted
+    // taxable_amount/subtotal field verbatim. When that field is
+    // inconsistent with total_amount - (cgst+sgst+igst) — exactly the
+    // scenario the Review page's own tax-math warning flags — the party
+    // ledger leg (total_amount) no longer equalled the purchase + tax legs,
+    // producing an unbalanced voucher that still exported successfully.
+    const doc = {
+      ...baseInvoice,
+      structured_data: {
+        ...baseInvoice.structured_data,
+        // 5000 + 450 + 450 = 5900, but taxable_amount claims 4000 —
+        // internally inconsistent extraction.
+        taxable_amount: 4000,
+        cgst: 450,
+        sgst: 450,
+        totalAmount: 5900
+      }
+    };
+    const xml = buildTallyXml({ documents: [doc] });
+    assertBalanced(xml);
+    // And specifically: the purchase-ledger leg must reflect total - tax
+    // (5000.00), not the inconsistent extracted taxable_amount (4000.00).
+    expect(xml).toContain("<AMOUNT>-5000.00</AMOUNT>");
+  });
+
+  test("stays balanced when total_amount is missing but tax fields are present", () => {
+    // Regression test: previously fell back to Math.max(total - tax, 0),
+    // which clamped to 0 while the tax ledger entries still summed to a
+    // nonzero amount — sums to -tax ≠ 0, an unbalanced voucher.
+    const doc = {
+      ...baseInvoice,
+      structured_data: {
+        ...baseInvoice.structured_data,
+        totalAmount: undefined,
+        total_amount: undefined,
+        cgst: 450,
+        sgst: 450
+      }
+    };
+    const xml = buildTallyXml({ documents: [doc] });
+    assertBalanced(xml);
+  });
+
   test("uses VCHTYPE Purchase for an invoice document", () => {
     const xml = buildTallyXml({ documents: [baseInvoice] });
     expect(xml).toMatch(/<VOUCHER VCHTYPE="Purchase"/);
@@ -181,6 +225,44 @@ describe("buildTallyXml — bank statement vouchers", () => {
     const xml = buildTallyXml({ documents: [doc] });
     expect(xml).toMatch(/<VOUCHER VCHTYPE="Receipt"/);
     expect(xml).toContain("<AMOUNT>3000.00</AMOUNT>");
+  });
+
+  test("the opening/closing balance fallback is two-legged, not a single-sided voucher", () => {
+    // Regression test: this used to emit only the bank-ledger leg with no
+    // offsetting entry at all — a structurally single-sided voucher that
+    // TallyPrime's double-entry import would very likely reject outright.
+    const doc = {
+      ...bankDoc,
+      structured_data: {
+        bank_name: "HDFC Bank",
+        account_number: "1234",
+        transactions: [],
+        opening_balance: 1000,
+        closing_balance: 4000,
+        statement_period_to: "20250430"
+      }
+    };
+    const xml = buildTallyXml({ documents: [doc] });
+    expect((xml.match(/<ALLLEDGERENTRIES\.LIST>/g) || []).length).toBe(2);
+    assertBalanced(xml);
+  });
+
+  test("a net decrease with no transactions produces a balanced Payment voucher", () => {
+    const doc = {
+      ...bankDoc,
+      structured_data: {
+        bank_name: "HDFC Bank",
+        account_number: "1234",
+        transactions: [],
+        opening_balance: 4000,
+        closing_balance: 1000,
+        statement_period_to: "20250430"
+      }
+    };
+    const xml = buildTallyXml({ documents: [doc] });
+    expect(xml).toMatch(/<VOUCHER VCHTYPE="Payment"/);
+    expect((xml.match(/<ALLLEDGERENTRIES\.LIST>/g) || []).length).toBe(2);
+    assertBalanced(xml);
   });
 });
 

@@ -3,9 +3,43 @@ const ApiError = require("../utils/api-error");
 const { buildTallyXml } = require("./tally-xml.service");
 const { uploadTextObject, createDownloadUrl } = require("./s3.service");
 const { createNotification } = require("./notifications.service");
+const { validateTaxMath } = require("./compliance.service");
 const env = require("../config/env");
 
 const EXPORT_STATUSES = new Set(["generated", "downloaded", "failed"]);
+
+// The Review page already shows a tax-math warning banner when CGST+SGST+IGST
+// doesn't reconcile with the total, or taxable+tax doesn't reconcile with the
+// total — but that warning was advisory only. Nothing stopped a document
+// carrying it from being exported into a Tally voucher, which
+// tally-xml.service.js now keeps mathematically balanced by construction
+// regardless (see its taxableAmount comment), meaning a bad extraction could
+// still export "successfully" into a voucher with correct arithmetic but
+// wrong numbers. This gate turns the same warning into a hard stop at
+// export time, so the CA has to go fix the extraction (edit + re-approve,
+// or reprocess) rather than ship numbers everyone already knew were wrong.
+const assertDocumentsPassTaxMath = (documents) => {
+  const failures = documents
+    .map((document) => ({
+      document,
+      issues: validateTaxMath(document.structured_data || {})
+    }))
+    .filter(({ issues }) => issues.length > 0);
+
+  if (failures.length === 0) return;
+
+  const detail = failures
+    .map(
+      ({ document, issues }) =>
+        `${document.file_name || document.id}: ${issues.map((issue) => issue.message).join("; ")}`
+    )
+    .join(" | ");
+
+  throw ApiError.badRequest(
+    `Cannot export — tax math does not reconcile on ${failures.length} document(s). ` +
+      `Fix the flagged fields on the Review page (or reprocess) before exporting. ${detail}`
+  );
+};
 
 const buildExportS3Key = ({ firmId, clientId, exportId }) => {
   const now = new Date();
@@ -61,7 +95,13 @@ const fetchApprovedDocuments = async (
     "d.firm_id = $1",
     "d.client_id = $2",
     "d.deleted_at IS NULL",
-    "(d.status = 'reviewed' OR e.reviewed_at IS NOT NULL)"
+    // Was "(d.status = 'reviewed' OR e.reviewed_at IS NOT NULL)" — but
+    // reviewed_at is never cleared once a document later becomes
+    // 'exported', so that OR let an already-exported document still match
+    // and be exported again through this endpoint, producing a duplicate
+    // tally_exports row with duplicate vouchers for the same invoice.
+    // Matches fetchBulkReviewedDocuments' stricter status-only check below.
+    "d.status = 'reviewed'"
   ];
   const values = [firmId, clientId];
   let idx = values.length + 1;
@@ -323,6 +363,16 @@ const getUnresolvedMappingWarnings = async (db, { firmId, documents }) => {
   return warnings;
 };
 
+const getTaxMathWarnings = (documents) =>
+  documents.flatMap((document) =>
+    validateTaxMath(document.structured_data || {}).map((issue) => ({
+      documentId: document.id,
+      invoiceNumber: getInvoiceNumber(document),
+      issue: "tax_math_mismatch",
+      message: issue.message
+    }))
+  );
+
 const generateTallyExportPreview = async (
   db,
   { firmId, clientId, documentIds = null, fromDate = null, toDate = null }
@@ -344,16 +394,22 @@ const generateTallyExportPreview = async (
 
   const xmlPayload = buildTallyXml({ documents: previewDocuments });
   const vouchers = parseTallyXmlPreview(xmlPayload);
-  const warnings = await getUnresolvedMappingWarnings(db, {
+  const mappingWarnings = await getUnresolvedMappingWarnings(db, {
     firmId,
     documents: previewDocuments
   });
+  // Surfaced here so the CA sees why an export will be blocked before they
+  // click confirm — the actual enforcement is assertDocumentsPassTaxMath in
+  // generateTallyExport/generateBulkTallyExport, not this preview.
+  const taxMathWarnings = getTaxMathWarnings(previewDocuments);
+  const warnings = [...mappingWarnings, ...taxMathWarnings];
 
   return {
     documentCount: previewDocuments.length,
     vouchers,
     warnings,
-    hasWarnings: warnings.length > 0
+    hasWarnings: warnings.length > 0,
+    blocksExport: taxMathWarnings.length > 0
   };
 };
 
@@ -466,6 +522,8 @@ const generateTallyExport = async (
     dateTo
   });
 
+  assertDocumentsPassTaxMath(approvedDocuments);
+
   const exportId = crypto.randomUUID();
   const normalizedDocumentIds = approvedDocuments.map((row) => row.id);
   const xmlS3Key = buildExportS3Key({
@@ -563,6 +621,8 @@ const generateBulkTallyExport = async (
   if (reviewedDocuments.length > 200) {
     throw ApiError.badRequest("Too many documents. Please use a narrower date range.");
   }
+
+  assertDocumentsPassTaxMath(reviewedDocuments);
 
   const exportId = crypto.randomUUID();
   const documentIds = reviewedDocuments.map((document) => document.id);
@@ -785,5 +845,7 @@ module.exports = {
   generateBulkTallyExport,
   generateTallyExportPreview,
   listExportHistory,
-  getExportDownload
+  getExportDownload,
+  assertDocumentsPassTaxMath,
+  getTaxMathWarnings
 };
