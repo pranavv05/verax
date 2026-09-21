@@ -308,7 +308,8 @@ const buildVoucherXml = (document) => {
 const buildTallyXml = ({ documents }) => {
   const vouchersXml = documents.map((document) => buildVoucherXml(document)).join("");
 
-  return `<ENVELOPE>
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Import Data</TALLYREQUEST>
   </HEADER>

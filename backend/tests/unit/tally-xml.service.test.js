@@ -274,7 +274,18 @@ describe("buildTallyXml — multi-document envelope", () => {
       structured_data: { invoiceNumber: "1", supplierName: "A", totalAmount: 100 }
     };
     const xml = buildTallyXml({ documents: [invoice, invoice] });
-    expect(xml.startsWith("<ENVELOPE>")).toBe(true);
+    expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
+    expect(xml).toContain("<ENVELOPE>");
     expect((xml.match(/<TALLYMESSAGE>/g) || []).length).toBe(2);
+  });
+
+  test("always begins with a UTF-8 XML declaration", () => {
+    const invoice = {
+      doc_type: "invoice",
+      file_name: "a.pdf",
+      structured_data: { invoiceNumber: "1", supplierName: "A", totalAmount: 100 }
+    };
+    const xml = buildTallyXml({ documents: [invoice] });
+    expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE>')).toBe(true);
   });
 });

@@ -9,6 +9,7 @@ const { sendEmail } = require("../services/email.service");
 const { createNotification } = require("../services/notifications.service");
 const {
   parseAiResponse,
+  detectDocTypeMismatch,
   markDocumentProcessingStarted,
   markDocumentProcessingSucceeded,
   markDocumentProcessingFailed,
@@ -83,10 +84,22 @@ const worker = new Worker(
       const aiParsed = parseAiResponse(aiRawResponse);
       const confidence = aiParsed.confidenceScore ?? 0;
       const documentTypeDetected = aiParsed.documentTypeDetected;
+      // Independent of the LLM's own self-reported documentTypeDetected
+      // (which the bank-statement path never even populates) — a structural
+      // check of the extracted field shapes against what the uploader
+      // claimed this document was. See detectDocTypeMismatch's comment.
+      const docTypeMismatchWarning = detectDocTypeMismatch(payload.docType, aiParsed.structuredData);
+      if (docTypeMismatchWarning) {
+        aiParsed.structuredData._doc_type_mismatch_warning = docTypeMismatchWarning;
+      }
       const requiresReview =
-        confidence < CONFIDENCE_THRESHOLD || documentTypeDetected === "unknown";
+        confidence < CONFIDENCE_THRESHOLD ||
+        documentTypeDetected === "unknown" ||
+        Boolean(docTypeMismatchWarning);
       const status = requiresReview ? "review_required" : "extracted";
-      const logMessage = requiresReview
+      const logMessage = docTypeMismatchWarning
+        ? `Document type mismatch detected — flagged for review`
+        : requiresReview
         ? `Low confidence (${confidence}) or wrong document type — flagged for review`
         : `Extracted with confidence ${confidence}`;
 

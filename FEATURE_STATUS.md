@@ -26,7 +26,7 @@ Status: ✅ Production Ready
 Backend: `POST /api/auth/login` — `auth.routes.js:93-112`, `authRateLimiter`, `loginSchema` (`:42-45`) → `loginUser` (`auth.service.js`), tenant-scoped
 Frontend: `pages/LoginPage.jsx` — Zod validation, loading/error states, redirect to `location.state.from`
 Migration: n/a (uses `users` table)
-Notes: **Fixed 2026-08-08** — `loginUser` now writes `login_success` on success and `login_failed` (`reason: "invalid_password"`) when a known user supplies the wrong password, both via the same transaction `client` (not a separate connection). The failure case returns an `{authFailed: true}` sentinel from the transaction handler instead of throwing inside it, since throwing there would have rolled back the audit insert along with everything else — the caller checks the sentinel and throws `ApiError.unauthorized` after the transaction commits. One deliberate gap remains: a login attempt against an **unknown email** cannot be audit-logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm — there is no firm to attribute the row to. This is a schema-level constraint, not an oversight.
+Notes: **Fixed 2026-08-08** — `loginUser` now writes `login_success` on success and `login_failed` (`reason: "invalid_password"`) when a known user supplies the wrong password, both via the same transaction `client` (not a separate connection). The failure case returns an `{authFailed: true}` sentinel from the transaction handler instead of throwing inside it, since throwing there would have rolled back the audit insert along with everything else — the caller checks the sentinel and throws `ApiError.unauthorized` after the transaction commits. **The remaining blind spot — a login attempt against an unknown email couldn't be audit-logged at all, since `audit_logs.firm_id` was `NOT NULL` with no firm to attribute the row to — is now fixed (2026-09-21).** Migration `20260922000000_audit_logs_nullable_firm_id.js` makes `firm_id` nullable and adds a write-only RLS escape hatch scoped to the exact `login`/`client_portal_login` auth contexts these two login flows already set; `loginUser`'s unknown-email branch now writes a `login_failed` row with `reason: "unknown_email"` and `firm_id: null` before returning the same sentinel pattern. These NULL-firm_id rows are intentionally invisible to every firm-scoped session (they don't belong to any firm) — write-only audit trail for future security-monitoring tooling, not something a CA firm's own audit log view will ever show. Covered by `backend/tests/integration/audit-logs-unknown-email.test.js`, which also proves the escape hatch can't be triggered outside its exact auth_context and that the resulting rows stay invisible to firm-scoped queries.
 
 ### Logout
 Status: ✅ Production Ready
@@ -200,10 +200,10 @@ Migration: `20260512000000_review_required_status.js` adds `'review_required'` e
 Notes: Logic is unchanged (`confidence < threshold || documentTypeDetected === "unknown"` → `review_required`); the threshold is now env-configurable per the codebase's stated conventions instead of a hardcoded literal. Documented in `.env.example`.
 
 ### Wrong document type detection
-Status: ⚠️ Partial
-AI Service: implemented as an LLM-prompted self-classification, not an independent check — `EXTRACTION_PROMPT` "STEP 1" (`llm_service.py:16-25`) instructs the model to return `document_type_detected: "unknown"` for non-matching documents; backed by a code-level OCR-garbage pre-check `is_ocr_garbage()` (`:209-222`) that short-circuits before even calling Groq — but only for non-bank-statement uploads (`:390`)
-Backend: `documentTypeDetected === "unknown"` correctly wired into confidence gating (`document-processing.worker.js:71`)
-Notes: Works end-to-end, but is self-reported by the LLM with no independent server-side re-validation against the caller-supplied `doc_type`.
+Status: ⚠️ Partial → ✅ Production Ready (independent check added 2026-09-21)
+AI Service: LLM self-classification unchanged — `EXTRACTION_PROMPT` "STEP 1" (`llm_service.py:16-25`) instructs the model to return `document_type_detected: "unknown"` for non-matching documents; backed by a code-level OCR-garbage pre-check `is_ocr_garbage()` that short-circuits before even calling Groq — but only for non-bank-statement uploads. The bank-statement prompt (`BANK_STATEMENT_PROMPT`) never asked the LLM to classify at all — it just extracts bank fields from whatever text it's given, so a mistagged document on that path had no LLM-side signal either way.
+Backend: `documentTypeDetected === "unknown"` still wired into confidence gating. New: `detectDocTypeMismatch(docType, structuredData)` (`document-processing.service.js`) — a **structural, code-level check independent of anything the LLM claims about itself**, run in `document-processing.worker.js` right after parsing the AI response. Compares the *shape* of the extracted fields against the caller-supplied `doc_type`: a real bank statement has transaction rows; a real invoice/bill has an invoice number, vendor GSTIN, or line items. A confident mismatch (unambiguously the other shape) forces `review_required` and sets `structured_data._doc_type_mismatch_warning`, surfaced on the Review page as an amber banner (mirrors the existing `_tax_math_warning`/`_page_truncation_warning` pattern).
+Notes: **Fixed 2026-09-21.** Closes the actual gap: the LLM's own self-report only ever means "invoice" or "unknown" and is entirely absent on the bank-statement path, so it could never catch e.g. an invoice mistakenly uploaded as a bank statement — that previously only surfaced indirectly (if at all) as unexplained low confidence from mostly-null fields, with no signal telling a reviewer *why*. The new check doesn't re-ask the LLM anything; it's a pure function over the already-extracted field shapes, which is what makes it genuinely independent. Deliberately conservative — an empty/low-quality extraction of either shape (neither confidently invoice-like nor bank-statement-like) is not flagged, since that's already handled by confidence gating; only an *unambiguous* shape mismatch triggers it. Covered by `backend/tests/unit/document-processing.service.test.js` (8 cases).
 
 ### Processing retry/error tracking
 Status: ✅ Production Ready
@@ -343,7 +343,7 @@ Backend: `POST /api/export/tally` — `exports.routes.js:83-105`, `requireAdmin`
 ### Balanced voucher (debits = credits)
 Status: ✅ Production Ready
 Backend: `tally-xml.service.js:281-298` `buildTallyXml`, restricted to an allow-list of voucher types (`ALLOWED_VOUCHER_TYPES`, `:1-7`)
-Notes: Now covered by `backend/tests/unit/tally-xml.service.test.js` (26 cases as of 2026-09-21) — asserts the debit=credit invariant for invoice and bank-statement vouchers, voucher-type inference/fallback, XML-escaping of party names, and the opening/closing-balance fallback when a bank statement has no transaction rows. **Fixed 2026-09-21:** `taxableAmount` in `buildInvoiceVoucherXml` previously fell back to the LLM-extracted `taxable_amount`/`subtotal` field when present, even though that field can disagree with `total_amount - tax_amount` — a bad extraction could produce a voucher that was internally balanced (debits=credits) but built from the wrong number, silently misstating the ledger. `taxableAmount` is now always computed as `totalAmount - taxAmount`, balanced by construction regardless of what the LLM extracted. Fixing this surfaced a real sign bug of its own (string-concatenating a literal `-` before an already-negative `.toFixed(2)` value produced `--900.00`-style garbage when `taxableAmount` went negative); fixed by negating numerically (`-taxableAmount`) before formatting, caught by a new test before it shipped. The no-transactions bank-statement fallback also previously emitted a single one-sided `<ALLLEDGERENTRIES.LIST>` entry (an unbalanced voucher); it now emits two legs (bank ledger + Sales/Purchase Account counter-ledger), matching the pattern already used for real transaction rows.
+Notes: Now covered by `backend/tests/unit/tally-xml.service.test.js` (27 cases as of 2026-09-21) — asserts the debit=credit invariant for invoice and bank-statement vouchers, voucher-type inference/fallback, XML-escaping of party names, the opening/closing-balance fallback when a bank statement has no transaction rows, and that the output always begins with a UTF-8 XML declaration. **Fixed 2026-09-21:** `taxableAmount` in `buildInvoiceVoucherXml` previously fell back to the LLM-extracted `taxable_amount`/`subtotal` field when present, even though that field can disagree with `total_amount - tax_amount` — a bad extraction could produce a voucher that was internally balanced (debits=credits) but built from the wrong number, silently misstating the ledger. `taxableAmount` is now always computed as `totalAmount - taxAmount`, balanced by construction regardless of what the LLM extracted. Fixing this surfaced a real sign bug of its own (string-concatenating a literal `-` before an already-negative `.toFixed(2)` value produced `--900.00`-style garbage when `taxableAmount` went negative); fixed by negating numerically (`-taxableAmount`) before formatting, caught by a new test before it shipped. The no-transactions bank-statement fallback also previously emitted a single one-sided `<ALLLEDGERENTRIES.LIST>` entry (an unbalanced voucher); it now emits two legs (bank ledger + Sales/Purchase Account counter-ledger), matching the pattern already used for real transaction rows. **Also fixed 2026-09-21 (separately):** `buildTallyXml`'s output began directly with `<ENVELOPE>` and had no `<?xml version="1.0" encoding="UTF-8"?>` declaration — TallyPrime accepted it as-is (not a functional break), but any stricter XML consumer would reject it as malformed. Now prepended unconditionally. The ai-service's own separate bank-statement-to-XML generator (`bank_statement_xml_service.py`, a different code path for the standalone tool) already includes a declaration via `xml.dom.minidom`'s default serialization — confirmed by direct test, no fix needed there.
 
 ### GST ledger entries without requiring item mapping
 Status: ✅ Production Ready
@@ -708,7 +708,7 @@ Notes: `getClientById` now returns a `portal: {enabled, email, lastLoginAt}` obj
 Status: ✅ Production Ready
 Backend: `POST /api/client-portal/auth/login` — `client-auth.routes.js`, own `clientAuthRateLimiter` (10 per 15 min per IP, separate from the firm portal's budget), Joi-validated → `clientLogin`. Looks the client up by `portal_email` with `portal_enabled = true AND deleted_at IS NULL`, bcrypt-compares, mints a 15-min access token and a 30-day rotating refresh token, stamps `portal_last_login_at`, audit-logs `client_portal_login`.
 Frontend: `pages/ClientPortalLoginPage.jsx` — Zod validation, loading/error states, "Forgot password" reveals "Contact your CA firm to reset your password".
-Notes: Unknown email, wrong password, and inactive client all return the byte-identical generic `Invalid email or password` — verified by test that the unknown-email and wrong-password responses match exactly. Failures against a *known* client are audit-logged as `client_portal_login_failed` with a reason; an unknown email cannot be, for the same `audit_logs.firm_id NOT NULL` reason documented on the firm-side Login entry.
+Notes: Unknown email, wrong password, and inactive client all return the byte-identical generic `Invalid email or password` — verified by test that the unknown-email and wrong-password responses match exactly. Failures against a *known* client are audit-logged as `client_portal_login_failed` with a reason. **Fixed 2026-09-21:** an unknown-email attempt now is too (`reason: "unknown_email"`, `firm_id: null`) — same fix and same migration as the firm-side Login entry, extended to also cover this flow's `client_portal_login` auth_context.
 
 ### Client portal refresh with rotation + reuse detection
 Status: ✅ Production Ready
@@ -1138,14 +1138,15 @@ Notes: None of these were fake-feature gaps — the download flow and password r
 
 ### CI/CD pipeline
 Status: ❌ Not Built → ✅ Production Ready (added 2026-09-20)
-Infra: `.github/workflows/ci.yml` — four jobs on every PR/push to `main`: `backend` (install + JS syntax check + `npm test` unit suite), `backend-integration` (spins up a real `postgres:15` service container, runs migrations, runs the RLS integration test), `frontend` (`npm ci && npm run build`, catching build-breaking errors), `ai-service` (syntax check via `compileall` + a light-dependency `pytest` run covering the LLM JSON-parsing/retry logic, without installing the heavy paddleocr/paddlepaddle stack).
+Infra: `.github/workflows/ci.yml` — four jobs on every PR/push to `main`: `backend` (install + JS syntax check + `npm test` unit suite), `backend-integration` (spins up a real `postgres:15` service container, runs migrations, runs the integration suite), `frontend` (`npm ci && npm test && npm run build` — the Vitest suite now runs before the build, added 2026-09-21), `ai-service` (syntax check via `compileall` + a light-dependency `pytest` run, without installing the heavy paddleocr/paddlepaddle stack).
 Notes: No CI existed at all before this (no `.github/workflows` directory). Deliberately scoped as a baseline quality gate rather than full coverage — see "Automated test suites" below for what is and isn't covered, and `ai-service/requirements-dev.txt`'s comment for why OCR-engine code only gets a syntax check, not a real test run, in CI.
 
 ### Automated test suites
-Status: ❌ Not Built → ⚠️ Partial (added 2026-09-20, expanded 2026-09-21)
-Backend: Jest (`backend/package.json` `test`/`test:integration` scripts). Unit (`backend/tests/unit/`, DB-free, 46 cases): `compliance.service.test.js` (18), `tally-xml.service.test.js` (26, expanded 2026-09-21 with tax-math-balancing/sign-bug/no-transactions-fallback coverage), `exports.service.test.js` (6, new — covers the tax-math export block). Integration (`backend/tests/integration/`, needs live Postgres, 15 cases): `rls.test.js` (11, expanded 2026-09-21 with the client-portal sibling-isolation block), `extraction-edit-lock.test.js` (3, new — the reviewed/exported edit-lock regression guard), `refresh-token-reuse.test.js` (1, new — proves the JWT reuse-detection rollback bug stays fixed by asserting the *rotated* token is also revoked, not just that the replay fails).
-AI Service: pytest (`ai-service/tests/`, `requirements-dev.txt`, 27 cases). `test_json_parser.py` (8), `test_llm_service.py` (16, mocks the Groq client — covers the malformed-JSON degrade, retry/backoff, no-retry-on-4xx, and confidence-adjustment branches), `test_preprocess_service.py` (3, new — the multi-page truncation regression guard), now actually executed in CI (not just syntax-checked) via `opencv-python-headless`/`PyMuPDF` added to the CI install step.
-Notes: This covers the highest-risk paths identified in a full-repo production-readiness audit (RLS tenant isolation incl. client-portal sibling isolation, GST/tax-math correctness incl. export-time blocking, Tally XML debit=credit correctness, approved-document edit locking, multi-page PDF truncation, JWT refresh-token reuse detection, LLM JSON-parse/retry branching) — 88 test cases total as of 2026-09-21, all independently run and verified against real infrastructure (a live Postgres, including confirming each new RLS/edit-lock/refresh-token test fails hard when its fix is reverted) rather than written blind. It is deliberately not full coverage: no frontend tests exist (no Vitest/Jest/RTL configured), no OCR-engine tests exist (`ocr_service.py` — would need the full heavy `paddleocr`/`paddlepaddle` install), and most backend services/routes still have no test at all. The three legacy scripts in the top-level `tests/` directory (`test-excel-to-xml.js`, `test-bank-statement.js`, `test-extraction-prompt.js`) are separate, older, manual smoke scripts — two of them previously hardcoded a Windows-only `.venv/Scripts/python.exe` path (fixed 2026-09-20 to also check `.venv/bin/python` and fall back to `python3` on PATH, so they're at least cross-platform-runnable now); they still are not wired into CI since they need the full ai-service dependency install.
+Status: ❌ Not Built → ⚠️ Partial (added 2026-09-20, expanded 2026-09-21 twice — backend/ai-service, then frontend)
+Backend: Jest (`backend/package.json` `test`/`test:integration` scripts). Unit (`backend/tests/unit/`, DB-free, 55 cases): `compliance.service.test.js` (18), `tally-xml.service.test.js` (27, expanded with tax-math-balancing/sign-bug/no-transactions-fallback/XML-declaration coverage), `exports.service.test.js` (6 — the tax-math export block), `document-processing.service.test.js` (8, new — the independent document-type-mismatch check). Integration (`backend/tests/integration/`, needs live Postgres, 19 cases): `rls.test.js` (11, includes the client-portal sibling-isolation block), `extraction-edit-lock.test.js` (3 — the reviewed/exported edit-lock regression guard), `refresh-token-reuse.test.js` (1 — proves the JWT reuse-detection rollback bug stays fixed by asserting the *rotated* token is also revoked, not just that the replay fails), `audit-logs-unknown-email.test.js` (4, new — proves the unknown-email login blind spot is closed for both firm and client-portal logins, and that the RLS escape hatch can't be triggered outside its exact auth_context or read back by a firm-scoped session).
+AI Service: pytest (`ai-service/tests/`, `requirements-dev.txt`, 27 cases). `test_json_parser.py` (8), `test_llm_service.py` (16, mocks the Groq client — covers the malformed-JSON degrade, retry/backoff, no-retry-on-4xx, and confidence-adjustment branches), `test_preprocess_service.py` (3 — the multi-page truncation regression guard), executed in CI (not just syntax-checked) via `opencv-python-headless`/`PyMuPDF` added to the CI install step.
+Frontend: **New 2026-09-21.** Vitest + React Testing Library (`frontend/package.json` `test`/`test:watch` scripts, `vitest.config.js`, jsdom environment), 47 cases across 6 files in `frontend/tests/unit/`: `lib-utils.test.js` (parseApiError/cn/formatDate/formatDateTime, and `triggerFileDownload` with a mocked `fetch`+`URL.createObjectURL`), `permissions.test.js` (`isAdmin`), `token-store.test.js` (the in-memory token/user singletons), `api-client.test.js` (11 cases — the highest-value target: Bearer token attachment, transparent 401→refresh→retry, concurrent-401 refresh de-duplication via the shared `refreshPromise`, session clearing + `unauthorizedHandler` invocation when refresh itself fails, `skipRefresh` preventing an infinite retry loop, FormData vs JSON body handling, blob/204 response handling), `ErrorBoundary.test.jsx` (crash recovery, including that the reload button actually calls `window.location.reload`), `StatusBadge.test.jsx` (status→label mapping). Wired into CI: the `frontend` job now runs `npm test` before `npm run build`.
+Notes: This covers the highest-risk paths identified in a full-repo production-readiness audit across all three services (RLS tenant isolation incl. client-portal sibling isolation, GST/tax-math correctness incl. export-time blocking, Tally XML debit=credit correctness, approved-document edit locking, multi-page PDF truncation, JWT refresh-token reuse detection — both backend and now the frontend's own transparent-refresh logic that depends on it working, unknown-email login audit logging, independent document-type verification, LLM JSON-parse/retry branching) — 148 test cases total as of 2026-09-21 (74 backend + 27 ai-service + 47 frontend), all independently run and verified against real infrastructure (a live Postgres for backend integration tests, a real browser build for frontend) rather than written blind. It is deliberately not full coverage: no OCR-engine tests exist (`ocr_service.py` — would need the full heavy `paddleocr`/`paddlepaddle` install), most backend services/routes still have no test at all, and the frontend suite covers pure logic modules and two components rather than full page-level integration tests (e.g. nothing yet exercises `ReviewPage.jsx`'s warning banners or `ProtectedRoute.jsx`'s auth gating directly — both are still correct by manual verification and by what depends on them, just not test-covered). The three legacy scripts in the top-level `tests/` directory (`test-excel-to-xml.js`, `test-bank-statement.js`, `test-extraction-prompt.js`) are separate, older, manual smoke scripts and still not wired into CI since they need the full ai-service dependency install.
 
 ---
 
@@ -1183,11 +1184,30 @@ Notes (2026-09-11, preserved): `docker-compose.prod.yml`'s `backend` and `worker
 
 | Status | Count |
 |--------|-------|
-| ✅ Production Ready | 176 |
-| ⚠️ Partial | 3 |
+| ✅ Production Ready | 177 |
+| ⚠️ Partial | 2 |
 | ❌ Not Built | 0 |
 | 🔧 Needs Fix | 0 |
 | **Total** | 179 |
+
+*(2026-09-21, fourth pass — closed out the four items still open after the third pass's pre-publish
+sweep: (1) added a real frontend test suite (Vitest + RTL, 47 cases, wired into CI) where none existed
+before, focused on the actual highest-risk frontend logic — the 401→refresh→retry flow in
+`api-client.js`, crash recovery, and the pure utility/permission modules other components depend on,
+not padding for a coverage number; (2) closed the login-audit blind spot for real: `audit_logs.firm_id`
+is now nullable with a narrow RLS escape hatch, and — this pass caught something the original finding
+missed — the identical gap existed on the client-portal login flow too (a different `auth_context`
+value), so both got fixed together rather than leaving the client-portal half broken; (3) added the
+missing `<?xml version="1.0" encoding="UTF-8"?>` declaration to `buildTallyXml`'s output; (4) added
+`detectDocTypeMismatch`, a structural check independent of the LLM's own self-report — the LLM's
+classification only ever means "invoice" or "unknown" and never even runs on the bank-statement path,
+so a mistagged document previously had no explicit signal, just unexplained low confidence. All four
+verified against real infrastructure: the new migration's up/down cycle tested against a live
+Postgres, a direct RLS-role query proving the audit-log escape hatch can't be triggered outside its
+exact context, and the full test suite (74 backend + 27 ai-service + 47 frontend = 148 cases) green
+after every change. 2 entries moved to ✅ this pass (Wrong document type detection, plus notes-only
+fixes on two already-✅ entries); Top Gaps is now down to a single item, and it's a deploy-time budget
+decision, not a code defect.)*
 
 *(2026-09-21, third pass — pre-publish sweep of every remaining ⚠️/🔧 entry, since the goal of this
 pass was "fix and build what's required before publishing the site." Real fixes: (1) added a
@@ -1271,12 +1291,10 @@ behaviour was touched.)*
 
 ## Top Gaps to Address
 
-*Rewritten 2026-09-21 after a pre-publish sweep resolved nearly everything previously on this list
-(the JWT refresh-token reuse-detection rollback, the scheduled-requests standalone-process gap, staff
-plan visibility, the RLS superuser-bypass bug and its startup guard, the client-portal RLS backstop,
-the approved-document edit-lock gap, the tax-math export block, the multi-page PDF truncation gap,
-CI/test coverage additions, and the Render Postgres free-tier data-loss risk — see their respective
-entries above for what changed and how each was verified). What's left, in priority order:*
+*Rewritten 2026-09-21 (second time same day) after closing out items 2-5 from the previous version of
+this list — frontend test coverage, the login-audit blind spot, the Tally XML declaration, and an
+independent document-type check — see their entries above for what changed and how each was verified.
+What's left is now down to a single item, and it's an operator decision, not a code defect:*
 
 1. **Render's `verax-ai-service`/`verax-backend`/`verax-worker` are still on `plan: free` in the
    committed `render.yaml`** — only `verax-postgres` has been moved to a paid tier (that was the one
@@ -1285,22 +1303,12 @@ entries above for what changed and how each was verified). What's left, in prior
    tier means the same idle-spindown problem for API/worker requests. This is a deploy-time operator
    decision (which paid tier, what budget) rather than a code change, so it was deliberately left for
    the person doing the actual go-live deploy rather than guessed at here.
-2. **Frontend has zero test coverage** — no Vitest/Jest/RTL configured anywhere in `frontend/`.
-   Backend and ai-service both gained real test suites across the 2026-09-20/21 passes; the frontend
-   did not. Worth prioritizing before the next UI-heavy change, given how much of the review/export
-   UX (confidence banners, tax-math/truncation warnings, edit locks) now depends on correctly reading
-   backend-computed flags.
-3. **Login audit logging has one intentional blind spot**: a failed login against an email that
-   doesn't exist in the system cannot be logged, because `audit_logs.firm_id` is `NOT NULL` with no
-   RLS escape hatch for an unresolved firm. Known-user wrong-password attempts and all successful
-   logins are logged; unknown-email attempts are not. Closing this fully would require a schema
-   change (e.g. a nullable `firm_id` or a sentinel "system" firm).
-4. **Tally XML has no `<?xml ?>` declaration** — `buildTallyXml` output begins directly with
-   `<ENVELOPE>`. TallyPrime accepts this, so it is not a functional break, but any consumer or test
-   asserting a leading `<?xml` will fail.
-5. **Wrong document type detection has no independent server-side check** — it's self-reported by
-   the LLM (`document_type_detected`) with no re-validation against the caller-supplied `doc_type`.
-   Works end-to-end today; listed here as a known design tradeoff rather than a defect.
+
+Two items remain intentionally not "fixed" because they're accepted design tradeoffs, not defects —
+see their own entries above for the reasoning: `Public design system — V1` (some public pages are
+deliberately still V1, not a migration gap) and `Automated test suites` (real coverage on the highest-
+risk paths across all three services now, including the frontend, but still not exhaustive — most
+backend services/routes and all of `ocr_service.py` remain untested).
 
 ## What Can Be Piloted Today
 
