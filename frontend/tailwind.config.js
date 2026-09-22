@@ -8,31 +8,34 @@ export default {
         mono: ["IBM Plex Mono", "Consolas", "monospace"],
         // Public/marketing surface only. Applied via `font-inter` on public page
         // roots so the authenticated dashboard keeps its existing Manrope type.
-        inter: ["Inter", "-apple-system", "Segoe UI", "Helvetica Neue", "sans-serif"]
+        inter: ["Inter", "-apple-system", "Segoe UI", "Helvetica Neue", "sans-serif"],
+        // V3 — display serif for headlines/pull-quotes only (vx-display-xl,
+        // vx-h2-xl, vx-quote). Never used for body copy, nav, buttons, labels
+        // or anything functional — that stays on Inter. See DESIGN_SYSTEM.md.
+        serif: ["\"Instrument Serif\"", "Georgia", "\"Times New Roman\"", "serif"]
       },
       colors: {
         // --- Public-surface design system (V1, light-first) ------------------
         // Additive namespaces. The legacy ink/sand/mint/ember scales below are
         // still used by every authenticated dashboard page and are unchanged.
         //
-        // `brand` is the V1 primary accent: indigo/violet (#6657D9 at 500),
-        // reserved for CTAs and small emphasis marks — never a background wash.
-        // 900/950 are kept at their original values (this scale predates the
-        // V1 pass, from an earlier light-mode attempt that DemoRequestForm's
-        // dormant `tone="light"` branch already depended on) since the brief
-        // asked for them to be reused/extended rather than replaced.
+        // `brand` is the V3 primary accent: a single confident cobalt
+        // (#3B5BFF at 500), reserved for CTAs and small emphasis marks —
+        // never a background wash. Retuned from V1's violet for the
+        // Stripe/Mercury-inspired rebrand (2026-09-22) — same role, same call
+        // sites, new hue.
         brand: {
-          50: "#F3F1FC",
-          100: "#E7E2F9",
-          200: "#CFC5F2",
-          300: "#B0A0E8",
-          400: "#8C79E0",
-          500: "#6657D9",
-          600: "#5344B8",
-          700: "#423593",
-          800: "#332A72",
-          900: "#22306E",
-          950: "#161E43"
+          50: "#F3F5FF",
+          100: "#E7ECFF",
+          200: "#C7D2FF",
+          300: "#9FB0FF",
+          400: "#6B84FF",
+          500: "#3B5BFF",
+          600: "#2E48DB",
+          700: "#2438B0",
+          800: "#1C2C87",
+          900: "#182566",
+          950: "#0F1740"
         },
         // Secondary accent: muted blue, used far more sparingly than `brand` —
         // links inside product mockups, secondary icons. Never a CTA fill.
@@ -48,17 +51,20 @@ export default {
         // `navy` stays exactly as-is because AuthSplitLayout still uses it.
         // Warm-neutral rather than blue-black so it sits correctly against the
         // ivory canvas instead of reading as a second, cooler palette.
+        // Retuned 2026-09-22 for the Stripe/Mercury-inspired rebrand: warmer
+        // and slightly softer than the V2 near-black, so it sits correctly
+        // against a pure-white canvas instead of reading cold/harsh.
         carbon: {
-          950: "#08090B",
-          900: "#0E1013",
-          800: "#16181D",
-          700: "#1F2229",
-          600: "#2B2F38",
-          500: "#3E434E",
-          400: "#6B717D",
-          300: "#9AA0AB",
-          200: "#C8CCD3",
-          100: "#E4E6EA"
+          950: "#0A0A0C",
+          900: "#131316",
+          800: "#1F1F24",
+          700: "#313138",
+          600: "#47474F",
+          500: "#63636D",
+          400: "#8A8A93",
+          300: "#B3B3BA",
+          200: "#D4D4D9",
+          100: "#E8E8EB"
         },
         // Deep navy, used ONLY as a full-bleed background for contrast
         // sections (e.g. the auth split panel) — never for text or borders on
@@ -126,22 +132,26 @@ export default {
           500: "#D97706",
           600: "#B45309"
         },
+        // Retuned to match the new `brand` cobalt — used for focus rings and
+        // the public-surface hero glow, so those stay visually unified with
+        // the new accent rather than the old violet-adjacent indigo.
         indigo: {
-          400: "#818CF8",
-          500: "#6366F1",
-          600: "#4F46E5"
+          400: "#6B84FF",
+          500: "#3B5BFF",
+          600: "#2E48DB"
         },
-        // Light public-surface tokens (V1). Additive — the dashboard's
+        // Light public-surface tokens. Additive — the dashboard's
         // `ink`/`sand`/`mint`/`ember` scale is untouched either way.
         // `canvas`/`surface`/`well`/`hairline*` have zero call sites outside
         // the public surface (verified by grep), so they're retuned in place
-        // rather than renamed: canvas = warm ivory page background, surface =
-        // white raised cards/mockups, well = recessed mockup chrome.
-        canvas: "#F7F6F2",
+        // rather than renamed. Retuned 2026-09-22: pure white canvas instead
+        // of warm ivory — Stripe/Mercury both read as white-first, not
+        // cream-first — with `well` a barely-there cool-neutral recess.
+        canvas: "#FFFFFF",
         surface: "#FFFFFF",
-        well: "#F0EEE7",
-        hairline: "#E5E3DD",
-        "hairline-strong": "#D6D2C6",
+        well: "#F6F6F7",
+        hairline: "#E9E9EC",
+        "hairline-strong": "#D8D8DE",
 
         // Text scale. `zinc-*` is used exclusively by the public surface (the
         // dashboard is on ink/graphite), so the ramp is retuned in place —

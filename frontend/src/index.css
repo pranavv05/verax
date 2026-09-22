@@ -180,33 +180,41 @@ a {
     @apply vx-label text-indigo-400;
   }
 
+  /* V3 type system (2026-09-22 rebrand): Instrument Serif for every display
+     headline and pull-quote, Inter for everything else (body, nav, buttons,
+     labels, forms) — serif marks the editorial moments, sans carries the
+     product. Instrument Serif ships only in regular 400 + italic; it has no
+     bold/extrabold cut, so these are deliberately `font-normal` — forcing a
+     weight Google Fonts didn't ship would fall back to synthetic bolding,
+     which looks broken. Tracking/line-height are loosened from the old
+     grotesk values too: a serif at display size wants air, not compression. */
   .vx-display {
-    @apply font-inter font-extrabold text-zinc-100;
+    @apply font-serif font-normal text-zinc-100;
     font-size: clamp(3.25rem, 6vw, 5.25rem);
-    letter-spacing: -0.04em;
-    line-height: 1.02;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
   }
 
   .vx-h1 {
-    @apply font-inter font-bold text-zinc-100;
+    @apply font-serif font-normal text-zinc-100;
     font-size: clamp(2.25rem, 4vw, 3.5rem);
-    letter-spacing: -0.03em;
-    line-height: 1.06;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
   }
 
   .vx-h2 {
-    @apply font-inter font-semibold text-zinc-100;
+    @apply font-serif font-normal text-zinc-100;
     font-size: clamp(1.75rem, 3vw, 2.5rem);
-    letter-spacing: -0.02em;
-    line-height: 1.12;
+    letter-spacing: -0.005em;
+    line-height: 1.15;
   }
 
   /* Editorial pull-quote — a claim given a whole section, no card around it. */
   .vx-quote {
-    @apply font-inter font-bold italic text-zinc-100;
+    @apply font-serif italic font-normal text-zinc-100;
     font-size: clamp(1.75rem, 3.5vw, 3rem);
-    letter-spacing: -0.02em;
-    line-height: 1.2;
+    letter-spacing: -0.005em;
+    line-height: 1.25;
   }
 
   .vx-body {
@@ -302,19 +310,19 @@ a {
      shell on one line, and a headline that wraps into three lines loses the
      two-line rhythm the whole site is built on. */
   .vx-display-xl {
-    @apply font-inter font-extrabold text-carbon-900;
-    font-size: clamp(2.5rem, 6.2vw, 5.75rem);
-    letter-spacing: -0.045em;
-    line-height: 0.98;
+    @apply font-serif font-normal text-carbon-900;
+    font-size: clamp(2.75rem, 6.4vw, 6rem);
+    letter-spacing: -0.015em;
+    line-height: 1.02;
   }
 
-  /* Section headline for V2. Carbon rather than zinc-100 so the marketing
-     surface reads a half-step darker and warmer than the V1 pages. */
+  /* Section headline. Carbon rather than zinc-100 so the marketing surface
+     reads a half-step darker and warmer than the V1 pages. */
   .vx-h2-xl {
-    @apply font-inter font-bold text-carbon-900;
-    font-size: clamp(2rem, 4.2vw, 3.5rem);
-    letter-spacing: -0.035em;
-    line-height: 1.04;
+    @apply font-serif font-normal text-carbon-900;
+    font-size: clamp(2rem, 4.2vw, 3.25rem);
+    letter-spacing: -0.01em;
+    line-height: 1.08;
   }
 
   /* Technical values: GSTINs, invoice numbers, amounts, XML. Never a headline,

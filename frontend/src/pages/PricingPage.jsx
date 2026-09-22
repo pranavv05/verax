@@ -173,8 +173,8 @@ const PricingPage = () => (
               <p className="mt-1 text-sm text-carbon-500">{plan.tagline}</p>
 
               <div className="mt-6">
-                <span className="text-4xl font-extrabold text-carbon-900">{plan.price}</span>
-                <div className="mt-1 text-xs text-carbon-400">{plan.priceNote}</div>
+                <span className="font-serif text-5xl font-normal text-carbon-900">{plan.price}</span>
+                <div className="mt-1.5 text-xs text-carbon-400">{plan.priceNote}</div>
               </div>
 
               {plan.ctaTo ? (

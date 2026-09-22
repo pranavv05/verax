@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { z } from "zod";
 import { useClientPortalAuth } from "../contexts/ClientPortalAuthContext";
 import { parseApiError } from "../lib/utils";
-import VeraxLogo, { VeraxMark } from "../components/brand/VeraxLogo";
+import VeraxLogo from "../components/brand/VeraxLogo";
 import FloatingField from "../components/public/FloatingField";
 import { EASE } from "../components/public/motion";
 
@@ -43,7 +43,7 @@ const ClientPortalLoginPage = () => {
       <PortalFrame>
         <div className="rounded-2xl border border-hairline bg-surface p-8">
           <div className="flex items-center gap-3">
-            <VeraxMark size={34} />
+            <VeraxLogo size={26} />
             <div className="h-4 w-24 animate-pulse rounded-full bg-white/10" />
           </div>
           <div className="mt-8 space-y-3">
@@ -177,7 +177,6 @@ const ClientPortalLoginPage = () => {
         </div>
 
         <div className="mt-6 flex items-center justify-center gap-2">
-          <VeraxLogo size={22} showWordmark={false} />
           <span className="text-xs font-medium text-zinc-500">Powered by Verax</span>
         </div>
 

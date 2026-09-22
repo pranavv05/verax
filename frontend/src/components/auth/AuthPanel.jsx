@@ -1,7 +1,6 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { EASE } from "../public/motion";
 import { Field, RailV, Sheet, Tick } from "../marketing/ledger";
-import { VeraxMark } from "../brand/VeraxLogo";
 
 /**
  * The panel visuals for the two auth screens.
@@ -157,7 +156,9 @@ export const SignupPanel = () => {
         <Node delay={0.45} reduced={reduced}>
           <NodeLabel>03 — Verax</NodeLabel>
           <div className="mt-3 inline-flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3">
-            <VeraxMark size={20} tone="light" />
+            <span className="font-serif italic text-[1.25rem] leading-none text-white" aria-hidden="true">
+              V
+            </span>
             <span className="vx-mono text-[0.625rem] uppercase leading-[1.6] tracking-[0.14em] text-carbon-300">
               extract · validate
               <br />
