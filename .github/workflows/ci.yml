@@ -12,6 +12,21 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # exports.service.js (required by exports.service.test.js) pulls in
+    # s3.service.js -> config/env.js, which validates its full env schema
+    # eagerly at require time — even though the unit suite never opens a
+    # real DB/Redis/S3 connection. These are placeholder values so that
+    # validation passes; LOCAL_STORAGE=true skips the AWS_S3_BUCKET
+    # requirement. Nothing here needs to be reachable.
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379
+      LOCAL_STORAGE: "true"
+      AI_SERVICE_URL: http://localhost:8001
+      JWT_SECRET: ci-only-placeholder-secret-not-a-real-secret-32
+      JWT_REFRESH_SECRET: ci-only-placeholder-refresh-secret-not-real-32
+      CLIENT_JWT_SECRET: ci-only-placeholder-client-secret-not-real-32
+      FRONTEND_URL: http://localhost:5173
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,6 +67,20 @@ jobs:
       DATABASE_URL: postgresql://ca_user:ca_password@localhost:5432/ca_saas
       APP_DATABASE_URL: postgresql://ca_app:ca_app_ci_password@localhost:5432/ca_saas
       APP_DB_PASSWORD: ca_app_ci_password
+      # rls.test.js itself only ever needs DATABASE_URL/APP_DATABASE_URL, but
+      # extraction-edit-lock.test.js, refresh-token-reuse.test.js and
+      # audit-logs-unknown-email.test.js all transitively require
+      # config/env.js (via tenant-context.js/pool.js or auth.service.js),
+      # which validates its full env schema eagerly at require time — none
+      # of these tests actually open a Redis/S3/AI-service connection, so
+      # placeholders are fine here, same as the `backend` job above.
+      REDIS_URL: redis://localhost:6379
+      LOCAL_STORAGE: "true"
+      AI_SERVICE_URL: http://localhost:8001
+      JWT_SECRET: ci-only-placeholder-secret-not-a-real-secret-32
+      JWT_REFRESH_SECRET: ci-only-placeholder-refresh-secret-not-real-32
+      CLIENT_JWT_SECRET: ci-only-placeholder-client-secret-not-real-32
+      FRONTEND_URL: http://localhost:5173
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -98,12 +127,17 @@ jobs:
       # so OCR-engine code (app/services/ocr_service.py) only gets the syntax
       # check below. requirements-dev.txt installs just what the pytest suite
       # actually needs (groq/httpx/python-dotenv + opencv-python-headless +
-      # PyMuPDF + pytest) to test the LLM JSON-parsing/retry/confidence logic
-      # and the PDF/image preprocessing logic without the full ML install cost.
+      # PyMuPDF + numpy + pytest) to test the LLM JSON-parsing/retry/confidence
+      # logic and the PDF/image preprocessing logic without the full ML install
+      # cost. numpy MUST be pinned explicitly here, not left to pip's resolver:
+      # opencv-python-headless==4.9.0.80 is compiled against NumPy 1.x's ABI,
+      # and pip installing opencv without an explicit numpy pin resolves the
+      # latest NumPy 2.x, which fails at import with
+      # "AttributeError: _ARRAY_API not found" the moment cv2 is imported.
       - name: Syntax-check all source files
         run: python -m compileall -q app
       - name: Install test dependencies (light subset, no ML libs)
         run: |
-          grep -E '^(groq|httpx|python-dotenv|opencv-python-headless|PyMuPDF)==' requirements.txt > requirements-light.txt
+          grep -E '^(groq|httpx|python-dotenv|opencv-python-headless|PyMuPDF|numpy)==' requirements.txt > requirements-light.txt
           pip install -r requirements-dev.txt -r requirements-light.txt
       - run: python -m pytest tests/ -v
