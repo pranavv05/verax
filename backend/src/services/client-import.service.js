@@ -1,4 +1,4 @@
-const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 const ApiError = require("../utils/api-error");
 const { validateGstin } = require("./compliance.service");
 const { createClient } = require("./clients.service");
@@ -104,7 +104,27 @@ const parseCsv = (text) => {
   return rows;
 };
 
-const parseFileToRows = (file) => {
+// Stringifies one ExcelJS cell value the same way XLSX's sheet_to_json
+// {raw: false} option did: numbers/dates/booleans become their display
+// string, null/undefined become "". A rich-text cell ({richText: [...]})
+// or a formula cell ({formula, result}) is flattened to its plain text/
+// result rather than the raw object, since every downstream consumer here
+// (validateRow) expects a plain string.
+const stringifyCellValue = (value) => {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object") {
+    if (Array.isArray(value.richText)) {
+      return value.richText.map((part) => part.text).join("");
+    }
+    if ("result" in value) return stringifyCellValue(value.result);
+    if ("text" in value) return String(value.text);
+    return "";
+  }
+  return String(value);
+};
+
+const parseFileToRows = async (file) => {
   const extension = (file.originalname.split(".").pop() || "").toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(extension)) {
     throw ApiError.badRequest("Only CSV and XLSX files are supported");
@@ -115,13 +135,18 @@ const parseFileToRows = (file) => {
     const text = file.buffer.toString("utf8");
     matrix = parseCsv(text);
   } else {
-    const workbook = XLSX.read(file.buffer, { type: "buffer" });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) {
-      matrix = [];
-    } else {
-      const sheet = workbook.Sheets[firstSheetName];
-      matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(file.buffer);
+    const worksheet = workbook.worksheets[0];
+    matrix = [];
+    if (worksheet) {
+      worksheet.eachRow({ includeEmpty: true }, (row) => {
+        // row.values is 1-indexed ([0] is always undefined) — drop it so
+        // column indices line up with the 0-indexed header/data rows the
+        // rest of this file expects.
+        const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+        matrix.push(values.map(stringifyCellValue));
+      });
     }
   }
 
@@ -264,7 +289,7 @@ const validateRow = (row, columnIndexByField, seenGstins) => {
   };
 };
 
-const previewClientImport = (file) => {
+const previewClientImport = async (file) => {
   if (!file) {
     throw ApiError.badRequest("No file uploaded");
   }
@@ -275,7 +300,13 @@ const previewClientImport = (file) => {
     throw ApiError.badRequest("File exceeds 5MB limit");
   }
 
-  const matrix = parseFileToRows(file);
+  let matrix;
+  try {
+    matrix = await parseFileToRows(file);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw ApiError.badRequest("Could not read this file — it may be corrupted or not a valid CSV/XLSX file");
+  }
   if (matrix.length === 0) {
     throw ApiError.badRequest("The file is empty");
   }
