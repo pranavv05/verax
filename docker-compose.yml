@@ -74,6 +74,27 @@
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       MAX_TOOL_UPLOAD_MB: ${MAX_TOOL_UPLOAD_MB:-25}
       DOCUMENT_WORKER_CONCURRENCY: ${DOCUMENT_WORKER_CONCURRENCY:-3}
+      # Without these, EMAIL_PROVIDER defaults to "smtp" with no host
+      # configured — email.service.js still doesn't error in dev (it logs a
+      # preview with the actual link to this container's logs instead), but
+      # setting real values here is what makes an actual inbox receive
+      # magic-link/password-reset/notification emails during local testing.
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Verax TallyOCR}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-noreply@verax.in}
+      # Live GST Suvidha Provider lookup — optional. Unset, GSTIN
+      # verification and GSTR-2B reconciliation both gracefully fall back
+      # (local checksum validation / "unavailable" match results) instead
+      # of erroring, since a real GSP account needs a paid subscription
+      # tied to a real GSTIN that no local dev setup will have.
+      GSP_USERNAME: ${GSP_USERNAME:-}
+      GSP_PASSWORD: ${GSP_PASSWORD:-}
+      GSP_DISABLED: ${GSP_DISABLED:-false}
     command: sh -c "if [ -f package.json ]; then npm install && npm run dev; else tail -f /dev/null; fi"
     volumes:
       - ./backend:/app
@@ -167,6 +188,27 @@
       AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY:-local_ai_service_api_key_change_me_32}
       AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-120000}
       DOCUMENT_WORKER_CONCURRENCY: ${DOCUMENT_WORKER_CONCURRENCY:-3}
+      # Without these, EMAIL_PROVIDER defaults to "smtp" with no host
+      # configured — email.service.js still doesn't error in dev (it logs a
+      # preview with the actual link to this container's logs instead), but
+      # setting real values here is what makes an actual inbox receive
+      # magic-link/password-reset/notification emails during local testing.
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Verax TallyOCR}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-noreply@verax.in}
+      # Live GST Suvidha Provider lookup — optional. Unset, GSTIN
+      # verification and GSTR-2B reconciliation both gracefully fall back
+      # (local checksum validation / "unavailable" match results) instead
+      # of erroring, since a real GSP account needs a paid subscription
+      # tied to a real GSTIN that no local dev setup will have.
+      GSP_USERNAME: ${GSP_USERNAME:-}
+      GSP_PASSWORD: ${GSP_PASSWORD:-}
+      GSP_DISABLED: ${GSP_DISABLED:-false}
       JWT_SECRET: ${JWT_SECRET:-change_me}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_too}
       CLIENT_JWT_SECRET: ${CLIENT_JWT_SECRET:-client_portal_change_me_min_32_chars_long}
