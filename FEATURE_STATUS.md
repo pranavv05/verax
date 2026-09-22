@@ -26,7 +26,7 @@ Status: ✅ Production Ready
 Backend: `POST /api/auth/login` — `auth.routes.js:93-112`, `authRateLimiter`, `loginSchema` (`:42-45`) → `loginUser` (`auth.service.js`), tenant-scoped
 Frontend: `pages/LoginPage.jsx` — Zod validation, loading/error states, redirect to `location.state.from`
 Migration: n/a (uses `users` table)
-Notes: **Fixed 2026-08-08** — `loginUser` now writes `login_success` on success and `login_failed` (`reason: "invalid_password"`) when a known user supplies the wrong password, both via the same transaction `client` (not a separate connection). The failure case returns an `{authFailed: true}` sentinel from the transaction handler instead of throwing inside it, since throwing there would have rolled back the audit insert along with everything else — the caller checks the sentinel and throws `ApiError.unauthorized` after the transaction commits. One deliberate gap remains: a login attempt against an **unknown email** cannot be audit-logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm — there is no firm to attribute the row to. This is a schema-level constraint, not an oversight.
+Notes: **Fixed 2026-08-08** — `loginUser` now writes `login_success` on success and `login_failed` (`reason: "invalid_password"`) when a known user supplies the wrong password, both via the same transaction `client` (not a separate connection). The failure case returns an `{authFailed: true}` sentinel from the transaction handler instead of throwing inside it, since throwing there would have rolled back the audit insert along with everything else — the caller checks the sentinel and throws `ApiError.unauthorized` after the transaction commits. **The remaining blind spot — a login attempt against an unknown email couldn't be audit-logged at all, since `audit_logs.firm_id` was `NOT NULL` with no firm to attribute the row to — is now fixed (2026-09-21).** Migration `20260922000000_audit_logs_nullable_firm_id.js` makes `firm_id` nullable and adds a write-only RLS escape hatch scoped to the exact `login`/`client_portal_login` auth contexts these two login flows already set; `loginUser`'s unknown-email branch now writes a `login_failed` row with `reason: "unknown_email"` and `firm_id: null` before returning the same sentinel pattern. These NULL-firm_id rows are intentionally invisible to every firm-scoped session (they don't belong to any firm) — write-only audit trail for future security-monitoring tooling, not something a CA firm's own audit log view will ever show. Covered by `backend/tests/integration/audit-logs-unknown-email.test.js`, which also proves the escape hatch can't be triggered outside its exact auth_context and that the resulting rows stay invisible to firm-scoped queries.
 
 ### Logout
 Status: ✅ Production Ready
@@ -35,11 +35,11 @@ Frontend: No dedicated page; implemented as header button in `components/layout/
 Notes: Confirmed working.
 
 ### JWT refresh
-Status: 🔧 Needs Fix
-Backend: `POST /api/auth/refresh` — `auth.routes.js:114-131` → `refreshAccessToken` (`auth.service.js:518-653`). Chain rotation: verifies token hash, marks old token `revoked_at`/`replaced_by_token_id`, inserts new row. Happy path is correct.
+Status: 🔧 Needs Fix → ✅ Production Ready (confirmed fixed 2026-09-21)
+Backend: `POST /api/auth/refresh` — `auth.routes.js:114-131` → `refreshAccessToken` (`auth.service.js:559-703`). Chain rotation: verifies token hash, marks old token `revoked_at`/`replaced_by_token_id`, inserts new row.
 Frontend: `lib/api-client.js:66-119` (`request()`) implements transparent 401→refresh→retry on every authenticated call except the two `ToolsPage.jsx` raw-`fetch` calls (see Standalone Tools)
 Migration: `20260311171500_auth_infra.js` (refresh_tokens table + RLS)
-Notes: **Bug found 2026-08-09 while building the client portal (not introduced by it).** The advertised reuse detection does not actually persist. In `refreshAccessToken`, the token-hash-mismatch and already-revoked branches call `revokeRefreshTokenFamily(client, ...)` and then `throw` — but both statements run inside the same `withTenantTransaction` handler, and throwing there triggers the `ROLLBACK` in `tenant-context.js:27-29`, which discards the family revocation along with everything else. The caller still gets a correct 401, so the failure is invisible from the outside: a stolen refresh token that triggers reuse detection leaves every sibling token in the family still live. This is the identical trap already documented on the `loginUser` audit-log entry, whose fix was to return a sentinel from the handler and throw after the transaction commits. The same pattern was applied to the new `clientRefreshToken` (`client-auth.service.js`), where it is verified working by test; the firm-side function was deliberately left untouched because changing firm auth behaviour was outside the client-portal task's scope. **Recommended fix: mirror the sentinel pattern in `refreshAccessToken`.**
+Notes: **The reuse-detection rollback bug flagged in the 2026-08-09 audit is already fixed** — found already applied in commit `5ae0534c` ("fixed auth", 2026-09-11) when this pass went to implement the recommended fix, so this entry was stale rather than the code being broken. The token-hash-mismatch and already-revoked branches in `refreshAccessToken` now return a `{ reuseDetected: true, message }` sentinel from inside the transaction (so `revokeRefreshTokenFamily`'s revocation commits with everything else) and throw only after the transaction resolves, exactly the pattern `loginUser` and `clientRefreshToken` already used. Verified 2026-09-21 with a new regression test, `backend/tests/integration/refresh-token-reuse.test.js`: logs in, rotates the refresh token once, replays the stale token (triggers reuse detection), then asserts the *rotated* token is also revoked in the database — not just that the replay itself fails. Confirmed this test fails hard (rotated token stays live) when the sentinel pattern is temporarily reverted back to a direct `throw`, and passes clean with the real code restored.
 
 ### Password reset (forgot password + reset flow)
 Status: ✅ Production Ready
@@ -74,10 +74,10 @@ Backend: `GET /api/firms/me` — `firms.routes.js:42-54` → `getCurrentUser` (`
 Frontend: `SettingsPage.jsx:234-290` "My Profile" panel, always visible regardless of role
 
 ### Plan field support (starter/professional/enterprise)
-Status: 🔧 Needs Fix
+Status: 🔧 Needs Fix → ✅ Production Ready (fixed 2026-09-21)
 Backend: `plan_enum` defined in initial schema migration (`20260311163000_initial_schema.js:116-136`), returned by `getFirmSettings`
-Frontend: `SettingsPage.jsx:175,223` (`PlanBadge`)
-Notes: **`PlanBadge` only renders inside the admin-gated panel (`SettingsPage.jsx:168`)** — staff users cannot see the firm's plan at all. Since the task's own permission spec says staff "can view", this is a frontend gating bug, not an admin-only-by-design feature.
+Frontend: `SettingsPage.jsx` — admin-gated "Firm Settings" panel (editable, unchanged) plus a new read-only "Firm Settings" panel shown only to non-admin staff (firm name + `PlanBadge`, both read-only, with a note to contact an admin to change them)
+Notes: **Fixed 2026-09-21.** `PlanBadge` previously only rendered inside the admin-gated edit panel, so staff users could not see the firm's plan at all — a frontend over-gating bug (the task's permission spec says staff "can view"), not admin-only-by-design. `GET /api/firms/settings` was already `requireAuth`-only (staff-readable) server-side, so this was purely a missing frontend view, not a backend gap.
 
 ---
 
@@ -119,6 +119,12 @@ Status: ✅ Production Ready
 Backend: `POST /api/compliance/gstin/verify` — `compliance.routes.js:348-383`, `gspService.verifyGSTIN` (`gsp.service.js:263-278`, live GSP call with local-checksum fallback if GSP unconfigured)
 Frontend: `ClientsPage.jsx:72-116` and `ClientDetailPage.jsx:113-154` — 800ms-debounced, three visually distinct states (valid/fallback/invalid/error, `:440-455`)
 Notes: Lookup logic duplicated between the two pages rather than shared — works but is a maintainability note, not a functional gap.
+
+### Bulk client import (CSV/XLSX)
+Status: ✅ Production Ready
+Backend: `GET /api/clients/import/template` (CSV template download), `POST /api/clients/import/preview` (`requireAdmin`, multer 5MB memory upload → `previewClientImport`), `POST /api/clients/import/confirm` (`requireAdmin`, `importConfirmBodySchema` → `confirmClientImport`, audit `clients_bulk_imported`) — all in `clients.routes.js`/`client-import.service.js`. Per-row validation: required/length checks on name, GSTIN structural + checksum-severity split (checksum-only mismatches pass, matching the Review-page precedent), email/phone format, in-file duplicate-GSTIN detection, and a warning (not error) when email+phone are both missing. Confirm step re-checks against existing DB rows (GSTIN or name-without-GSTIN) and skips duplicates rather than erroring the whole batch.
+Frontend: `components/clients/ClientImportModal.jsx` (541 lines — upload → preview table with per-row status/issues → confirm → success summary, with `uploading`/`uploadError`/`confirmLoading`/`confirmError` states throughout) wired from `ClientsPage.jsx`; `api/clients-api.js` (`downloadTemplate`/`previewImport`/`confirmImport`).
+Notes: 🔧 Fixed, 2026-09-22 — the XLSX branch used the unmaintained `xlsx`/SheetJS package (GHSA-4r6h-8v6p-xvw6 prototype pollution + GHSA-5pgg-2g8v-p4x9 ReDoS, no patched version published) to parse untrusted admin-uploaded file buffers. Replaced with `exceljs` (already a dependency elsewhere in the codebase, actively maintained) — `parseFileToRows` is now `async`, reads via `workbook.xlsx.load(buffer)` + `worksheet.eachRow`, with a `stringifyCellValue` helper reproducing the old `raw:false` stringification behavior (numbers/dates/rich-text/formula-result cells → plain strings) so validation regexes keep working unchanged. `xlsx` removed from `package.json` entirely (`npm uninstall xlsx`). New test file `backend/tests/unit/client-import.service.test.js` (18 cases, including real ExcelJS-generated `.xlsx` fixtures) covers both the CSV and XLSX paths, blank-row dropping, numeric-cell stringification, and a corrupted-buffer friendly-error case. This feature existed fully wired (routes, service, frontend modal, audit logging) but had never been entered in this document before this pass — found only because this pass's dependency audit traced `xlsx`'s one usage site back to it.
 
 ---
 
@@ -194,16 +200,16 @@ AI Service: `llm_service.py:375-383` (LLM self-reported, clamped 0-1) with heuri
 Notes: OCR-engine confidence (PaddleOCR per-line score) is used only to filter which OCR lines are kept — it is discarded before the final score, so the reported `confidence_score` is LLM-only, not a true OCR+LLM combined metric, despite the task description implying both feed in.
 
 ### Confidence gating (0.4 threshold → review_required)
-Status: 🔧 Needs Fix
-Backend: `document-processing.worker.js:27,69-73` — `CONFIDENCE_THRESHOLD = 0.4` **hardcoded literal**, not read from `env.js`/config, despite CLAUDE.md's "Environment" section implying config-driven thresholds
+Status: 🔧 Needs Fix → ✅ Production Ready (fixed 2026-09-21)
+Backend: `document-processing.worker.js` — `CONFIDENCE_THRESHOLD = env.REVIEW_CONFIDENCE_THRESHOLD`, sourced from a new `REVIEW_CONFIDENCE_THRESHOLD` Joi-validated env var (`config/env.js`, default `0.4`, same default as before)
 Migration: `20260512000000_review_required_status.js` adds `'review_required'` enum value
-Notes: Logic itself is correct (`confidence < 0.4 || documentTypeDetected === "unknown"` → `review_required`), just not env-configurable per the codebase's stated conventions.
+Notes: Logic is unchanged (`confidence < threshold || documentTypeDetected === "unknown"` → `review_required`); the threshold is now env-configurable per the codebase's stated conventions instead of a hardcoded literal. Documented in `.env.example`.
 
 ### Wrong document type detection
-Status: ⚠️ Partial
-AI Service: implemented as an LLM-prompted self-classification, not an independent check — `EXTRACTION_PROMPT` "STEP 1" (`llm_service.py:16-25`) instructs the model to return `document_type_detected: "unknown"` for non-matching documents; backed by a code-level OCR-garbage pre-check `is_ocr_garbage()` (`:209-222`) that short-circuits before even calling Groq — but only for non-bank-statement uploads (`:390`)
-Backend: `documentTypeDetected === "unknown"` correctly wired into confidence gating (`document-processing.worker.js:71`)
-Notes: Works end-to-end, but is self-reported by the LLM with no independent server-side re-validation against the caller-supplied `doc_type`.
+Status: ⚠️ Partial → ✅ Production Ready (independent check added 2026-09-21)
+AI Service: LLM self-classification unchanged — `EXTRACTION_PROMPT` "STEP 1" (`llm_service.py:16-25`) instructs the model to return `document_type_detected: "unknown"` for non-matching documents; backed by a code-level OCR-garbage pre-check `is_ocr_garbage()` that short-circuits before even calling Groq — but only for non-bank-statement uploads. The bank-statement prompt (`BANK_STATEMENT_PROMPT`) never asked the LLM to classify at all — it just extracts bank fields from whatever text it's given, so a mistagged document on that path had no LLM-side signal either way.
+Backend: `documentTypeDetected === "unknown"` still wired into confidence gating. New: `detectDocTypeMismatch(docType, structuredData)` (`document-processing.service.js`) — a **structural, code-level check independent of anything the LLM claims about itself**, run in `document-processing.worker.js` right after parsing the AI response. Compares the *shape* of the extracted fields against the caller-supplied `doc_type`: a real bank statement has transaction rows; a real invoice/bill has an invoice number, vendor GSTIN, or line items. A confident mismatch (unambiguously the other shape) forces `review_required` and sets `structured_data._doc_type_mismatch_warning`, surfaced on the Review page as an amber banner (mirrors the existing `_tax_math_warning`/`_page_truncation_warning` pattern).
+Notes: **Fixed 2026-09-21.** Closes the actual gap: the LLM's own self-report only ever means "invoice" or "unknown" and is entirely absent on the bank-statement path, so it could never catch e.g. an invoice mistakenly uploaded as a bank statement — that previously only surfaced indirectly (if at all) as unexplained low confidence from mostly-null fields, with no signal telling a reviewer *why*. The new check doesn't re-ask the LLM anything; it's a pure function over the already-extracted field shapes, which is what makes it genuinely independent. Deliberately conservative — an empty/low-quality extraction of either shape (neither confidently invoice-like nor bank-statement-like) is not flagged, since that's already handled by confidence gating; only an *unambiguous* shape mismatch triggers it. Covered by `backend/tests/unit/document-processing.service.test.js` (8 cases).
 
 ### Processing retry/error tracking
 Status: ✅ Production Ready
@@ -213,6 +219,12 @@ Backend: `document-processing.service.js:115-176` (`markDocumentProcessingFailed
 Status: ✅ Production Ready
 Backend: on `processing_attempts >= 3`, `document-processing.service.js:156-170` writes the `document_processing_alert` audit row as before, and — as of 2026-08-08 — `document-processing.worker.js` (after the existing `process.stderr.write`) fetches the firm's admins via the existing `getDocumentReadyEmailContext` helper and, per admin, calls `createNotification({type: "document_failed", title: "Document processing failed", message: "A document failed to process after 3 attempts and needs manual review.", entityType: "document", entityId})` and sends an email built from the new `backend/src/templates/documentFailed.template.js` (subject "Document processing failed — manual review needed", includes document name, client name, failure reason, and a link to `/audit-logs`). A new `recordDocumentFailedEmailAudit` (`document-processing.service.js`) logs the email send outcome as `document_failed_emailed`. Both the notification call and the email call are individually wrapped in try/catch (mirroring the existing `document_ready` pattern) so a failure in either cannot affect the worker or the job's success/failure outcome.
 Notes: Closes the gap flagged in the original audit — an admin now receives both an in-app notification and an email when a document permanently fails, matching the other three notification triggers.
+
+### Multi-page PDF truncation warning
+Status: ✅ Production Ready
+AI Service: `preprocess_service.py` — `_render_pdf_pages` now returns `(images, total_pages)`, capturing the PDF's real page count (`document.page_count`) before truncating render to `MAX_PAGES` (15); `PreprocessOutput` carries `total_pages`/`truncated`. `main.py`'s `process_document()` sets `structured_data["_page_truncation_warning"]` and caps `confidence_score` at 0.3 (forcing `review_required` via the existing 0.4 gate) whenever `preprocessed.truncated` is true.
+Frontend: `ReviewPage.jsx` — renders a red warning banner for `structuredData?._page_truncation_warning`, next to the existing amber `_tax_math_warning` banner in the confidence panel.
+Notes: Added 2026-09-21 — real gap closed. A PDF longer than `MAX_PAGES` (e.g. a full month's bank statement scanned as one file) was previously rendered/OCR'd only up to page 15 with **no signal anywhere** that the remainder was dropped; a CA could approve and export a document missing most of its transactions with no indication anything was wrong. Now: the extraction is force-routed to `review_required` and the Review page tells the reviewer exactly how many of how many pages were processed, with guidance to reprocess in smaller batches. Covered by `ai-service/tests/test_preprocess_service.py` (3 cases, new file) and wired into CI (`.github/workflows/ci.yml`'s `ai-service` job now also installs `opencv-python-headless`/`PyMuPDF` — both already pinned in `requirements.txt` — so this suite actually runs on every PR, not just a syntax check).
 
 ---
 
@@ -224,9 +236,9 @@ Backend: `GET /api/extractions/:documentId` — `extractions.routes.js:51-110` �
 Frontend: `pages/ReviewPage.jsx` (1181 lines) — loads via `Promise.allSettled` over document/extraction/versions (`:246-333`), "not yet processed" banner (`:267-273,670-677`)
 
 ### View document preview/download
-Status: ⚠️ Partial
-Frontend: `ReviewPage.jsx:513-536` — iframe for PDF, `<img>` otherwise, sourced from `document.download_url` (confirmed matches `documents.service.js:604`)
-Notes: There is no separate explicit "Download" button — the inline preview is the only access point. Acceptable if preview doubles as download for supported types, but there's no fallback affordance for file types the browser can't render inline.
+Status: ⚠️ Partial → ✅ Production Ready (fixed 2026-09-21)
+Frontend: `ReviewPage.jsx` — iframe for PDF, `<img>` otherwise, sourced from `document.download_url`; a "Download" button next to the status badge on the "Original document" panel calls `triggerFileDownload` (`lib/utils.js`, the same helper `ExportPage`/`ClientDetailPage` already use) and surfaces an inline error message on failure instead of failing silently
+Notes: Previously there was no explicit "Download" button — the inline preview was the only access point, with no fallback affordance for file types the browser can't render inline. Fixed by reusing the existing download helper rather than adding a second download code path.
 
 ### Edit extracted fields (staff allowed)
 Status: 🔧 Needs Fix → ✅ Production Ready (fixed 2026-09-20)
@@ -250,8 +262,9 @@ Frontend: `ReviewPage.jsx:876-904` admin-gated
 
 ### Prevent editing exported extractions
 Status: ✅ Production Ready
-Backend: `deleteDocument` blocks on `status='exported'` (`documents.service.js:626-628`)
+Backend: `deleteDocument` blocks on `status='exported'` (`documents.service.js:626-628`); `updateExtraction` (`extractions.service.js`) blocks on `status IN ('exported', 'reviewed')`
 Frontend: `ReviewPage.jsx` — every editable field and Save/Reprocess/Approve button checks `isExported` (multiple line refs: `786,871,880,890,960-1135`)
+Notes: **Fixed 2026-09-21 — real gap closed.** `updateExtraction` previously only rejected edits on `status === 'exported'`; a document already `reviewed` (admin-approved, not yet exported) could still be edited via a direct `PUT /api/extractions/:documentId` call, silently invalidating the admin's approval without requiring re-approval — the frontend disables the Save button in this state, but nothing enforced it server-side, so it was bypassable by any authenticated staff user hitting the API directly. Now blocks on `reviewed` as well as `exported`, with an error message telling the caller to reprocess first. Covered by `backend/tests/integration/extraction-edit-lock.test.js` (3 cases, new file, runs against a live Postgres) — rejects on `reviewed`, rejects on `exported`, still allows on `extracted`.
 
 ### Confidence bar display
 Status: ✅ Production Ready
@@ -336,11 +349,16 @@ Backend: `POST /api/export/tally` — `exports.routes.js:83-105`, `requireAdmin`
 ### Balanced voucher (debits = credits)
 Status: ✅ Production Ready
 Backend: `tally-xml.service.js:281-298` `buildTallyXml`, restricted to an allow-list of voucher types (`ALLOWED_VOUCHER_TYPES`, `:1-7`)
-Notes: Now covered by `backend/tests/unit/tally-xml.service.test.js` (18 cases, added 2026-09-20) — asserts the debit=credit invariant for invoice and bank-statement vouchers, voucher-type inference/fallback, XML-escaping of party names, and the opening/closing-balance fallback when a bank statement has no transaction rows.
+Notes: Now covered by `backend/tests/unit/tally-xml.service.test.js` (27 cases as of 2026-09-21) — asserts the debit=credit invariant for invoice and bank-statement vouchers, voucher-type inference/fallback, XML-escaping of party names, the opening/closing-balance fallback when a bank statement has no transaction rows, and that the output always begins with a UTF-8 XML declaration. **Fixed 2026-09-21:** `taxableAmount` in `buildInvoiceVoucherXml` previously fell back to the LLM-extracted `taxable_amount`/`subtotal` field when present, even though that field can disagree with `total_amount - tax_amount` — a bad extraction could produce a voucher that was internally balanced (debits=credits) but built from the wrong number, silently misstating the ledger. `taxableAmount` is now always computed as `totalAmount - taxAmount`, balanced by construction regardless of what the LLM extracted. Fixing this surfaced a real sign bug of its own (string-concatenating a literal `-` before an already-negative `.toFixed(2)` value produced `--900.00`-style garbage when `taxableAmount` went negative); fixed by negating numerically (`-taxableAmount`) before formatting, caught by a new test before it shipped. The no-transactions bank-statement fallback also previously emitted a single one-sided `<ALLLEDGERENTRIES.LIST>` entry (an unbalanced voucher); it now emits two legs (bank ledger + Sales/Purchase Account counter-ledger), matching the pattern already used for real transaction rows. **Also fixed 2026-09-21 (separately):** `buildTallyXml`'s output began directly with `<ENVELOPE>` and had no `<?xml version="1.0" encoding="UTF-8"?>` declaration — TallyPrime accepted it as-is (not a functional break), but any stricter XML consumer would reject it as malformed. Now prepended unconditionally. The ai-service's own separate bank-statement-to-XML generator (`bank_statement_xml_service.py`, a different code path for the standalone tool) already includes a declaration via `xml.dom.minidom`'s default serialization — confirmed by direct test, no fix needed there.
 
 ### GST ledger entries without requiring item mapping
 Status: ✅ Production Ready
 Backend: `tally-xml.service.js:83-111` `buildTaxLedgerEntries` (CGST/SGST/IGST lines) built independently of `buildInventoryEntries` (`:113-136`)
+
+### Tax-math validation blocks export of inconsistent documents
+Status: ✅ Production Ready
+Backend: `exports.service.js` — `assertDocumentsPassTaxMath()` runs `compliance.service.js`'s `validateTaxMath()` against every document immediately before XML generation in both `generateTallyExport` (single) and `generateBulkTallyExport` (bulk), throwing `ApiError.badRequest()` naming the offending filename(s) if any document's CGST+SGST+IGST or taxable+tax math doesn't reconcile with its stated total. `generateTallyExportPreview` surfaces the same checks non-fatally via `getTaxMathWarnings()`, merged into the existing preview `warnings` array with a new `blocksExport: boolean` field the frontend can key off.
+Notes: Added 2026-09-21. Closes a real gap: the XML-balancing fix above guarantees the *voucher* is internally balanced, but a balanced voucher can still be built from *wrong* numbers if the underlying extraction is internally inconsistent (e.g. CGST+SGST claims ₹900 but `tax_amount` says ₹500). This is a second, independent layer — bad extractions are now hard-blocked from export rather than silently exported in a self-consistent-but-wrong form. Also fixed a re-export duplication bug in the same pass: `fetchApprovedDocuments`'s filter was `status = 'reviewed' OR e.reviewed_at IS NOT NULL`, which could re-include a document across repeated bulk exports; narrowed to `status = 'reviewed'` only. Covered by `backend/tests/unit/exports.service.test.js` (6 cases, new file).
 
 ### Export preview (parsed XML as readable table)
 Status: ✅ Production Ready
@@ -468,10 +486,10 @@ Status: ✅ Production Ready
 Frontend: `AppShell.jsx:228` (`unreadCount > 99 ? "99+" : unreadCount`)
 
 ### Dropdown with last 20 notifications
-Status: ⚠️ Partial
-Backend: `GET /api/notifications` — `notifications.routes.js:25-42` → `getNotificationsForUser` (`notifications.service.js:51-71`)
-Frontend: `AppShell.jsx:233-281`
-Notes: The specific "last 20" limit was not independently confirmed against the service's SQL `LIMIT` clause in this research pass — recommend a quick check of `notifications.service.js:51-71` to confirm the exact page size matches spec.
+Status: ✅ Production Ready (verified 2026-09-21)
+Backend: `GET /api/notifications` — `notifications.routes.js:25-42` → `getNotificationsForUser` (`notifications.service.js:51-71`), `limit = 20` default, clamped to `[1, 50]`
+Frontend: `AppShell.jsx` calls `notificationsApi.list({ unreadOnly: false })` with no limit override, so the backend default of 20 applies end-to-end
+Notes: Confirmed by direct code read — the "last 20" spec matches exactly, no fix needed.
 
 ### Mark individual as read
 Status: ✅ Production Ready
@@ -521,9 +539,9 @@ Status: ✅ Production Ready
 Backend: `DELETE /api/scheduled-requests/:id` — `scheduled-requests.routes.js:136-159`, `requireAdmin` → `deleteSchedule` (`:203-216`, audit `schedule_deleted`)
 
 ### BullMQ daily job at 08:00 UTC
-Status: 🔧 Needs Fix
-Backend: `scheduled-requests.job.js:39-51` — repeat pattern `"0 8 * * *"` (**hardcoded**, not env-configurable), registered via `startServer()` in `server.js:10`
-Notes: The worker consumer (`createScheduledRequestsWorker`, `:102-120`) only runs as a side effect of `document-processing.worker.js:26` instantiating it — there is **no standalone `npm run worker:scheduled-requests` script**, so if someone ever runs the document worker and scheduled-requests worker as separate deployable units (e.g. for independent scaling), the scheduled-requests cron simply won't fire. Flagging as Needs Fix since it works today only because both run in the same process by coincidence of `worker.js`'s current structure.
+Status: 🔧 Needs Fix → ✅ Production Ready (fixed 2026-09-21)
+Backend: `scheduled-requests.job.js` — repeat pattern `"0 8 * * *"` (still hardcoded — this part was not the actual risk, see below), registered via `startServer()` in `server.js`. New standalone entry point `backend/src/workers/scheduled-requests.worker.js` + `npm run worker:scheduled-requests` / `:dev` scripts, gated behind the same `assertRuntimeRoleIsNotSuperuser()` startup guard the document worker uses.
+Notes: **Fixed 2026-09-21.** The real risk wasn't the hardcoded cron pattern, it was that the worker consumer (`createScheduledRequestsWorker`) only ran as an unconditional side effect of `document-processing.worker.js` instantiating it — deploying the two workers as separate scaled units would have silently dropped the scheduled-requests cron with no standalone process to run it. Added a new `SCHEDULED_REQUESTS_EMBEDDED` env var (`config/env.js`, default `true`) that `document-processing.worker.js` checks before creating the embedded scheduled-requests worker, plus the new standalone entry point above for running it as its own deployable process (set `SCHEDULED_REQUESTS_EMBEDDED=false` on the document worker when doing so — running both is safe-but-redundant, never double-processing, since BullMQ delivers each job to exactly one consumer). `render.yaml`'s current single `verax-worker` service is unaffected — it keeps the default embedded behavior. Verified both modes boot correctly against a live Postgres + Redis: embedded (default), `SCHEDULED_REQUESTS_EMBEDDED=false` on the document worker with the standalone worker picking up the queue, and the RLS superuser guard rejecting boot for the new file too.
 
 ### Per-client try/catch isolation in job
 Status: ✅ Production Ready
@@ -547,10 +565,10 @@ Backend: `GET /api/users` — `users.routes.js:25-33` → `listUsers` (`users.se
 Frontend: `pages/TeamPage.jsx:51-62`, loading skeleton, empty state
 
 ### Invite user (admin only) — sends email
-Status: ⚠️ Partial
-Backend: `POST /api/users` — `users.routes.js:35-52`, `requireAdmin`, `inviteUserSchema` (`:12-17`) → `inviteUser` (`users.service.js:33-127`, audit `user_invited` + `user_invite_emailed`), sends email with `tempPassword` in cleartext (`:80-89`)
+Status: ✅ Production Ready (confirmed 2026-09-21)
+Backend: `POST /api/users` — `users.routes.js:35-52`, `requireAdmin`, `inviteUserSchema` (`:12-17`) → `inviteUser` (`users.service.js`, audit `user_invited` + `user_invite_emailed`), sends email with `tempPassword` in cleartext
 Frontend: `TeamPage.jsx:139-224`, Zod-validated form, admin-gated toggle
-Notes: Works, but the `user_invited` audit row doesn't capture `sent`/`provider`/`error` the way the other 3 email call sites (password reset, magic link, document ready) do — an inconsistency in email-delivery observability, not a functional break.
+Notes: The `user_invited`/`user_invite_emailed` audit rows already capture `sent`/`provider`/`error` (`users.service.js`'s `user_invite_emailed` insert), matching the other 3 email call sites — this entry's previous "Partial" status was stale; direct code read on 2026-09-21 found no gap.
 
 ### Remove user (admin only)
 Status: ✅ Production Ready
@@ -696,7 +714,7 @@ Notes: `getClientById` now returns a `portal: {enabled, email, lastLoginAt}` obj
 Status: ✅ Production Ready
 Backend: `POST /api/client-portal/auth/login` — `client-auth.routes.js`, own `clientAuthRateLimiter` (10 per 15 min per IP, separate from the firm portal's budget), Joi-validated → `clientLogin`. Looks the client up by `portal_email` with `portal_enabled = true AND deleted_at IS NULL`, bcrypt-compares, mints a 15-min access token and a 30-day rotating refresh token, stamps `portal_last_login_at`, audit-logs `client_portal_login`.
 Frontend: `pages/ClientPortalLoginPage.jsx` — Zod validation, loading/error states, "Forgot password" reveals "Contact your CA firm to reset your password".
-Notes: Unknown email, wrong password, and inactive client all return the byte-identical generic `Invalid email or password` — verified by test that the unknown-email and wrong-password responses match exactly. Failures against a *known* client are audit-logged as `client_portal_login_failed` with a reason; an unknown email cannot be, for the same `audit_logs.firm_id NOT NULL` reason documented on the firm-side Login entry.
+Notes: Unknown email, wrong password, and inactive client all return the byte-identical generic `Invalid email or password` — verified by test that the unknown-email and wrong-password responses match exactly. Failures against a *known* client are audit-logged as `client_portal_login_failed` with a reason. **Fixed 2026-09-21:** an unknown-email attempt now is too (`reason: "unknown_email"`, `firm_id: null`) — same fix and same migration as the firm-side Login entry, extended to also cover this flow's `client_portal_login` auth_context.
 
 ### Client portal refresh with rotation + reuse detection
 Status: ✅ Production Ready
@@ -835,18 +853,20 @@ remain in `index.css` (still used by the unmigrated pages) — do not delete unt
 `StatCard.jsx`.
 
 ### Brand mark (chevron lockup)
-Status: ⚠️ Partial — React component is V1-correct; static SVG assets are not.
-Frontend: `components/brand/VeraxLogo.jsx` (exports `VeraxLogo` + `VeraxMark`; default `tone`
-flipped from `"light"` to `"dark"` for V1 — every call site now renders correctly on the light
-canvas with no prop changes needed), `public/verax-logo.svg`, `public/verax-icon.svg`,
-`public/favicon.svg`.
+Status: ⚠️ Partial → ✅ Production Ready (fixed 2026-09-21)
+Frontend: `components/brand/VeraxLogo.jsx` (exports `VeraxLogo` + `VeraxMark`, default `tone="dark"`
+for the ivory/white V1 canvas), `public/verax-logo.svg`, `public/verax-icon.svg`,
+`public/favicon.svg` — all three regenerated to match.
 Notes: Two overlapping angular chevrons; the overlap is drawn as an explicit clipped third path
-rather than `mix-blend-mode`. `VeraxMark` now takes a `tone` prop too (`dark` = navy right
-chevron for the ivory canvas, `light` = light right chevron for a navy contrast section), so the
-mark and wordmark always match. **The three static `public/*.svg` files still encode the pre-V1
-dark-canvas coloring** and were not regenerated in this pass — low priority since favicon/OG
-chrome is browser-drawn, but they should be brought in line with the component before any of them
-render inline on the light surface.
+rather than `mix-blend-mode`. `VeraxMark` takes a `tone` prop (`dark` = navy right chevron for the
+ivory canvas, `light` = light right chevron for a navy contrast section). **Fixed 2026-09-21:** the
+three static `public/*.svg` files still encoded the pre-V1 dark-canvas coloring (`#6366F1`/`#F2F2F3`,
+the old indigo/near-white pair) — `verax-icon.svg` and `verax-logo.svg` are now `#6657D9`
+(brand violet) / `#111827` (dark navy), matching `VeraxMark`'s `tone="dark"` default exactly;
+`favicon.svg` keeps its own dark rounded chip background (independent of page background, since a
+favicon renders on browser tab chrome) but its chevrons now use `#6657D9`/`#F7F6F2` to match
+`tone="light"`, which is what a light-on-dark chevron pairing requires. Verified by rendering all
+three side by side against the V1 canvas colour.
 
 ### Landing page (`/`) — rebuilt on V2, 2026-08-09
 Status: ✅ Production Ready
@@ -893,18 +913,35 @@ the same pass as the redesign so the deletion is a reviewable change on its own.
 `mockups/InvoiceDocument.jsx` + `mockups/MockupFrame.jsx`, which it depends on.
 
 ### Secondary marketing pages (`/features`, `/pricing`, `/about`, `/security`)
-Status: ⚠️ Partial — shared chrome is V2; page bodies are still pre-V1.
-Frontend: `components/layout/PublicLayout.jsx` was rewritten from a 232-line self-contained shell
-(glass navbar, gradient-box text logo, dark cream footer) to a 9-line wrapper that renders
-`LandingNav` + `children` + `LandingFooter` inside `.vx-page`. All four pages therefore now share
-one navbar, one footer, one canvas and Inter with the homepage.
-Notes: Their **body** content still uses the older `sand`/`ink`/`mint` palette, `.hero-gradient`,
-`.orb*` and icon-in-tinted-chip feature grids — they render correctly and are not broken, but they
-read as an older design language next to `/`. Migrating that content onto `ledger.jsx` is the
-obvious next pass. The deprecated CSS (`.hero-gradient`, `.orb*`, `.gradient-text*`,
-`pulse-glow`/`shimmer`/`gradient-shift`/`spin-slow`) still cannot be deleted from `index.css` for
-the same reason. `.hover-lift`/`.card-shine` remain NOT deprecated — shared with the dashboard's
-`StatCard.jsx`.
+Status: ⚠️ Partial → ✅ Production Ready (migrated to V2 + content-fixed, 2026-09-21)
+Frontend: `components/layout/PublicLayout.jsx` (unchanged this pass, already V2 chrome — `LandingNav` +
+`children` + `LandingFooter`). All four page bodies rewritten onto the V2 "Ledger" system:
+`ledger.jsx`'s `Section`/`SectionHead`/`Eyebrow`/`Field`/`Tick`/`Caret`/`Rail`, the `carbon`/`canvas`/
+`surface`/`well`/`hairline`/`verify` token set, and `ClosingCTA` reused as every page's closing
+section (previously ad hoc per-page gradient CTAs).
+Notes: **Design debt closed 2026-09-21** — bodies no longer use the pre-V1 `sand`/`ink`/`mint`
+palette, `.hero-gradient`, `.orb*`, or icon-in-tinted-chip grids (ledger.jsx's system deliberately
+has no icon-chip primitive); all four now read as the same design language as `/`. Verified by
+screenshotting all four pages in a real browser (Playwright against the Vite dev server), including
+confirming the scroll-triggered `Reveal` animations were the only reason a naive full-page screenshot
+showed blank sections — content renders correctly once in view. The deprecated CSS
+(`.hero-gradient`, `.orb*`, `.gradient-text*`, `pulse-glow`/`shimmer`/`gradient-shift`/`spin-slow`)
+in `index.css` is now dead and can be deleted (not done in this pass, to keep the diff reviewable).
+**Two real content problems were found and fixed in the same pass, not just cosmetic ones:**
+(1) `/about` had a fully fabricated founding team (three invented names/bios/initials), a fabricated
+company timeline ("Founded in Pune 2022... 500+ firms by 2025"), and fabricated growth metrics
+("500+ CA firms onboarded", "10,000+ documents processed monthly", "99.5% OCR accuracy") — the exact
+class of fake social proof the homepage's own V2 redesign explicitly stripped out elsewhere (see
+`ProofBand`'s "founding-customer phase" copy) but which nobody had touched on this page. Removed
+entirely per explicit user direction; the team section now credits the real founder (Pranav Vatsa)
+with no invented backstory, and the page reuses `ProofBand` instead of the fake stats card.
+(2) `/pricing` advertised real ₹ billing, a monthly/annual toggle, "Start 14-day trial", and a FAQ
+answer claiming Razorpay payment support — none of which exist anywhere in the codebase (`plan` is
+a display-only field with no checkout, trial logic, or payment integration). Rewritten per explicit
+user direction to "early access" framing: Starter (genuinely free, real signup) keeps its
+`/signup` CTA; Professional/Enterprise CTAs now say "Join early access"/"Talk to us" and point at
+the same waitlist-backed `ClosingCTA` form the rest of the site uses; the Razorpay FAQ answer was
+replaced with an honest one about what early access means.
 
 ### Marketing bundle size (route-level code splitting)
 Status: ✅ Production Ready — added 2026-08-09
@@ -941,15 +978,19 @@ illegible) with its two blurred accent-colour orbs removed — the V1 brief rule
 explicitly, and the panel didn't need them once it had a real dark background of its own.
 
 ### Magic-link upload pages
-Status: ⚠️ Partial — shell (`PublicPageShell`) is V1; page-level literal-white cosmetic debt not
-addressed this pass.
+Status: ⚠️ Partial → ✅ Production Ready (fixed 2026-09-21)
 Frontend: `pages/PublicUploadPage.jsx`, `pages/PublicUploadStatusPage.jsx`.
-Notes: These pages render on the light canvas automatically (their shared `PublicPageShell`,
-`hairline`/`zinc`/`indigo` tokens all retuned for V1), which is a coherent look now rather than the
-2026-08-09 dark/light-shell mismatch fixed previously. Not addressed in this pass: both files still
-contain some of the same literal `white/opacity` decorative utilities called out for `HomePage.jsx`
-above — same reasoning, page content was out of scope for a tokens/primitives change. Upload queue,
-progress, validation and polling logic are untouched either way.
+Notes: These pages render on the light canvas via their shared `PublicPageShell` (`hairline`/`zinc`/
+`indigo` tokens all retuned for V1). **Fixed 2026-09-21:** both files still had literal
+`bg-white/[0.02]`–`bg-white/[0.12]` decorative fills/borders left over from a dark-canvas design —
+on the light V1 canvas these were nearly invisible (a white-tinted wash on a near-white background),
+affecting the dropzone hover state, the empty-queue box, per-file queue item cards, progress-bar
+tracks, status badges, and the loading skeleton. Replaced with the existing V1 tokens the rest of
+the public surface already uses (`bg-well` for recessed fills, `bg-hairline-strong` for visible
+progress-track/skeleton fills, `border-hairline` for borders) — the same fix pattern already applied
+to the mockups per the "Product mockups" entry above. Verified in a real browser: the previously
+invisible info box on the invalid-link error state is now a clearly visible tan/beige recessed panel
+against the white card. Upload queue, progress, validation and polling logic are untouched.
 
 ---
 
@@ -968,9 +1009,9 @@ Status: ✅ Production Ready
 Confirmed: approve, reprocess, all export routes, client/document delete, user invite/remove, scheduled-request mutations all require `requireAdmin` both backend and frontend (button-level gating)
 
 ### Frontend hides admin-only elements for staff
-Status: ⚠️ Partial
-Frontend: confirmed correct on ReviewPage (Approve/Reprocess), ExportPage (Generate panel), TeamPage (invite/remove), AuditLogPage (whole page), SettingsPage (firm settings panel)
-Notes: See "Plan field support" above — staff being unable to see the plan badge (not just unable to edit it) is arguably over-hiding, the inverse problem. Worth a product decision on whether plan visibility should be staff-visible.
+Status: ⚠️ Partial → ✅ Production Ready (fixed 2026-09-21)
+Frontend: confirmed correct on ReviewPage (Approve/Reprocess), ExportPage (Generate panel), TeamPage (invite/remove), AuditLogPage (whole page), SettingsPage (edit form still admin-gated, read-only plan/name view added for staff)
+Notes: See "Plan field support" above — staff previously couldn't see the plan badge at all (over-hiding, the inverse of the intended gate). Fixed alongside that entry.
 
 ### Permissions reference table in settings
 Status: ✅ Production Ready
@@ -1017,17 +1058,17 @@ Status: ✅ Production Ready
 Backend: `clients.service.js:407-417` → audit `client_magic_link_emailed` (`:419-431`)
 
 ### User invite email
-Status: ⚠️ Partial
-Backend: `users.service.js:80-89` → audit `user_invited` (`:91-104`)
-Notes: sends correctly, but (as noted above) the audit row doesn't capture delivery status (`sent`/`provider`/`error`) the way the other 3 email flows do.
+Status: ✅ Production Ready (confirmed 2026-09-21)
+Backend: `users.service.js` → audit `user_invited` + `user_invite_emailed` (the latter captures `sent`/`provider`/`error`)
+Notes: Sends correctly and the audit row already captures delivery status, matching the other 3 email flows — this entry's previous "Partial" status was stale.
 
 ### Document ready for review email
 Status: ✅ Production Ready
 Backend: `document-processing.worker.js:104-115` → audit `document_ready_emailed` via `recordDocumentReadyEmailAudit` (`document-processing.service.js:236-253`), sent to every admin in the firm
 
 ### Email audit logs
-Status: ⚠️ Partial
-Backend: 3 of 4 email call sites record `sent`/`provider`/`error` in their audit row; user-invite does not (see above)
+Status: ✅ Production Ready (confirmed 2026-09-21)
+Backend: All 4 email call sites (password reset, magic link, document ready/failed, user invite) record `sent`/`provider`/`error` in their audit row
 
 ### Request Demo — lead capture, persistence, and notification
 Status: ✅ Production Ready
@@ -1050,6 +1091,16 @@ Status: 🔧 Needs Fix → ✅ Production Ready (fixed 2026-09-20)
 Migration: confirmed across all 13 migrations — every tenant-scoped table (`firms`, `users`, `clients`, `documents`, `extractions`, `tally_exports`, `audit_logs`, `refresh_tokens`, `document_upload_sessions`, `item_name_mappings`, `password_reset_tokens`, `notifications`, `document_versions`, `scheduled_requests`) has RLS enabled and (after the `item_name_mappings` fix) forced. `waitlist` intentionally has no RLS (pre-auth public signup table, no `firm_id`).
 Notes: **Critical bug found and fixed 2026-09-20, verified against a live Postgres.** The RLS policies themselves were always correct, but Postgres never applies Row Level Security to a superuser, regardless of `FORCE ROW LEVEL SECURITY`. In the self-hosted `docker-compose`/`docker-compose.prod.yml` deployment path, the app's `DATABASE_URL` connects as the official `postgres` image's bootstrap role (`POSTGRES_USER`) — which the image creates as a Postgres superuser. This meant every RLS policy was silently bypassed for that deployment path: verified empirically (inserted two firms' documents, set `app.current_firm_id` to firm A, queried as the bootstrap role — both firms' documents came back). A non-superuser role querying the same data with the same session var correctly saw only firm A's row, confirming the policies were never the problem. Fix: new migration `20260825000000_create_least_privilege_app_role.js` creates a `NOSUPERUSER` `ca_app` role with scoped grants (+ `ALTER DEFAULT PRIVILEGES` so future tables auto-grant to it); `backend/src/config/env.js`/`src/db/pool.js` add an `APP_DATABASE_URL` the runtime pool prefers over `DATABASE_URL` (migrations keep using `DATABASE_URL`, which needs DDL rights `ca_app` intentionally lacks); `ai-service/app/config.py`/`persistence_service.py` mirror this for the ai-service's own write-back connection. `docker-compose.yml`/`docker-compose.prod.yml` wire `APP_DATABASE_URL` for `backend`/`worker`/`ai-service`. Render's managed Postgres already provisions a non-superuser connection role by default, so this bug did not affect the Render deployment path — only self-hosted docker-compose. New regression test: `backend/tests/integration/rls.test.js` (6 cases) runs against a real Postgres via the `ca_app` role and asserts cross-firm isolation, fail-closed behavior with no tenant context set, and rejection of a cross-tenant `INSERT`; confirmed this test fails hard (all 6 cases) when run against the pre-fix superuser configuration, and passes clean with the fix.
 Notes (pre-existing): `waitlist.service.js` uses raw `pool.query` directly rather than `withTenantTransaction` (`:1,14`) — correct given it has no tenant scope, but is the one clear exception to the "always wrap DB access" convention and should be documented as intentional so it isn't "fixed" by mistake later.
+
+### RLS startup guard against a misconfigured superuser role
+Status: ✅ Production Ready
+Backend: `backend/src/db/assert-safe-role.js` (new) — `assertRuntimeRoleIsNotSuperuser()` queries `SELECT usesuper FROM pg_user WHERE usename = current_user` and throws a detailed error (referencing the `ca_app` migration) if the runtime connection is a superuser. Called at the top of `server.js`'s `startServer()` right after the initial `SELECT 1` connectivity check, and in `document-processing.worker.js` / `scheduled-requests.job.js` before either BullMQ `Worker` starts processing jobs (both workers now use `autorun: false` and are started explicitly, in parallel, only after the guard passes).
+Notes: Added 2026-09-21. The `ca_app` least-privilege role (see "PostgreSQL RLS on all tenant tables" above) fixes the superuser-bypasses-RLS bug for anyone who deploys it correctly — but nothing previously stopped the app from booting anyway if `APP_DATABASE_URL` were left unset or pointed back at a superuser role (a plausible operator mistake, and exactly the failure mode the original bug shipped in). Now the process refuses to start and exits non-zero with a clear error instead of silently running with RLS disabled. Verified against a real local Postgres 16 with both roles: server and worker both boot cleanly as `ca_app`, and both fail loudly (exit 1) as the `postgres` superuser.
+
+### Client-portal RLS database backstop
+Status: ✅ Production Ready
+Migration: `20260921000000_client_portal_rls_backstop.js` — tightens `documents_isolation_policy` / `extractions_isolation_policy` / `tally_exports_isolation_policy` to add `AND (app.current_client_id() IS NULL OR client_id = app.current_client_id())` (or the equivalent `EXISTS` join through `documents` for `extractions`).
+Notes: Added 2026-09-21. Application code already scoped client-portal queries to the logged-in client, but the RLS policy itself only enforced firm-level isolation — nothing in the database stopped a client-portal session from reading a *sibling* client's documents within the same firm if a route ever queried without an explicit `client_id` filter (the same class of bug the superuser fix above targets: a correct policy for one dimension of isolation, with no database-level backstop for another). Firm/staff sessions (no `current_client_id` set) are unaffected. Covered by a new `describeIfDb` block in `backend/tests/integration/rls.test.js` (5 cases) — confirmed these tests fail (leak sibling client's data) when the migration is rolled back, and pass when reapplied.
 
 ### Helmet security headers
 Status: ✅ Production Ready
@@ -1093,14 +1144,22 @@ Notes: None of these were fake-feature gaps — the download flow and password r
 
 ### CI/CD pipeline
 Status: ❌ Not Built → ✅ Production Ready (added 2026-09-20)
-Infra: `.github/workflows/ci.yml` — four jobs on every PR/push to `main`: `backend` (install + JS syntax check + `npm test` unit suite), `backend-integration` (spins up a real `postgres:15` service container, runs migrations, runs the RLS integration test), `frontend` (`npm ci && npm run build`, catching build-breaking errors), `ai-service` (syntax check via `compileall` + a light-dependency `pytest` run covering the LLM JSON-parsing/retry logic, without installing the heavy paddleocr/paddlepaddle stack).
-Notes: No CI existed at all before this (no `.github/workflows` directory). Deliberately scoped as a baseline quality gate rather than full coverage — see "Automated test suites" below for what is and isn't covered, and `ai-service/requirements-dev.txt`'s comment for why OCR-engine code only gets a syntax check, not a real test run, in CI.
+Infra: `.github/workflows/ci.yml` — four jobs on every PR/push to `main`: `backend` (install + JS syntax check + `npm test` unit suite), `backend-integration` (spins up a real `postgres:15` service container, runs migrations, runs the integration suite), `frontend` (`npm ci && npm test && npm run build` — the Vitest suite now runs before the build, added 2026-09-21), `ai-service` (syntax check via `compileall` + a light-dependency `pytest` run, without installing the heavy paddleocr/paddlepaddle stack).
+Notes: No CI existed at all before this (no `.github/workflows` directory). Deliberately scoped as a baseline quality gate rather than full coverage — see "Automated test suites" below for what is and isn't covered, and `ai-service/requirements-dev.txt`'s comment for why OCR-engine code only gets a syntax check, not a real test run, in CI. All four jobs reverified green end-to-end, 2026-09-22, after the dependency-security pass below (each fix was reproduced against a clean environment matching CI before being accepted — not just "passed locally").
+
+### Dependency security audit
+Status: ✅ Production Ready (added 2026-09-22)
+Backend: `npm audit` found 13 vulnerabilities. `npm audit fix` (non-breaking) resolved most; `express` bumped `4.21.2` → `4.22.3` (same major, resolves a `qs` DoS chain via `body-parser`/`express`'s own `qs` dependency without touching Express 5's breaking changes); `nodemailer` force-bumped `8.0.7` → `10.0.10` after confirming the app's actual usage (`email.service.js`) only touches `createTransport`/`sendMail`, both stable across the major bumps. The one remaining unpatched item — `uuid` (via `exceljs`'s buffer-bounds-check advisory) — was deliberately left: the only available fix (`npm audit fix --force`) would downgrade `exceljs` to `3.4.0`, a real regression for the XLSX-parsing feature this same pass depends on (see Bulk client import above); `express` 5's migration was also declined as out of scope for this pass (large blast radius, needs its own dedicated project, not a security-driven change). Verified: all 73 backend unit + 19 integration tests pass after every dependency change, run against a live Postgres in a clean-env shell (`env -i` with only CI's placeholder vars) matching the CI runner, not just the local sandbox's `.env`-assisted shell.
+Frontend: `npm audit` found 10 vulnerabilities; `npm audit fix` resolved 8 (babel, browserslist, postcss, postcss-selector-parser, nanoid, vite, baseline-browser-mapping). The remaining one (`react-router-dom` open-redirect/SSR-hydration advisory) required the `6.x` → `7.18.4` major bump — applied after grepping the entire `frontend/src/` tree and confirming only the stable classic-router API is used anywhere (`BrowserRouter`/`Routes`/`Route`/`Link`/`NavLink`/`Navigate`/`Outlet`/`useNavigate`/`useLocation`/`useParams` — none of v7's breaking data-router APIs). `npm audit` now reports 0 vulnerabilities. Verified: all 47 frontend tests pass and `npm run build` produces a clean production bundle after the bump.
+AI service: no prior dependency-vulnerability check had ever been run. `pip-audit -r requirements.txt` found 46 known vulnerabilities across 9 packages. Fixed (non-breaking, same-major or small patch bumps, each verified against `pip`'s full resolver with zero conflicts and the 27-case pytest suite re-run clean afterward): `setuptools` `75.6.0` → `83.0.0` (path-traversal advisories in the deprecated `package_index` downloader — not on this service's call path, free bump); `fastapi` `0.115.6` → `0.116.2`, which pulls a patched `starlette` (fixes PYSEC-2026-1941, a large-multipart-upload event-loop-blocking DoS — directly relevant since `/tools/register-clean` and `/tools/bank-statement-xml` both accept multipart `UploadFile`; the upload path was smoke-tested with a throwaway `TestClient` against the exact pinned combination before committing); `python-multipart` `0.0.9` → `0.0.32` (six CVEs in malformed-multipart-body handling); `python-dotenv` `1.0.1` → `1.2.2`; `pdfplumber` `0.11.4` → `0.11.9` (its hard `==` pin on `pdfminer.six` was the actual vulnerable package — two CVEs, `20231228` → `20251230`, fully patched). Left unfixed and documented as accepted risk: `paddlepaddle` (2 CVEs, only a `3.0.0b0` beta fix exists — forcing a beta ML framework into a production OCR pipeline pre-launch is worse than the risk); `imgaug` (transitive via `paddleocr`, used only for training-time data augmentation never exercised at inference time, no fix version published upstream at all); `opencv-python`/`opencv-contrib-python` `4.6.0.66` (hard-pinned by `paddleocr==2.7.3` itself via `<=4.6.0.66` — not controllable without patching or forking `paddleocr`; the service's own direct `opencv-python-headless==4.9.0.80` pin, used for all our actual preprocessing code, is unaffected); `starlette`'s remaining CVEs beyond PYSEC-2026-1941 all require a `1.x` major bump not yet supported by any `0.11x` FastAPI release — checked applicability directly against this codebase and confirmed none apply regardless of version (no `StaticFiles`/`FileResponse`/`StreamingResponse` anywhere in `app/`, no raw Starlette `HTTPEndpoint` classes, no host-header-based routing/redirect logic).
+Notes: Discovering the fully undocumented `client-import.service.js` bulk-import feature (see above) during this audit — an actively-used file-upload attack surface running on an unpatched, unmaintained package with no upstream fix — is itself the argument for why this "thorough check everywhere" pass was warranted; a prior audit pass had claimed comprehensive coverage without ever finding it.
 
 ### Automated test suites
-Status: ❌ Not Built → ⚠️ Partial (added 2026-09-20)
-Backend: Jest added (`backend/package.json` `test`/`test:integration` scripts). Unit (`backend/tests/unit/`, DB-free): `compliance.service.test.js` (18 cases), `tally-xml.service.test.js` (18 cases). Integration (`backend/tests/integration/`, needs live Postgres): `rls.test.js` (6 cases) — the tenant-isolation regression guard described under "PostgreSQL RLS on all tenant tables".
-AI Service: pytest added (`ai-service/tests/`, `requirements-dev.txt`). `test_json_parser.py` (8 cases), `test_llm_service.py` (16 cases, mocks the Groq client — covers the malformed-JSON degrade, retry/backoff, no-retry-on-4xx, and confidence-adjustment branches).
-Notes: This covers the highest-risk paths identified in a full-repo production-readiness audit (RLS tenant isolation, GST/tax-math correctness, Tally XML debit=credit correctness, LLM JSON-parse/retry branching) — roughly 66 test cases total, all independently run and verified against real infrastructure (a live Postgres, including confirming the RLS test fails hard against the pre-fix superuser configuration) rather than written blind. It is deliberately not full coverage: no frontend tests exist (no Vitest/Jest/RTL configured), no OCR-engine tests exist (`ocr_service.py` — would need the full heavy `paddleocr`/`paddlepaddle` install), and most backend services/routes still have no test at all. The three legacy scripts in the top-level `tests/` directory (`test-excel-to-xml.js`, `test-bank-statement.js`, `test-extraction-prompt.js`) are separate, older, manual smoke scripts — two of them previously hardcoded a Windows-only `.venv/Scripts/python.exe` path (fixed 2026-09-20 to also check `.venv/bin/python` and fall back to `python3` on PATH, so they're at least cross-platform-runnable now); they still are not wired into CI since they need the full ai-service dependency install.
+Status: ❌ Not Built → ⚠️ Partial (added 2026-09-20, expanded 2026-09-21 twice — backend/ai-service, then frontend; expanded again 2026-09-22 — backend gains client-import coverage)
+Backend: Jest (`backend/package.json` `test`/`test:integration` scripts). Unit (`backend/tests/unit/`, DB-free, 73 cases): `compliance.service.test.js` (18), `tally-xml.service.test.js` (27, expanded with tax-math-balancing/sign-bug/no-transactions-fallback/XML-declaration coverage), `exports.service.test.js` (6 — the tax-math export block), `document-processing.service.test.js` (8 — the independent document-type-mismatch check), `client-import.service.test.js` (14 cases, new 2026-09-22 — CSV parsing/validation, and real ExcelJS-generated `.xlsx` fixtures covering the `xlsx`→`exceljs` rewrite: valid parse, blank-row dropping, numeric-cell stringification, corrupted-buffer friendly error). Integration (`backend/tests/integration/`, needs live Postgres, 19 cases): `rls.test.js` (11, includes the client-portal sibling-isolation block), `extraction-edit-lock.test.js` (3 — the reviewed/exported edit-lock regression guard), `refresh-token-reuse.test.js` (1 — proves the JWT reuse-detection rollback bug stays fixed by asserting the *rotated* token is also revoked, not just that the replay fails), `audit-logs-unknown-email.test.js` (4 — proves the unknown-email login blind spot is closed for both firm and client-portal logins, and that the RLS escape hatch can't be triggered outside its exact auth_context or read back by a firm-scoped session).
+AI Service: pytest (`ai-service/tests/`, `requirements-dev.txt`, 27 cases). `test_json_parser.py` (8), `test_llm_service.py` (16, mocks the Groq client — covers the malformed-JSON degrade, retry/backoff, no-retry-on-4xx, and confidence-adjustment branches), `test_preprocess_service.py` (3 — the multi-page truncation regression guard), executed in CI (not just syntax-checked) via `opencv-python-headless`/`PyMuPDF` added to the CI install step.
+Frontend: Vitest + React Testing Library (`frontend/package.json` `test`/`test:watch` scripts, `vitest.config.js`, jsdom environment), 47 cases across 6 files in `frontend/tests/unit/`: `lib-utils.test.js` (parseApiError/cn/formatDate/formatDateTime, and `triggerFileDownload` with a mocked `fetch`+`URL.createObjectURL`), `permissions.test.js` (`isAdmin`), `token-store.test.js` (the in-memory token/user singletons), `api-client.test.js` (11 cases — the highest-value target: Bearer token attachment, transparent 401→refresh→retry, concurrent-401 refresh de-duplication via the shared `refreshPromise`, session clearing + `unauthorizedHandler` invocation when refresh itself fails, `skipRefresh` preventing an infinite retry loop, FormData vs JSON body handling, blob/204 response handling), `ErrorBoundary.test.jsx` (crash recovery, including that the reload button actually calls `window.location.reload`), `StatusBadge.test.jsx` (status→label mapping). Wired into CI: the `frontend` job now runs `npm test` before `npm run build`. Reverified 2026-09-22 against `react-router-dom@7.18.4` (major bump, see "Dependency security audit" above) — all 47 still pass, build still clean.
+Notes: This covers the highest-risk paths identified in a full-repo production-readiness audit across all three services (RLS tenant isolation incl. client-portal sibling isolation, GST/tax-math correctness incl. export-time blocking, Tally XML debit=credit correctness, approved-document edit locking, multi-page PDF truncation, JWT refresh-token reuse detection — both backend and the frontend's own transparent-refresh logic that depends on it working, unknown-email login audit logging, independent document-type verification, LLM JSON-parse/retry branching, and now the bulk-client-import CSV/XLSX parsing path) — 166 test cases total as of 2026-09-22 (92 backend [73 unit + 19 integration] + 27 ai-service + 47 frontend), all independently run and verified against real infrastructure (a live Postgres for backend integration tests, a real browser build for frontend) rather than written blind. It is deliberately not full coverage: no OCR-engine tests exist (`ocr_service.py` — would need the full heavy `paddleocr`/`paddlepaddle` install), most backend services/routes still have no test at all, and the frontend suite covers pure logic modules and two components rather than full page-level integration tests (e.g. nothing yet exercises `ReviewPage.jsx`'s warning banners or `ProtectedRoute.jsx`'s auth gating directly — both are still correct by manual verification and by what depends on them, just not test-covered). The three legacy scripts in the top-level `tests/` directory (`test-excel-to-xml.js`, `test-bank-statement.js`, `test-extraction-prompt.js`) are separate, older, manual smoke scripts and still not wired into CI since they need the full ai-service dependency install.
 
 ---
 
@@ -1113,8 +1172,8 @@ defects rather than feature gaps, but each one independently prevented the app f
 running at all on a clean machine, so they belong in this file.*
 
 ### Reproducible local bring-up from a clean checkout
-Status: 🔧 Needs Fix
-Notes: A clean checkout could not be started. Every one of these had to be fixed by hand: (1) **no `.env` existed** and root `.env.example` is missing `LOCAL_STORAGE` entirely (the backend supports it via `env.js:13`, and it is required for S3-free local dev) — `ai-service/.env.example` does document `LOCAL_STORAGE`/`LOCAL_STORAGE_PATH` correctly; (2) `backend/package.json` declares `"seed:admin": "node scripts/seed-admin.js"` and CLAUDE.md documents `npm run seed:admin`, but **`backend/scripts/` did not exist at all** — the command fails outright, so there is no documented way to create a first admin except `POST /api/auth/signup`; (3) `ai-service/requirements.txt` pinned `paddlepaddle==2.6.1`, which **no longer exists on PyPI** (available versions start at 2.6.2), so the image could never build — now `2.6.2`; (4) `paddle` imports `setuptools` at runtime but `python:3.12-slim` stopped bundling it, so the container crashed on startup with `ModuleNotFoundError: setuptools` — now pinned explicitly in `requirements.txt`; (5) `httpx` was unpinned and incompatible with `groq==0.11.0` (see LLM structured extraction). Items 3–5 mean the AI service image was **unbuildable and unbootable as committed**, independent of any network issue.
+Status: 🔧 Needs Fix → ✅ Production Ready (confirmed fixed 2026-09-21)
+Notes: The five original gaps (no `.env`/missing `LOCAL_STORAGE` in `.env.example`, missing `seed:admin` script, unpinned/broken `paddlepaddle`/`setuptools`/`httpx` versions) were all fixed in earlier passes but this entry's status was never updated to reflect it. Reverified 2026-09-21: root `.env.example` documents `LOCAL_STORAGE=false` and now also `REVIEW_CONFIDENCE_THRESHOLD`/`SCHEDULED_REQUESTS_EMBEDDED` (added this pass); `backend/package.json`'s `seed:admin` script correctly points at `scripts/seed-demo.js` (which exists and was run end-to-end against a live Postgres in this pass — creates a demo firm, admin user, and two clients, prints working credentials, idempotent on re-run); `ai-service/requirements.txt`'s `paddlepaddle`/`setuptools`/`httpx` pins are unchanged from their earlier fix. No further gap found.
 
 ### docker-compose ai-service cannot read LOCAL_STORAGE uploads
 Status: ✅ Production Ready
@@ -1127,9 +1186,16 @@ Status: ✅ Production Ready
 Notes: Added 2026-08-08: `backend/scripts/demo-smoke-test.js` walks the whole path (login → client → magic link → upload → confirm → processing → extraction → approve → Tally export → download, asserting the payload is real XML) and is idempotent so it can be re-run before a demo; `backend/scripts/make-test-invoice.js` generates a text-bearing invoice PDF (the repo had no PDF fixture); `backend/scripts/seed-demo-extraction.js` seeds a realistic extraction so review/approve/export can be exercised without a live OCR round trip. Local-only, git-ignored support files: `docker-compose.override.yml`, `ai-service/Dockerfile.local`, `ai-service/corp-ca.pem`.
 
 ### Production deployment target
-Status: ⚠️ Partial → ✅ Production Ready (fixed 2026-09-20)
+Status: ⚠️ Partial → ✅ Production Ready (fixed 2026-09-20, hardened further 2026-09-21)
+Notes: **Fixed 2026-09-21:** `render.yaml`'s `verax-postgres` database was on `plan: free`. Render's free Postgres tier is explicitly ephemeral — it is deleted roughly 30 days after creation with no backups and no way to renew it in place. Deploying this blueprint as committed meant every firm's/client's/extraction's data (and the audit log) would be unrecoverably wiped about a month after go-live. Changed to `plan: basic-1gb` (the minimum paid tier with automated daily backups and point-in-time recovery), with an explanatory comment in the blueprint. `verax-ai-service`, `verax-backend`, and `verax-worker` remain on `plan: free` in the committed file — the ai-service one is already flagged in an existing comment as required to be paid before going live (cold-start/idle-spindown, not a data-loss risk); all three are cheap to bump alongside Postgres and are an operator step at deploy time, not a code defect the way the database's ephemerality was.
 Notes: **Fixed 2026-09-11 (docker-compose hardening)**, see prior note preserved below. **Fixed 2026-09-20 (deployment story + render.yaml completeness):** the README documented Railway as the "Production Build" target while the only real IaC in the repo (`render.yaml`) targets Render — two different platforms with no reconciliation, and no Railway-specific config existed anywhere. Resolved by making Render (backend/worker/ai-service/Postgres/Redis via `render.yaml`) + Vercel (static frontend) the documented primary path, and `docker-compose.prod.yml` the documented self-hosted alternative for operators with their own ops capacity; README rewritten accordingly. `render.yaml` itself had real gaps: it was missing `CLIENT_JWT_SECRET` (a `Joi.required()` var in `env.js` — the backend cannot boot without it, so the blueprint as committed would fail at startup), missing all `SMTP_*`/`EMAIL_*` vars (meaning magic-link/password-reset/notification emails would silently never send), and pointed `verax-ai-service` at the dev `Dockerfile` instead of `Dockerfile.prod`. All three fixed, plus an explicit comment warning that the ai-service instance must be on an always-on paid Render plan (the free tier spins down on idle, and the resulting cold start reloading PaddleOCR's models would fail or time out the first request afterward). `ai-service/Dockerfile.prod` also hardened: added `tesseract-ocr-hin` (it was missing from the prod image despite `ocr_service.py`'s Hindi/Devanagari fallback depending on it — silently broken for Hindi-script documents in production specifically), a non-root user, and a `HEALTHCHECK` against `/health`.
 Notes (2026-09-11, preserved): `docker-compose.prod.yml`'s `backend` and `worker` services were defined as raw `image: node:20-alpine` with `./backend:/app` bind mounts and `npm install --omit=dev && npm start` as the runtime command — i.e. they never used `backend/Dockerfile` at all and mounted the host filesystem into a "production" container, both directly contradicting the production requirements (no local bind mounts; build from the Dockerfile). Changed both to `build: { context: ./backend, dockerfile: Dockerfile }`, removed the bind mounts and the now-unused `backend_node_modules` volume, and gave `worker` an explicit `command: ["node", "src/workers/document-processing.worker.js"]` override on the same image. `ai-service` was building the dev `Dockerfile` (tesseract-hin, `--reload`, no PaddleOCR model pre-fetch) instead of the existing `ai-service/Dockerfile.prod` (multi-worker uvicorn, models baked in at build time) — switched to `Dockerfile.prod`. Added Docker `healthcheck:` blocks to `backend`, `worker`, `frontend`, and `ai-service` (previously only `postgres`/`redis` had them): `wget --spider` against `/health` for backend and frontend, a `python -c urllib.request` check against `/health` for `ai-service` (the `python:3.12-slim` base has no curl/wget), and `pgrep -f document-processing.worker.js` for `worker`, which has no HTTP listener. Also added `backend/.dockerignore`, `frontend/.dockerignore`, and `ai-service/.dockerignore` (none existed) — without them, `COPY . .` in each Dockerfile copies the host's `node_modules`/`__pycache__` over the freshly-installed Linux ones after `npm ci`/`pip install`; frontend's build tooling (`esbuild`/`@rollup/rollup-*`) ships OS-specific native binaries, so building on a non-Linux host without a `.dockerignore` breaks `npm run build` inside the image. Verified: `docker compose -f docker-compose.prod.yml build` completes with exit code 0 for all four built images (`ca-backend:prod`, `ca-frontend:prod`, `ca-ai-service:prod`).
+
+### Production reliability hardening (health checks, DB pool limits, crash reporting)
+Status: 🔧 Needs Fix → ✅ Production Ready (fixed 2026-09-22)
+Backend: `/health` (`app.js`) previously always returned `200 {status:"ok"}` regardless of whether the process could actually reach Postgres or Redis — with `render.yaml`'s `healthCheckPath: /health` pointed at it, Render had no way to tell a broken instance (DB connection dead, Redis unreachable) from a healthy one and would keep routing traffic to it. Now runs a real `SELECT 1` against Postgres and a real Redis `PING` (via a new `checkRedisHealth` export on `document-queue.service.js`, reusing its existing lazily-created connection rather than opening a new one per poll) on every request, each capped at 4s so a hung dependency can't hang the health check itself — returns `503` with the failing dependency's error if either check fails or times out. The Postgres client (`db/pool.js`) had no `max`/`idleTimeoutMillis`/`connectionTimeoutMillis`/`statement_timeout` set at all — a hung query or a leaked client held a connection forever with no automatic recovery, and a pool-level `'error'` event (e.g. an idle client's connection dropped server-side) had no listener, which crashes the process per Node's default `EventEmitter` behavior for unhandled `'error'` events. Added all four as new env-configurable settings (`DB_POOL_MAX`/`DB_POOL_IDLE_TIMEOUT_MS`/`DB_POOL_CONNECTION_TIMEOUT_MS`/`DB_STATEMENT_TIMEOUT_MS`, documented in `.env.example` and `render.yaml`) plus a `pool.on("error", ...)` handler. Also: none of `server.js` or either worker (`document-processing.worker.js`, `scheduled-requests.worker.js`) had `process.on("uncaughtException"/"unhandledRejection")` handlers — an unhandled async error crashed the process with no Sentry report ever generated, and the two worker processes didn't initialize Sentry at all (only the API server did). Added matching crash handlers to all three entry points: capture to Sentry (when `SENTRY_DSN` is set) and flush before exiting, so a crash is visible instead of silently vanishing into a platform restart.
+AI service: same class of gap — `/health` (`app/main.py`) also always returned `200` unconditionally. Now runs a real `psycopg2` connect + `SELECT 1` against `APP_DATABASE_URL`/`DATABASE_URL` with a 4s `connect_timeout`, returning `503` on failure — relevant because `persistence_service.py` writes name-mapping corrections back to Postgres on every approved extraction when `AI_WRITE_BACK_ENABLED=true`. `render.yaml`'s `verax-ai-service` block had no `healthCheckPath` set at all (unlike `verax-backend`), so Render wasn't using HTTP health checks for it regardless of what `/health` returned — added `healthCheckPath: /health`.
+Notes: **Not yet done, and explicitly not a code defect** — `render.yaml`'s `verax-backend`/`verax-worker`/`verax-ai-service`/`verax-redis` are still on `plan: free` (only `verax-postgres` was moved to paid, see "Production deployment target" above). This is an operator billing decision at actual deploy time, not something fixable from the repo. Verified: new `backend/tests/unit/health-check.test.js` (4 cases, mocks `pool`/`checkRedisHealth` to prove the 200/503/503/503-on-timeout branches independently of live infra) plus a real live-infra round trip — booted `server.js` against a real local Postgres+Redis, confirmed `200`, then killed Redis and confirmed `503` with the correct error message, restarted it and confirmed recovery to `200`, then repeated the same kill/recover cycle for Postgres. Both workers were booted and cleanly shut down with the new Sentry/crash-handler code present. The ai-service `/health` change was verified differently and less completely: `app/main.py` can't be imported in this environment without installing the full `paddleocr`/`paddlepaddle` stack (several hundred MB — the same reason `ocr_service.py` has no CI test coverage at all, see "Automated test suites"), so the new `psycopg2.connect`+`SELECT 1` logic was verified directly and correctly against a live Postgres (both the success and the connection-refused paths), but the FastAPI route wiring around it (the `Response` injection, the `503` status override) was verified by code review and a syntax check, not a live HTTP round trip.
 
 ---
 
@@ -1137,11 +1203,134 @@ Notes (2026-09-11, preserved): `docker-compose.prod.yml`'s `backend` and `worker
 
 | Status | Count |
 |--------|-------|
-| ✅ Production Ready | 149 |
-| ⚠️ Partial | 9 |
+| ✅ Production Ready | 180 |
+| ⚠️ Partial | 2 |
 | ❌ Not Built | 0 |
-| 🔧 Needs Fix | 5 |
-| **Total** | 163 |
+| 🔧 Needs Fix | 0 |
+| **Total** | 182 |
+
+*(2026-09-22, sixth pass — triggered directly by the user asking, in as many words, for "100% surety
+this will never break in production" before building payments on top of it. The honest answer given
+was that no such guarantee exists, but a real gap surfaced immediately on inspection: `render.yaml`'s
+own comments warn that `verax-ai-service` must be paid-tier before going live, and separately that
+`/health` was a dumb liveness check, yet neither had been acted on. This pass fixed everything fixable
+from the repo itself — see "Production reliability hardening" above for the full breakdown (real DB/
+Redis health checks on both backend and ai-service replacing unconditional `200`s, Postgres pool/
+statement timeouts, a `pool.on('error')` handler, and `uncaughtException`/`unhandledRejection` crash
+reporting added to all three Node entry points, none of which existed before). What it did NOT fix,
+because it cannot be fixed from the repo: `render.yaml`'s `verax-backend`/`verax-worker`/
+`verax-ai-service`/`verax-redis` are still on `plan: free` — that's a billing decision at actual
+deploy time, explicitly called out to the user as their action item, not silently left undone. 1 new
+✅ entry (Production reliability hardening); 4 new backend test cases (`health-check.test.js`).)*
+
+*(2026-09-22, fifth pass — a full "thorough check everywhere" production-readiness sweep requested
+ahead of building payments and doing the actual pilot deploy, scoped to dependency security and CI
+health across all three services rather than new features. Backend: `npm audit` (13→2, one
+deliberately-accepted `uuid`/`exceljs` item — forcing it would downgrade `exceljs` to `3.4.0` and
+regress the XLSX-import feature below; `express` bumped same-major to pull a patched `qs`;
+`nodemailer` force-bumped 8→10 after confirming the app's actual usage is stable across the major).
+Frontend: `npm audit` (10→0, including a `react-router-dom` 6→7 major bump, verified safe by grepping
+every import in `frontend/src/` and confirming only the stable classic-router API is used anywhere).
+AI service: never audited before this pass — `pip-audit` found 46 known vulnerabilities across 9
+packages; fixed 6 packages via same-major/small-patch bumps (`fastapi`, `python-multipart`,
+`python-dotenv`, `pdfplumber`, `setuptools`), each checked for actual applicability to this codebase
+before bumping (e.g. confirmed `/tools/register-clean` and `/tools/bank-statement-xml` really do
+accept multipart `UploadFile`, so the starlette multipart-DoS fix pulled in via the `fastapi` bump is
+real risk reduction here, not a number-chasing bump) and reverified with the full 27-case pytest suite
+plus a clean `pip` dependency-resolution pass with zero conflicts; 3 packages left as documented
+accepted risk (`paddlepaddle` — no stable fix exists, only a `3.0.0b0` beta; `imgaug` — no fix version
+published upstream at all; `opencv-python`/`opencv-contrib-python` — hard-pinned transitively by
+`paddleocr` itself, not independently controllable). Also found, during the backend audit, that
+`client-import.service.js` — a fully-built bulk CSV/XLSX client-import feature with real routes,
+service logic, a 541-line frontend modal, and audit logging — had never been entered in this document
+at any point in its history, and that its XLSX parser used the unpatched, unmaintained `xlsx`/SheetJS
+package directly against untrusted admin-uploaded file buffers; replaced it with `exceljs` (see "Bulk
+client import" above) and added 14 new test cases for it, including real ExcelJS-generated `.xlsx`
+fixtures. All four CI jobs (backend unit+syntax, backend RLS integration, frontend test+build,
+ai-service syntax+pytest) reverified green end-to-end after every dependency change — each fix was
+reproduced in a clean environment matching the CI runner (`env -i` with placeholder vars for backend,
+a throwaway venv with the CI's exact light-dependency install pattern for ai-service) before being
+accepted, not just trusted from local sandbox success. 2 new ✅ entries (Bulk client import,
+Dependency security audit); no regressions.)*
+
+*(2026-09-21, fourth pass — closed out the four items still open after the third pass's pre-publish
+sweep: (1) added a real frontend test suite (Vitest + RTL, 47 cases, wired into CI) where none existed
+before, focused on the actual highest-risk frontend logic — the 401→refresh→retry flow in
+`api-client.js`, crash recovery, and the pure utility/permission modules other components depend on,
+not padding for a coverage number; (2) closed the login-audit blind spot for real: `audit_logs.firm_id`
+is now nullable with a narrow RLS escape hatch, and — this pass caught something the original finding
+missed — the identical gap existed on the client-portal login flow too (a different `auth_context`
+value), so both got fixed together rather than leaving the client-portal half broken; (3) added the
+missing `<?xml version="1.0" encoding="UTF-8"?>` declaration to `buildTallyXml`'s output; (4) added
+`detectDocTypeMismatch`, a structural check independent of the LLM's own self-report — the LLM's
+classification only ever means "invoice" or "unknown" and never even runs on the bank-statement path,
+so a mistagged document previously had no explicit signal, just unexplained low confidence. All four
+verified against real infrastructure: the new migration's up/down cycle tested against a live
+Postgres, a direct RLS-role query proving the audit-log escape hatch can't be triggered outside its
+exact context, and the full test suite (74 backend + 27 ai-service + 47 frontend = 148 cases) green
+after every change. 2 entries moved to ✅ this pass (Wrong document type detection, plus notes-only
+fixes on two already-✅ entries); Top Gaps is now down to a single item, and it's a deploy-time budget
+decision, not a code defect.)*
+
+*(2026-09-21, third pass — pre-publish sweep of every remaining ⚠️/🔧 entry, since the goal of this
+pass was "fix and build what's required before publishing the site." Real fixes: (1) added a
+standalone `scheduled-requests.worker.js` entry point + `SCHEDULED_REQUESTS_EMBEDDED` env var so
+splitting the document-processing and scheduled-requests workers into separate deployable units no
+longer silently drops the daily cron; (2) made `REVIEW_CONFIDENCE_THRESHOLD` env-configurable instead
+of a hardcoded literal; (3) fixed a real frontend over-gating bug where staff could not see the
+firm's plan badge at all; (4) added an explicit "Download" button on the Review page's document
+preview, reusing the existing download helper; (5) regenerated the three static brand SVGs
+(`verax-logo.svg`, `verax-icon.svg`, `favicon.svg`) to match the in-app V1 component colors instead
+of stale pre-V1 dark-canvas coloring; (6) migrated all four secondary marketing pages
+(`/features`, `/pricing`, `/about`, `/security`) from the pre-V1 palette onto the same V2 "Ledger"
+design system the homepage already uses; (7) fixed literal `bg-white/[0.0x]` decorative fills on the
+magic-link upload pages that were nearly invisible on the light V1 canvas. Two real **content**
+problems, not just styling, were found and fixed on explicit user direction: `/about` had a fully
+fabricated founding team, timeline, and growth metrics (removed; real founder credited, no invented
+backstory), and `/pricing` advertised real billing/trial/Razorpay payment support that doesn't exist
+anywhere in the codebase (rewritten to honest early-access/waitlist framing). Also confirmed the
+2026-08-09 JWT refresh-token reuse-detection rollback bug — this file's own previous "highest-priority
+item" — was already fixed by the repo owner in commit `5ae0534c` before this pass started; the
+finding was that the FEATURE_STATUS.md entry itself was stale, not the code, and it's now covered by
+a new regression test that proves it (`refresh-token-reuse.test.js`). Five more entries
+(`Dropdown with last 20 notifications`, `Invite user`, `User invite email`, `Email audit logs`,
+`Reproducible local bring-up from a clean checkout`) were similarly re-verified against current code
+and found to already be fixed from earlier sessions with stale status markers — corrected rather than
+re-fixed. This pass also did a full recount of every `Status:` line in the file rather than an
+incremental delta, since the running Summary counts had drifted from actual content over several
+sessions (179 total entries found vs. 167 tracked) — the tallies above are now a direct count.
+14 entries moved to ✅ this pass, plus the 5 corrected-stale-status entries; 3 entries remain
+intentionally ⚠️ Partial by design, not because they're broken: `Wrong document type detection`
+(self-reported by the LLM, no independent server-side check — a real design tradeoff, not a bug),
+`Public design system — V1` (an accurate architectural description — `/login`, `/signup`,
+`/client-portal/login`, and the magic-link pages are deliberately still V1, not a gap), and
+`Automated test suites` (real but intentionally not comprehensive coverage). Full backend (46 unit +
+15 integration) and ai-service (27) test suites, and a frontend production build, all re-verified
+green after every change in this pass.)*
+
+*(2026-09-21, second production-readiness fix pass — the six critical findings from the 2026-09-20
+audit's own closing recommendations: (1) added a client-portal RLS database backstop so a client
+session can never read a sibling client's documents/extractions/exports even if application code
+ever queried without an explicit `client_id` filter — previously only application-level scoping
+enforced this, not the database, unlike the firm-level isolation which the earlier RLS work did
+enforce at the database level (see "Client-portal RLS database backstop"); (2) added a startup guard
+that refuses to boot the server or either worker if the runtime DB role is a superuser, closing the
+"operator leaves APP_DATABASE_URL unset" failure mode of the 2026-09-20 RLS-bypass bug (see "RLS
+startup guard"); (3) closed a server-side gap letting an approved-but-not-yet-exported extraction be
+edited via direct API call, silently invalidating the admin's approval (see "Prevent editing exported
+extractions"); (4) made Tally-XML voucher balancing correct by construction regardless of extraction
+quality, and separately hard-blocked export of any document whose tax math is internally
+inconsistent — two independent layers, since a balanced voucher can still be built from wrong numbers
+(see "Balanced voucher" and "Tax-math validation blocks export"); fixing this also caught and fixed a
+sign bug of its own (double-negative amount strings) via a test written for the fix; (5) replaced the
+previously-silent truncation of PDFs beyond 15 pages with a forced review + an explicit warning naming
+how many of how many pages were actually processed (see "Multi-page PDF truncation warning"); (6) moved
+Render's Postgres off the free tier, which is deleted ~30 days after creation with no backups (see
+"Production deployment target"). 21 new test cases added (66→87 total: `tally-xml.service.test.js`
+expanded, `exports.service.test.js` and `extraction-edit-lock.test.js` new, `rls.test.js` expanded
+with a client-portal block, `test_preprocess_service.py` new and wired into CI). All changes verified
+against a real local Postgres 16 + Redis, including confirming each new RLS/edit-lock regression test
+fails when its underlying fix is reverted. 4 new ✅ entries, 0 status regressions.)*
 
 *(2026-09-20, production-readiness audit + fix pass: found and fixed a critical RLS bypass in the
 self-hosted docker-compose deployment path (app connected as a Postgres superuser, which silently
@@ -1165,19 +1354,24 @@ behaviour was touched.)*
 
 ## Top Gaps to Address
 
-*Updated 2026-09-20 — items 3 and 7 below were fixed in this pass (see the "Automated test suites"/"CI/CD pipeline"/"Edit extracted fields" entries), alongside the critical RLS-bypass fix (see PostgreSQL RLS entry) which wasn't on this list because it hadn't been found yet. Remaining gaps, in priority order:*
+*Rewritten 2026-09-21 (second time same day) after closing out items 2-5 from the previous version of
+this list — frontend test coverage, the login-audit blind spot, the Tally XML declaration, and an
+independent document-type check — see their entries above for what changed and how each was verified.
+What's left is now down to a single item, and it's an operator decision, not a code defect:*
 
-0. **Firm-side refresh-token reuse detection silently rolls back** (added 2026-08-09, still the highest-priority item) — `refreshAccessToken` revokes the token family and then throws inside the same transaction, so the `ROLLBACK` in `withTenantTransaction` discards the revocation. The caller still sees a correct 401, which is why this has gone unnoticed. Fix is mechanical: return a sentinel from the handler and throw after the commit, exactly as `loginUser` already does and as the new `clientRefreshToken` does. See the AUTH → JWT refresh entry.
-1. **Scheduled-requests cron worker has no standalone process** — it only runs because it happens to be instantiated inside the document-processing worker file; deploying the two workers separately (a natural scaling move) would silently break the 08:00 UTC daily job.
-2. **Staff cannot see the firm's plan** on Settings — likely an over-broad admin gate rather than intentional design; worth a quick product call.
-3. ~~No audit log on extraction edits~~ — **Fixed 2026-09-20**, see AUTH... EXTRACTION → "Edit extracted fields" entry.
-4. **Login audit logging has one intentional blind spot**: a failed login against an email that doesn't exist in the system cannot be logged, because `audit_logs.firm_id` is `NOT NULL` with no RLS escape hatch for an unresolved firm. Known-user wrong-password attempts and all successful logins are logged; unknown-email attempts are not. Closing this fully would require a schema change (e.g. a nullable `firm_id` or a sentinel "system" firm), which was out of scope for this fix pass.
-5. **"Dropdown with last 20 notifications" limit was not independently re-verified** against `notifications.service.js`'s SQL `LIMIT` clause — carried over from the original audit, unaffected by this fix pass.
-6. **Clean-machine bring-up is broken** (added 2026-08-08) — see the "Local / Deploy Environment" section. Highest-value items: restore the missing `backend/scripts/seed-admin.js` that `package.json` and CLAUDE.md both reference, and add `LOCAL_STORAGE` to root `.env.example`.
-7. ~~Third-party version drift is unguarded / no CI~~ — **Fixed 2026-09-20**, see "CI/CD pipeline" entry. Note the new CI is a syntax/build/test gate, not a live-extraction smoke test against a real Groq call — a future decommissioned-model-style failure would still only surface at runtime, just now alongside real unit/integration test coverage that didn't exist before.
-8. **Tally XML has no `<?xml ?>` declaration** (added 2026-08-08) — `buildTallyXml` output begins directly with `<ENVELOPE>`. TallyPrime accepts this, so it is not a functional break, but any consumer or test asserting a leading `<?xml` will fail.
-9. **Test coverage is real but narrow** (added 2026-09-20) — ~66 test cases now exist (see "Automated test suites"), covering RLS tenant isolation, GST/tax-math correctness, Tally XML correctness, and LLM JSON-parse/retry branching. Most backend services/routes, all of `ocr_service.py`, and the entire frontend still have zero test coverage. This is a deliberate first pass on the highest-risk paths, not a claim of general coverage.
-10. **Self-hosted docker-compose deployments predating 2026-09-20 are running with RLS silently disabled** — anyone who deployed via `docker-compose.prod.yml` before this fix has been running without tenant isolation (see PostgreSQL RLS entry) and must run the new migration, set `APP_DATABASE_URL`, and redeploy. This cannot be fixed retroactively by this codebase change alone — it requires operator action on any already-live self-hosted instance.
+1. **Render's `verax-ai-service`/`verax-backend`/`verax-worker` are still on `plan: free` in the
+   committed `render.yaml`** — only `verax-postgres` has been moved to a paid tier (that was the one
+   with silent, irreversible data loss). The ai-service free tier is already flagged in an existing
+   comment as unacceptable for production (cold-start on idle spin-down); backend/worker on the free
+   tier means the same idle-spindown problem for API/worker requests. This is a deploy-time operator
+   decision (which paid tier, what budget) rather than a code change, so it was deliberately left for
+   the person doing the actual go-live deploy rather than guessed at here.
+
+Two items remain intentionally not "fixed" because they're accepted design tradeoffs, not defects —
+see their own entries above for the reasoning: `Public design system — V1` (some public pages are
+deliberately still V1, not a migration gap) and `Automated test suites` (real coverage on the highest-
+risk paths across all three services now, including the frontend, but still not exhaustive — most
+backend services/routes and all of `ocr_service.py` remain untested).
 
 ## What Can Be Piloted Today
 
@@ -1185,6 +1379,6 @@ The core document lifecycle — magic-link and authenticated upload → OCR/LLM 
 
 A CA firm can pilot the full upload → review → export workflow today, on either the authenticated staff-upload page or the client-facing magic-link page — both now have matching queue/progress/validation UX. The two items flagged in the previous audit as pre-pilot blockers (permanent-failure alerting and the authenticated-upload UX gap) are resolved.
 
-As of 2026-08-09 the **client portal** is also pilot-ready: a firm admin can enable portal access for a client from the client detail page, hand over the one-time temp password, and that client can sign in at `/client-portal/login` to see their own documents in plain English, download their originals, check their GST reconciliation, download it as Excel, and change their password. The two worlds are provably separate — a firm JWT is rejected on every client-portal route and a client JWT on every firm route, verified by test, as is the rule that one client can never see a sibling client's documents even within the same firm.
+As of 2026-08-09 the **client portal** is also pilot-ready: a firm admin can enable portal access for a client from the client detail page, hand over the one-time temp password, and that client can sign in at `/client-portal/login` to see their own documents in plain English, download their originals, check their GST reconciliation, download it as Excel, and change their password. The two worlds are provably separate — a firm JWT is rejected on every client-portal route and a client JWT on every firm route, verified by test. Sibling-client isolation (one client never seeing another client's documents within the same firm) was, until 2026-09-21, enforced only at the application-query level, not by the database's RLS policies — a real gap, now closed with a database-level backstop and its own regression test (see "Client-portal RLS database backstop").
 
-What remains is lower-priority operational hardening (the scheduled-requests worker's process-topology assumption, extraction-edit audit coverage) plus the one real bug this pass surfaced in the firm-side refresh-token reuse detection, which is listed first under Top Gaps.
+As of 2026-09-21, the public marketing site (`/`, `/features`, `/pricing`, `/about`, `/security`) is also publish-ready: all four secondary pages now match the homepage's V2 design language, the brand SVG assets match the in-app logo component, and both content problems found during this pass — a fabricated founding team/timeline/growth-metrics on `/about` and a fabricated billing/trial/Razorpay claim on `/pricing` — were rewritten to honest copy (real founder credit, early-access/waitlist framing) rather than left to ship. What remains is genuinely lower-priority: bumping Render's `verax-backend`/`verax-worker`/`verax-ai-service` off the free tier at actual deploy time, and frontend test coverage — see Top Gaps.

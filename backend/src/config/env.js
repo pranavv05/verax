@@ -79,7 +79,25 @@ const envSchema = Joi.object({
   TALLY_EXPORT_URL_EXPIRY_SECONDS: Joi.number().integer().min(60).max(86400).default(900),
   MAX_UPLOAD_MB: Joi.number().integer().min(1).max(100).default(50),
   MAX_TOOL_UPLOAD_MB: Joi.number().integer().min(1).max(100).default(25),
-  DOCUMENT_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(50).default(3)
+  DOCUMENT_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(50).default(3),
+  // Controls whether document-processing.worker.js also runs the
+  // scheduled-requests BullMQ worker in-process (the default, matching the
+  // single verax-worker service in render.yaml). Set to "false" only when
+  // running backend/src/workers/scheduled-requests.worker.js as its own
+  // deployable process — leaving both on by default is redundant-but-safe
+  // (BullMQ delivers each job to exactly one consumer), not double-processing.
+  SCHEDULED_REQUESTS_EMBEDDED: Joi.boolean().truthy("true").falsy("false").default(true),
+  REVIEW_CONFIDENCE_THRESHOLD: Joi.number().min(0).max(1).default(0.4),
+  // Postgres pool/statement guards. Without these, a hung query or a leaked
+  // client holds a connection forever with no automatic recovery — on a
+  // managed Postgres plan with a hard connection cap, that eventually starves
+  // every other request. DB_STATEMENT_TIMEOUT_MS kills any single query that
+  // runs longer than this; raise it per-deployment if a real workload (e.g. a
+  // large bulk import) legitimately needs more.
+  DB_POOL_MAX: Joi.number().integer().min(1).max(100).default(10),
+  DB_POOL_IDLE_TIMEOUT_MS: Joi.number().integer().min(1000).default(30000),
+  DB_POOL_CONNECTION_TIMEOUT_MS: Joi.number().integer().min(500).default(5000),
+  DB_STATEMENT_TIMEOUT_MS: Joi.number().integer().min(1000).default(30000)
 }).unknown(true);
 
 const { value, error } = envSchema.validate(process.env, {
@@ -135,5 +153,11 @@ module.exports = Object.freeze({
   TALLY_EXPORT_URL_EXPIRY_SECONDS: value.TALLY_EXPORT_URL_EXPIRY_SECONDS,
   MAX_UPLOAD_MB: value.MAX_UPLOAD_MB,
   MAX_TOOL_UPLOAD_MB: value.MAX_TOOL_UPLOAD_MB,
-  DOCUMENT_WORKER_CONCURRENCY: value.DOCUMENT_WORKER_CONCURRENCY
+  DOCUMENT_WORKER_CONCURRENCY: value.DOCUMENT_WORKER_CONCURRENCY,
+  SCHEDULED_REQUESTS_EMBEDDED: value.SCHEDULED_REQUESTS_EMBEDDED,
+  REVIEW_CONFIDENCE_THRESHOLD: value.REVIEW_CONFIDENCE_THRESHOLD,
+  DB_POOL_MAX: value.DB_POOL_MAX,
+  DB_POOL_IDLE_TIMEOUT_MS: value.DB_POOL_IDLE_TIMEOUT_MS,
+  DB_POOL_CONNECTION_TIMEOUT_MS: value.DB_POOL_CONNECTION_TIMEOUT_MS,
+  DB_STATEMENT_TIMEOUT_MS: value.DB_STATEMENT_TIMEOUT_MS
 });

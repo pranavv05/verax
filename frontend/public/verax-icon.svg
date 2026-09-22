@@ -10,6 +10,9 @@
     The overlap is drawn as an explicit third path clipped to the left chevron
     rather than relying on mix-blend-mode, so it renders identically in
     favicons, email clients and anywhere else blend modes get stripped.
+
+    V1 colouring (matches VeraxMark tone="dark", the default for the ivory/
+    white canvas): brand violet left chevron, dark navy right chevron.
   -->
   <defs>
     <clipPath id="veraxIconOverlap">
@@ -17,14 +20,14 @@
     </clipPath>
   </defs>
 
-  <!-- Left chevron — indigo -->
-  <path d="M10 5 19.5 16 10 27 4 27 13.5 16 4 5Z" fill="#6366F1"/>
+  <!-- Left chevron — brand violet -->
+  <path d="M10 5 19.5 16 10 27 4 27 13.5 16 4 5Z" fill="#6657D9"/>
 
-  <!-- Right chevron — white -->
-  <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#F2F2F3"/>
+  <!-- Right chevron — dark navy, for the light canvas -->
+  <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#111827"/>
 
-  <!-- Overlap: indigo at 60% over the white chevron, giving a layered third tone -->
+  <!-- Overlap: brand violet at 60% over the right chevron, giving a layered third tone -->
   <g clip-path="url(#veraxIconOverlap)">
-    <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#6366F1" fill-opacity="0.6"/>
+    <path d="M18.5 5 28 16 18.5 27 12.5 27 22 16 12.5 5Z" fill="#6657D9" fill-opacity="0.6"/>
   </g>
 </svg>

@@ -1,8 +1,17 @@
 # paddle imports setuptools at runtime (paddle/utils/cpp_extension), and
 # python:3.12-slim no longer ships setuptools by default, so it must be explicit
 # or the AI service crashes on startup with ModuleNotFoundError: setuptools.
-setuptools==75.6.0
-fastapi==0.115.6
+# 83.0.0 fixes two advisories (PYSEC-2025-49 path traversal, PYSEC-2026-3447)
+# in the deprecated package_index downloader; not on our call path but a
+# free bump, and still within python:3.12-slim's requires-python floor.
+setuptools==83.0.0
+# 0.116.2 pulls in starlette >=0.40,<0.49, which resolves to a starlette
+# patch fixing PYSEC-2026-1941 (large multipart uploads block the event
+# loop thread rolling the spooled file to disk) — this service accepts
+# multipart uploads directly on /tools/register-clean and
+# /tools/bank-statement-xml. Smoke-tested UploadFile parsing against this
+# exact fastapi/starlette/python-multipart combination before pinning.
+fastapi==0.116.2
 uvicorn[standard]==0.32.1
 boto3==1.35.80
 groq==0.11.0
@@ -19,10 +28,16 @@ PyMuPDF==1.25.1
 psycopg2-binary==2.9.10
 pandas==2.1.4
 openpyxl==3.1.5
-pdfplumber==0.11.4
+# 0.11.9 bumps its hard pin on pdfminer.six from 20231228 (2 known CVEs) to
+# 20251230, which is fully patched. pdfplumber pins pdfminer.six with ==, so
+# it can't be patched independently of this bump.
+pdfplumber==0.11.9
 pdf2image==1.17.0
-python-multipart==0.0.9
-python-dotenv==1.0.1
+# 0.0.32 resolves six PYSEC advisories against 0.0.9 (malformed multipart
+# bodies causing excessive CPU/memory). Confirmed compatible with
+# fastapi==0.116.2 via a smoke-tested UploadFile round trip.
+python-multipart==0.0.32
+python-dotenv==1.2.2
 # This network's TLS-inspecting proxy issues certs that aren't in certifi's
 # bundle, so every outbound HTTPS call from Python (Groq API, PaddleOCR's model
 # download) fails with CERTIFICATE_VERIFY_FAILED. This patches ssl to trust the

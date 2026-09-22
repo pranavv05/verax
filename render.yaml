@@ -11,6 +11,14 @@
 # after any idle period fails or times out — unacceptable for a tool CA firms
 # depend on. Set `plan:` for verax-ai-service accordingly before going live.
 #
+# verax-postgres MUST run on a paid plan, not `free`, before any real client
+# data is stored. Render's free Postgres tier is explicitly ephemeral: it is
+# deleted ~30 days after creation with no way to renew it in place and no
+# backups — every extraction, client, and audit-log row would be gone with no
+# recovery path. `basic-1gb` is the minimum paid plan that gets you automated
+# daily backups and point-in-time recovery; size up from there based on data
+# volume. See https://render.com/docs/postgresql-plans.
+#
 # AFTER deploying, set these env vars manually in the Render dashboard
 # (marked with sync: false below):
 #   - JWT_SECRET           (min 32 random chars)
@@ -36,7 +44,9 @@ databases:
   - name: verax-postgres
     databaseName: ca_saas
     user: ca_user
-    plan: free
+    # NOT `free` — Render's free Postgres tier is deleted ~30 days after
+    # creation with no backups. See the note above before deploying.
+    plan: basic-1gb
 
 services:
   - type: redis
@@ -87,6 +97,14 @@ services:
         value: 25
       - key: DOCUMENT_WORKER_CONCURRENCY
         value: 3
+      - key: DB_POOL_MAX
+        value: 10
+      - key: DB_POOL_IDLE_TIMEOUT_MS
+        value: 30000
+      - key: DB_POOL_CONNECTION_TIMEOUT_MS
+        value: 5000
+      - key: DB_STATEMENT_TIMEOUT_MS
+        value: 30000
       # Set these manually in the Render dashboard after deploy:
       - key: JWT_SECRET
         sync: false
@@ -122,6 +140,7 @@ services:
     dockerfilePath: ./Dockerfile.prod
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
     plan: free
+    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -195,6 +214,14 @@ services:
         value: 25
       - key: DOCUMENT_WORKER_CONCURRENCY
         value: 3
+      - key: DB_POOL_MAX
+        value: 10
+      - key: DB_POOL_IDLE_TIMEOUT_MS
+        value: 30000
+      - key: DB_POOL_CONNECTION_TIMEOUT_MS
+        value: 5000
+      - key: DB_STATEMENT_TIMEOUT_MS
+        value: 30000
       # Set these manually in the Render dashboard after deploy:
       - key: JWT_SECRET
         sync: false

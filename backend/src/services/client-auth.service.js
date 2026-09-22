@@ -247,9 +247,17 @@ const clientLogin = async ({ email, password }) => {
       );
 
       if (clientResult.rowCount === 0) {
-        // Unknown email: no firm can be resolved, and audit_logs.firm_id is
-        // NOT NULL, so this attempt intentionally cannot be audit-logged.
-        // Same generic error as a wrong password — never reveal which failed.
+        // Unknown email: no firm can be resolved, so firm_id is NULL —
+        // permitted by the audit_logs RLS policy's 'client_portal_login'
+        // auth_context escape hatch (see
+        // 20260922000000_audit_logs_nullable_firm_id.js). Same generic error
+        // as a wrong password either way — never reveal which failed.
+        await insertAuditLog(db, {
+          firmId: null,
+          action: "client_portal_login_failed",
+          entityId: null,
+          metadata: { portalEmail: normalizedEmail, reason: "unknown_email" }
+        });
         return { authFailed: true };
       }
 

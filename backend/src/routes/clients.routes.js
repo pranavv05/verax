@@ -154,7 +154,7 @@ router.post(
   requireAdmin,
   handleImportUpload,
   asyncHandler(async (req, res) => {
-    const result = previewClientImport(req.file);
+    const result = await previewClientImport(req.file);
     res.status(200).json(result);
   })
 );

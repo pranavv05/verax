@@ -45,6 +45,8 @@ def is_blank_page(image, threshold: float = 0.98, min_ink_pixels: int = 500) -> 
 class PreprocessOutput:
     processed_images: List[np.ndarray]
     source_kind: str
+    total_pages: int = 1
+    truncated: bool = False
 
 
 class PreprocessService:
@@ -106,10 +108,11 @@ class PreprocessService:
     def is_blank_page(image, threshold: float = 0.98) -> bool:
         return is_blank_page(image, threshold)
 
-    def _render_pdf_pages(self, file_bytes: bytes) -> List[np.ndarray]:
+    def _render_pdf_pages(self, file_bytes: bytes) -> tuple[List[np.ndarray], int]:
         images: List[np.ndarray] = []
         with fitz.open(stream=io.BytesIO(file_bytes), filetype="pdf") as document:
-            page_count = min(document.page_count, MAX_PAGES)
+            total_pages = document.page_count
+            page_count = min(total_pages, MAX_PAGES)
             for page_number in range(page_count):
                 page = document.load_page(page_number)
                 pixmap = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
@@ -117,7 +120,7 @@ class PreprocessService:
                 images.append(self._decode_image_bytes(img_bytes))
         if not images:
             raise ValueError("PDF contains no renderable pages")
-        return images
+        return images, total_pages
 
     @staticmethod
     def _is_pdf(file_bytes: bytes) -> bool:
@@ -126,9 +129,10 @@ class PreprocessService:
     def preprocess(self, file_bytes: bytes) -> PreprocessOutput:
         raw_images: List[np.ndarray]
         source_kind = "image"
+        total_pages = 1
 
         if self._is_pdf(file_bytes):
-            raw_images = self._render_pdf_pages(file_bytes)
+            raw_images, total_pages = self._render_pdf_pages(file_bytes)
             source_kind = "pdf"
         else:
             raw_images = [self._decode_image_bytes(file_bytes)]
@@ -147,9 +151,26 @@ class PreprocessService:
                 enhanced = raw_image
             processed.append(enhanced)
 
+        truncated = total_pages > MAX_PAGES
+        if truncated:
+            logger.warning(
+                "PDF has %d pages, only the first %d were rendered/OCR'd (MAX_PAGES=%d) — "
+                "the remainder were silently dropped until this check existed",
+                total_pages,
+                MAX_PAGES,
+                MAX_PAGES,
+            )
+
         logger.info(
-            "Preprocess completed: processed_pages=%d skipped_blank_pages=%d",
+            "Preprocess completed: processed_pages=%d skipped_blank_pages=%d total_pages=%d truncated=%s",
             len(processed),
             skipped_blank,
+            total_pages,
+            truncated,
         )
-        return PreprocessOutput(processed_images=processed, source_kind=source_kind)
+        return PreprocessOutput(
+            processed_images=processed,
+            source_kind=source_kind,
+            total_pages=total_pages,
+            truncated=truncated,
+        )

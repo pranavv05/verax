@@ -8,7 +8,7 @@ import { extractionsApi } from "../api/extractions-api";
 import { complianceApi } from "../api/compliance-api";
 import { documentVersionsApi } from "../api/document-versions-api";
 import { useAuth } from "../contexts/AuthContext";
-import { parseApiError } from "../lib/utils";
+import { parseApiError, triggerFileDownload } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 /* ─── field configs by doc type ────────────────────────────────────────────── */
@@ -524,6 +524,23 @@ const ReviewPage = () => {
     return payload;
   }, [form, isBankStatement, lineItems, transactions]);
 
+  const [downloadError, setDownloadError] = useState("");
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadOriginal = async () => {
+    const url = document?.preview_url || document?.download_url || document?.downloadUrl;
+    if (!url) return;
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      await triggerFileDownload(url, document?.file_name || "document");
+    } catch (downloadErr) {
+      setDownloadError(parseApiError(downloadErr, "Unable to download this document"));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const openHistory = async () => {
     setHistoryOpen(true);
     setVersionError("");
@@ -552,6 +569,8 @@ const ReviewPage = () => {
   const confidenceStyle = confidenceTone(confidence);
   const showConfidencePanel = ["extracted", "review_required"].includes(document?.status);
   const taxMathWarning = structuredData?._tax_math_warning || "";
+  const pageTruncationWarning = structuredData?._page_truncation_warning || "";
+  const docTypeMismatchWarning = structuredData?._doc_type_mismatch_warning || "";
   const lowConfidenceFields = Array.isArray(structuredData?.low_confidence_fields)
     ? structuredData.low_confidence_fields
     : [];
@@ -801,8 +820,21 @@ const ReviewPage = () => {
                 </span>
               )}
               <StatusBadge status={document?.status || "uploaded"} />
+              {previewUrl && (
+                <button
+                  type="button"
+                  onClick={handleDownloadOriginal}
+                  disabled={downloading}
+                  className="rounded-md border border-[#d8c8a8] bg-white px-2.5 py-1 text-xs font-semibold text-ink-700 hover:bg-sand-50 disabled:opacity-60"
+                >
+                  {downloading ? "Downloading..." : "Download"}
+                </button>
+              )}
             </div>
           </div>
+          {downloadError && (
+            <p className="mb-2 text-xs font-semibold text-rose-600">{downloadError}</p>
+          )}
           {previewNode}
         </article>
 
@@ -841,6 +873,18 @@ const ReviewPage = () => {
                     ⚠ Tax math mismatch detected — verify amounts before approving
                   </p>
                   <p className="mt-1">{taxMathWarning}</p>
+                </div>
+              )}
+              {pageTruncationWarning && (
+                <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  <p className="font-semibold">⚠ Document truncated — some pages were not processed</p>
+                  <p className="mt-1">{pageTruncationWarning}</p>
+                </div>
+              )}
+              {docTypeMismatchWarning && (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <p className="font-semibold">⚠ Document type mismatch — verify before approving</p>
+                  <p className="mt-1">{docTypeMismatchWarning}</p>
                 </div>
               )}
             </div>

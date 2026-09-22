@@ -19,6 +19,15 @@ const getQueue = () => {
   return queueInstance;
 };
 
+// Used by the /health endpoint. Reuses (and lazily creates) the same
+// connection enqueueing uses, rather than opening a fresh Redis connection
+// on every health-check poll.
+const checkRedisHealth = async () => {
+  const queue = getQueue();
+  await queue.client;
+  await redisConnection.ping();
+};
+
 const enqueueDocumentProcessingJob = async ({ documentId, s3Key, docType, firmId, clientId }) => {
   const queue = getQueue();
   let job;
@@ -55,5 +64,6 @@ const enqueueDocumentProcessingJob = async ({ documentId, s3Key, docType, firmId
 };
 
 module.exports = {
-  enqueueDocumentProcessingJob
+  enqueueDocumentProcessingJob,
+  checkRedisHealth
 };

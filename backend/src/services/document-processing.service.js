@@ -193,6 +193,46 @@ const parseAiResponse = (payload) => ({
       : null
 });
 
+/**
+ * The AI service's own `document_type_detected` field is self-reported by
+ * the LLM and only ever means "invoice" or "unknown" — the bank-statement
+ * extraction path never asks the LLM to classify at all, it just tries to
+ * pull bank fields out of whatever text it's given. So a document uploaded
+ * as the wrong doc_type (e.g. an invoice tagged bank_statement, or vice
+ * versa) previously only got caught indirectly, if at all, via low
+ * confidence from mostly-null fields — with no explicit signal telling a
+ * reviewer *why*.
+ *
+ * This is a structural check, independent of anything the LLM claims about
+ * itself: does the shape of the extracted data actually match what the
+ * caller said this document was? A real bank statement has transaction
+ * rows; a real invoice/bill has an invoice number or line items. Only
+ * flags a *confident* mismatch (this looks unambiguously like the other
+ * type) — an empty/low-quality extraction of either shape returns no
+ * mismatch, since that's already handled by confidence gating.
+ */
+const detectDocTypeMismatch = (docType, structuredData) => {
+  if (!structuredData || typeof structuredData !== "object") {
+    return null;
+  }
+
+  const looksLikeBankStatement = Array.isArray(structuredData.transactions) && structuredData.transactions.length > 0;
+  const looksLikeInvoice =
+    Boolean(structuredData.invoice_number) ||
+    Boolean(structuredData.vendor_gstin) ||
+    (Array.isArray(structuredData.line_items) && structuredData.line_items.length > 0);
+
+  if (docType === "bank_statement" && looksLikeInvoice && !looksLikeBankStatement) {
+    return "This document was uploaded as a bank statement, but the extracted data looks like an invoice or bill instead. Please verify the document type and reprocess if needed.";
+  }
+
+  if ((docType === "invoice" || docType === "bill") && looksLikeBankStatement && !looksLikeInvoice) {
+    return "This document was uploaded as an invoice/bill, but the extracted data looks like a bank statement instead. Please verify the document type and reprocess if needed.";
+  }
+
+  return null;
+};
+
 const getDocumentReadyEmailContext = async (db, { firmId, documentId }) => {
   const documentResult = await db.query(
     `
@@ -276,6 +316,7 @@ const recordDocumentFailedEmailAudit = async (
 
 module.exports = {
   parseAiResponse,
+  detectDocTypeMismatch,
   markDocumentProcessingStarted,
   markDocumentProcessingSucceeded,
   markDocumentProcessingFailed,

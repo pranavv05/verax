@@ -1,13 +1,42 @@
+const Sentry = require("@sentry/node");
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1
+  });
+}
+
 const IORedis = require("ioredis");
 const { Worker } = require("bullmq");
 const env = require("../config/env");
+
+// An uncaught exception or unhandled rejection previously crashed this
+// process with no report anywhere — Sentry only ever saw errors that a
+// job's own try/catch chose to report. Mirrors backend/src/server.js.
+const crashWithReport = (label) => (errorOrReason) => {
+  const error = errorOrReason instanceof Error ? errorOrReason : new Error(String(errorOrReason));
+  process.stderr.write(`${label}: ${error.stack || error.message}\n`);
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureException(error);
+    Sentry.close(2000).finally(() => process.exit(1));
+  } else {
+    process.exit(1);
+  }
+};
+
+process.on("uncaughtException", crashWithReport("Uncaught exception"));
+process.on("unhandledRejection", crashWithReport("Unhandled rejection"));
 const { DOCUMENT_PROCESSING_QUEUE } = require("../constants/queues");
 const { withTenantTransaction } = require("../db/tenant-context");
+const { assertRuntimeRoleIsNotSuperuser } = require("../db/assert-safe-role");
 const { processDocumentWithAiService } = require("../services/ai.service");
 const { sendEmail } = require("../services/email.service");
 const { createNotification } = require("../services/notifications.service");
 const {
   parseAiResponse,
+  detectDocTypeMismatch,
   markDocumentProcessingStarted,
   markDocumentProcessingSucceeded,
   markDocumentProcessingFailed,
@@ -28,8 +57,17 @@ const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.jo
 const redisConnection = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null
 });
-const scheduledRequestsWorker = createScheduledRequestsWorker();
-const CONFIDENCE_THRESHOLD = 0.4;
+// Runs the scheduled-requests worker in this same process by default
+// (matching the single verax-worker service in render.yaml). Set
+// SCHEDULED_REQUESTS_EMBEDDED=false when running
+// src/workers/scheduled-requests.worker.js as its own deployable process
+// instead — without this flag, splitting document-processing and
+// scheduled-requests into separate services would run two independent
+// scheduled-requests workers with no way to turn either off.
+const scheduledRequestsWorker = env.SCHEDULED_REQUESTS_EMBEDDED
+  ? createScheduledRequestsWorker()
+  : null;
+const CONFIDENCE_THRESHOLD = env.REVIEW_CONFIDENCE_THRESHOLD;
 
 const validateJobPayload = (data) => {
   const documentId = data && typeof data.document_id === "string" ? data.document_id : null;
@@ -73,10 +111,22 @@ const worker = new Worker(
       const aiParsed = parseAiResponse(aiRawResponse);
       const confidence = aiParsed.confidenceScore ?? 0;
       const documentTypeDetected = aiParsed.documentTypeDetected;
+      // Independent of the LLM's own self-reported documentTypeDetected
+      // (which the bank-statement path never even populates) — a structural
+      // check of the extracted field shapes against what the uploader
+      // claimed this document was. See detectDocTypeMismatch's comment.
+      const docTypeMismatchWarning = detectDocTypeMismatch(payload.docType, aiParsed.structuredData);
+      if (docTypeMismatchWarning) {
+        aiParsed.structuredData._doc_type_mismatch_warning = docTypeMismatchWarning;
+      }
       const requiresReview =
-        confidence < CONFIDENCE_THRESHOLD || documentTypeDetected === "unknown";
+        confidence < CONFIDENCE_THRESHOLD ||
+        documentTypeDetected === "unknown" ||
+        Boolean(docTypeMismatchWarning);
       const status = requiresReview ? "review_required" : "extracted";
-      const logMessage = requiresReview
+      const logMessage = docTypeMismatchWarning
+        ? `Document type mismatch detected — flagged for review`
+        : requiresReview
         ? `Low confidence (${confidence}) or wrong document type — flagged for review`
         : `Extracted with confidence ${confidence}`;
 
@@ -241,7 +291,11 @@ const worker = new Worker(
   },
   {
     connection: redisConnection,
-    concurrency: env.DOCUMENT_WORKER_CONCURRENCY
+    concurrency: env.DOCUMENT_WORKER_CONCURRENCY,
+    // Held off until assertRuntimeRoleIsNotSuperuser() passes, below — see
+    // that check's comment for why a worker running as a superuser would
+    // silently defeat Row Level Security for every job it processes.
+    autorun: false
   }
 );
 
@@ -270,8 +324,10 @@ worker.on("error", (error) => {
 const shutdown = async () => {
   process.stdout.write("Shutting down document worker...\n");
   await worker.close();
-  await scheduledRequestsWorker.worker.close();
-  await scheduledRequestsWorker.connection.quit();
+  if (scheduledRequestsWorker) {
+    await scheduledRequestsWorker.worker.close();
+    await scheduledRequestsWorker.connection.quit();
+  }
   await redisConnection.quit();
   process.exit(0);
 };
@@ -289,3 +345,17 @@ process.on("SIGTERM", () => {
     process.exit(1);
   });
 });
+
+(async () => {
+  try {
+    await assertRuntimeRoleIsNotSuperuser();
+    const runs = [worker.run()];
+    if (scheduledRequestsWorker) {
+      runs.push(scheduledRequestsWorker.worker.run());
+    }
+    await Promise.all(runs);
+  } catch (error) {
+    process.stderr.write(`Worker failed to start: ${error.message}\n`);
+    process.exit(1);
+  }
+})();

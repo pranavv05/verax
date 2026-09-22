@@ -483,10 +483,22 @@ const loginUser = async ({ email, password, userAgent, ipAddress }) => {
       );
 
       if (userResult.rowCount === 0) {
-        // No firm can be resolved for an unknown email, and audit_logs.firm_id is
-        // NOT NULL with no RLS escape hatch for this context, so this attempt
-        // cannot be attributed to a firm and is intentionally not audit-logged.
-        throw ApiError.unauthorized("Invalid email or password");
+        // No firm can be resolved for an unknown email, so this can't be a
+        // firm-scoped audit row — firm_id is NULL, permitted by the
+        // audit_logs RLS policy's 'login' auth_context escape hatch (see
+        // 20260922000000_audit_logs_nullable_firm_id.js). Returned (not
+        // thrown) so the insert commits with the transaction instead of
+        // being rolled back, same sentinel pattern as the wrong-password
+        // branch below.
+        await insertAuditLog(client, {
+          firmId: null,
+          userId: null,
+          action: "login_failed",
+          entityType: "user",
+          entityId: null,
+          metadata: { email: normalizedEmail, reason: "unknown_email" }
+        });
+        return { authFailed: true };
       }
 
       const user = userResult.rows[0];

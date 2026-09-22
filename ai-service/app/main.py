@@ -4,6 +4,7 @@ import hmac
 import logging
 
 import pandas as pd
+import psycopg2
 from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import File
@@ -83,7 +84,23 @@ def on_startup() -> None:
 
 
 @app.get("/health")
-def health_check() -> dict:
+def health_check(response: Response) -> dict:
+    # Checks actual DB reachability, not just "the process is up" — a
+    # liveness-only check can't detect a service that's running but can't
+    # reach Postgres (persistence_service writes name-mapping corrections
+    # back on every approved extraction when AI_WRITE_BACK_ENABLED=true).
+    # Runs in FastAPI's threadpool since this is a sync def, so the short
+    # blocking connect below doesn't stall the event loop.
+    try:
+        conn = psycopg2.connect(settings.app_database_url, connect_timeout=4)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        finally:
+            conn.close()
+    except Exception as error:  # noqa: BLE001 - health check must never 500, only 503
+        response.status_code = 503
+        return {"status": "error", "message": str(error)}
     return {"status": "ok"}
 
 
@@ -110,6 +127,23 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
         raw_text, ocr_engine = ocr_service.extract_text(preprocessed.processed_images)
         structured_data = llm_service.extract_structured_data(raw_text, doc_type=request.doc_type)
         confidence_score = llm_service.calculate_confidence(structured_data, doc_type=request.doc_type)
+
+        if preprocessed.truncated:
+            # MAX_PAGES previously truncated a long PDF (e.g. a full month's
+            # bank statement) with no signal anywhere that pages were
+            # dropped — the CA had no way to know 185 pages of transactions
+            # were missing from what looked like a normal, confidently
+            # extracted document. Force review and make the reason visible
+            # on the Review page (ReviewPage.jsx renders _page_truncation_warning
+            # the same way it already renders _tax_math_warning).
+            structured_data["_page_truncation_warning"] = (
+                f"Only the first {len(preprocessed.processed_images)} of "
+                f"{preprocessed.total_pages} pages in this document were processed. "
+                "The remaining pages were not read — reprocess in smaller batches "
+                "or contact support if this document needs full-page coverage."
+            )
+            confidence_score = min(confidence_score, 0.3)
+
         logger.info(
             "document_id=%s source_kind=%s ocr_engine=%s raw_text_chars=%d confidence=%.3f document_type_detected=%s",
             request.document_id,

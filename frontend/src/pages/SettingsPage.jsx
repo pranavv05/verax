@@ -230,6 +230,42 @@ const SettingsPage = () => {
           </article>
           )}
 
+          {/* Firm Settings (read-only) — staff can view the firm name and plan,
+              they just can't edit them. Editing is admin-only above; this panel
+              is the staff-visible equivalent so plan visibility isn't tied to
+              the admin-only edit form. */}
+          {!canAdmin && (
+          <article className="panel p-6">
+            <div className="mb-5">
+              <h2 className="text-lg font-bold text-ink-900">Firm Settings</h2>
+              <p className="mt-0.5 text-sm text-ink-500">Firm details for this account.</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="label">Firm name</label>
+                <input className="field bg-sand-50 text-ink-500" value={settings?.name || ""} readOnly disabled />
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-[#e7dcc8] bg-sand-50/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-ink-900">Current plan</p>
+                  <p className="text-xs text-ink-500 mt-0.5">
+                    {settings?.plan === "enterprise"
+                      ? "Full access with priority support"
+                      : settings?.plan === "professional"
+                      ? "Extended limits and team features"
+                      : "Entry-level plan for small firms"}
+                  </p>
+                </div>
+                <PlanBadge plan={settings?.plan} />
+              </div>
+
+              <p className="text-xs text-ink-500">Contact an admin on your team to change firm settings.</p>
+            </div>
+          </article>
+          )}
+
           {/* My Profile */}
           <article className="panel p-6">
             <div className="mb-5">
