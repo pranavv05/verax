@@ -4,6 +4,7 @@ import hmac
 import logging
 
 import pandas as pd
+import psycopg2
 from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import File
@@ -83,7 +84,23 @@ def on_startup() -> None:
 
 
 @app.get("/health")
-def health_check() -> dict:
+def health_check(response: Response) -> dict:
+    # Checks actual DB reachability, not just "the process is up" — a
+    # liveness-only check can't detect a service that's running but can't
+    # reach Postgres (persistence_service writes name-mapping corrections
+    # back on every approved extraction when AI_WRITE_BACK_ENABLED=true).
+    # Runs in FastAPI's threadpool since this is a sync def, so the short
+    # blocking connect below doesn't stall the event loop.
+    try:
+        conn = psycopg2.connect(settings.app_database_url, connect_timeout=4)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        finally:
+            conn.close()
+    except Exception as error:  # noqa: BLE001 - health check must never 500, only 503
+        response.status_code = 503
+        return {"status": "error", "message": str(error)}
     return {"status": "ok"}
 
 

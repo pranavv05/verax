@@ -1,6 +1,33 @@
+const Sentry = require("@sentry/node");
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1
+  });
+}
+
 const IORedis = require("ioredis");
 const { Worker } = require("bullmq");
 const env = require("../config/env");
+
+// An uncaught exception or unhandled rejection previously crashed this
+// process with no report anywhere — Sentry only ever saw errors that a
+// job's own try/catch chose to report. Mirrors backend/src/server.js.
+const crashWithReport = (label) => (errorOrReason) => {
+  const error = errorOrReason instanceof Error ? errorOrReason : new Error(String(errorOrReason));
+  process.stderr.write(`${label}: ${error.stack || error.message}\n`);
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureException(error);
+    Sentry.close(2000).finally(() => process.exit(1));
+  } else {
+    process.exit(1);
+  }
+};
+
+process.on("uncaughtException", crashWithReport("Uncaught exception"));
+process.on("unhandledRejection", crashWithReport("Unhandled rejection"));
 const { DOCUMENT_PROCESSING_QUEUE } = require("../constants/queues");
 const { withTenantTransaction } = require("../db/tenant-context");
 const { assertRuntimeRoleIsNotSuperuser } = require("../db/assert-safe-role");

@@ -97,6 +97,14 @@ services:
         value: 25
       - key: DOCUMENT_WORKER_CONCURRENCY
         value: 3
+      - key: DB_POOL_MAX
+        value: 10
+      - key: DB_POOL_IDLE_TIMEOUT_MS
+        value: 30000
+      - key: DB_POOL_CONNECTION_TIMEOUT_MS
+        value: 5000
+      - key: DB_STATEMENT_TIMEOUT_MS
+        value: 30000
       # Set these manually in the Render dashboard after deploy:
       - key: JWT_SECRET
         sync: false
@@ -132,6 +140,7 @@ services:
     dockerfilePath: ./Dockerfile.prod
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
     plan: free
+    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -205,6 +214,14 @@ services:
         value: 25
       - key: DOCUMENT_WORKER_CONCURRENCY
         value: 3
+      - key: DB_POOL_MAX
+        value: 10
+      - key: DB_POOL_IDLE_TIMEOUT_MS
+        value: 30000
+      - key: DB_POOL_CONNECTION_TIMEOUT_MS
+        value: 5000
+      - key: DB_STATEMENT_TIMEOUT_MS
+        value: 30000
       # Set these manually in the Render dashboard after deploy:
       - key: JWT_SECRET
         sync: false

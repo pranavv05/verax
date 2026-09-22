@@ -1,5 +1,32 @@
+const Sentry = require("@sentry/node");
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1
+  });
+}
+
 const { assertRuntimeRoleIsNotSuperuser } = require("../db/assert-safe-role");
 const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.job");
+
+// An uncaught exception or unhandled rejection previously crashed this
+// process with no report anywhere — Sentry only ever saw errors that a
+// job's own try/catch chose to report. Mirrors backend/src/server.js.
+const crashWithReport = (label) => (errorOrReason) => {
+  const error = errorOrReason instanceof Error ? errorOrReason : new Error(String(errorOrReason));
+  process.stderr.write(`${label}: ${error.stack || error.message}\n`);
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureException(error);
+    Sentry.close(2000).finally(() => process.exit(1));
+  } else {
+    process.exit(1);
+  }
+};
+
+process.on("uncaughtException", crashWithReport("Uncaught exception"));
+process.on("unhandledRejection", crashWithReport("Unhandled rejection"));
 
 // Standalone entry point for the scheduled-requests cron consumer, for
 // operators who want to scale it independently of the document-processing

@@ -87,7 +87,17 @@ const envSchema = Joi.object({
   // deployable process — leaving both on by default is redundant-but-safe
   // (BullMQ delivers each job to exactly one consumer), not double-processing.
   SCHEDULED_REQUESTS_EMBEDDED: Joi.boolean().truthy("true").falsy("false").default(true),
-  REVIEW_CONFIDENCE_THRESHOLD: Joi.number().min(0).max(1).default(0.4)
+  REVIEW_CONFIDENCE_THRESHOLD: Joi.number().min(0).max(1).default(0.4),
+  // Postgres pool/statement guards. Without these, a hung query or a leaked
+  // client holds a connection forever with no automatic recovery — on a
+  // managed Postgres plan with a hard connection cap, that eventually starves
+  // every other request. DB_STATEMENT_TIMEOUT_MS kills any single query that
+  // runs longer than this; raise it per-deployment if a real workload (e.g. a
+  // large bulk import) legitimately needs more.
+  DB_POOL_MAX: Joi.number().integer().min(1).max(100).default(10),
+  DB_POOL_IDLE_TIMEOUT_MS: Joi.number().integer().min(1000).default(30000),
+  DB_POOL_CONNECTION_TIMEOUT_MS: Joi.number().integer().min(500).default(5000),
+  DB_STATEMENT_TIMEOUT_MS: Joi.number().integer().min(1000).default(30000)
 }).unknown(true);
 
 const { value, error } = envSchema.validate(process.env, {
@@ -145,5 +155,9 @@ module.exports = Object.freeze({
   MAX_TOOL_UPLOAD_MB: value.MAX_TOOL_UPLOAD_MB,
   DOCUMENT_WORKER_CONCURRENCY: value.DOCUMENT_WORKER_CONCURRENCY,
   SCHEDULED_REQUESTS_EMBEDDED: value.SCHEDULED_REQUESTS_EMBEDDED,
-  REVIEW_CONFIDENCE_THRESHOLD: value.REVIEW_CONFIDENCE_THRESHOLD
+  REVIEW_CONFIDENCE_THRESHOLD: value.REVIEW_CONFIDENCE_THRESHOLD,
+  DB_POOL_MAX: value.DB_POOL_MAX,
+  DB_POOL_IDLE_TIMEOUT_MS: value.DB_POOL_IDLE_TIMEOUT_MS,
+  DB_POOL_CONNECTION_TIMEOUT_MS: value.DB_POOL_CONNECTION_TIMEOUT_MS,
+  DB_STATEMENT_TIMEOUT_MS: value.DB_STATEMENT_TIMEOUT_MS
 });

@@ -23,6 +23,8 @@ const notificationRoutes = require("./routes/notifications.routes");
 const scheduledRequestRoutes = require("./routes/scheduled-requests.routes");
 const narrationMappingRoutes = require("./routes/narration-mappings.routes");
 const env = require("./config/env");
+const pool = require("./db/pool");
+const { checkRedisHealth } = require("./services/document-queue.service");
 const { notFoundHandler, errorHandler } = require("./middlewares/error.middleware");
 const localUploadRoutes = env.LOCAL_STORAGE ? require("./routes/local-upload.routes") : null;
 
@@ -51,8 +53,28 @@ if (env.NODE_ENV !== "test") {
   app.use(morgan("combined"));
 }
 
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok" });
+// Checks actual dependency health, not just "the process is up" — Render's
+// healthCheckPath uses this to decide whether to route traffic to this
+// instance. A liveness-only check (always 200) can't detect a backend that's
+// up but can't reach its database or Redis, which is exactly the failure
+// mode that matters in production.
+const HEALTH_CHECK_TIMEOUT_MS = 4000;
+const withTimeout = (promise, ms, label) =>
+  Promise.race([
+    promise,
+    new Promise((_resolve, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms))
+  ]);
+
+app.get("/health", async (req, res) => {
+  try {
+    await Promise.all([
+      withTimeout(pool.query("SELECT 1"), HEALTH_CHECK_TIMEOUT_MS, "Postgres check"),
+      withTimeout(checkRedisHealth(), HEALTH_CHECK_TIMEOUT_MS, "Redis check")
+    ]);
+    res.status(200).json({ status: "ok" });
+  } catch (error) {
+    res.status(503).json({ status: "error", message: error.message });
+  }
 });
 
 app.use("/api/auth", authRoutes);
