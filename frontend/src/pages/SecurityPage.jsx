@@ -1,246 +1,284 @@
 import PublicLayout from "../components/layout/PublicLayout";
 import ClosingCTA from "../components/marketing/ClosingCTA";
-import { Section, SectionHead, Eyebrow, Tick, Rail } from "../components/marketing/ledger";
-import { Reveal } from "../components/public/motion";
+import PageHero from "../components/marketing/PageHero";
+import Cta from "../components/marketing/Cta";
+import { Band, Beam, GlowCard, Heading, WindowChrome } from "../components/marketing/v3";
+import { Tick } from "../components/marketing/ledger";
+import { Reveal, RevealGroup, RevealItem } from "../components/public/motion";
 
-const pillars = [
+/**
+ * /security — every statement here is checked against the code
+ * (DESIGN_SYSTEM.md §9): bcrypt cost 12 (auth.service.js), SHA-256 refresh
+ * token hashes with family revocation on reuse (token-utils.js,
+ * auth.service.js), 24-hour single-use upload links (env.js defaults), Helmet
+ * + CORS to FRONTEND_URL + per-route rate limits (app.js, routes/), per-firm
+ * S3 key prefixes (documents.service.js, exports.service.js), extractions
+ * locked once approved (extractions.service.js) and the RLS policy quoted
+ * verbatim from the initial schema migration.
+ */
+
+const TRUST = [
+  "Tenant isolation in the database",
+  "Every action on the record",
+  "Private, presigned storage",
+  "Soft deletes, erasure on request"
+];
+
+const PILLARS = [
   {
-    title: "Row-Level Security",
+    title: "Row-level security",
     badge: "Database-enforced",
-    description:
-      "PostgreSQL RLS enforces tenant isolation at the database layer. Every query automatically filters by your firm_id — no application-level gate that can be bypassed."
+    body: "PostgreSQL row-level security isolates every firm at the database layer. Each request runs with your firm's id set, and every table's policy filters on it — not an application check that could be skipped.",
+    glyph: (
+      <>
+        <ellipse cx="10" cy="5" rx="6" ry="2.2" />
+        <path d="M4 5v10c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2V5M4 10c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2" />
+      </>
+    )
   },
   {
-    title: "JWT + Refresh Token Chain",
-    badge: "Chain rotation",
-    description:
-      "Short-lived access tokens (15 minutes) with httpOnly refresh cookies (7 days). Refresh tokens rotate on every use. Reuse of a revoked token invalidates the entire session chain."
+    title: "Rotating sessions",
+    badge: "Reuse detection",
+    body: "Access tokens last 15 minutes; refresh tokens live in an httpOnly cookie for 7 days and rotate on every use. Presenting a revoked refresh token revokes the whole token family.",
+    glyph: <path d="M15.5 8A5.8 5.8 0 0 0 5 6.3M4.5 12A5.8 5.8 0 0 0 15 13.7M5 3v3.3h3.3M15 17v-3.3h-3.3" />
   },
   {
-    title: "Magic Link Security",
-    badge: "64-char hex token",
-    description:
-      "Client upload links are 64-character cryptographically random hex tokens. They expire after 24 hours and single-rotate — a new token is issued automatically after each successful use."
+    title: "Secure upload links",
+    badge: "64-character token",
+    body: "Client upload links carry 64-character random tokens. They expire after 24 hours and rotate after each successful use, so a forwarded old link stops working.",
+    glyph: (
+      <>
+        <path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9" />
+        <path d="M11.5 8.5a3 3 0 0 0-4.2 0l-2.6 2.6a3 3 0 0 0 4.2 4.2l.9-.9" />
+      </>
+    )
   },
   {
-    title: "S3 Direct Upload",
-    badge: "Zero backend touch",
-    description:
-      "Document files never pass through our backend servers. The browser uploads directly to S3 via presigned PUT URLs. File bytes are never logged, cached, or processed by application code."
+    title: "Direct-to-storage uploads",
+    badge: "Never through our API",
+    body: "Files go from the browser straight to private storage through short-lived presigned links. They never pass through our API servers; the processing service reads them from storage to extract the data.",
+    glyph: <path d="M10 13.5V3.5M6.5 7 10 3.5 13.5 7M4 12.5v3a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-3" />
   },
   {
-    title: "Complete Audit Trail",
-    badge: "Immutable logs",
-    description:
-      "Every critical action is logged: document uploads, AI extraction, approvals, exports, team changes, and settings updates. Logs include user ID, timestamp, entity, and metadata."
+    title: "Complete audit trail",
+    badge: "Append-only",
+    body: "Uploads, extraction approvals, exports, invitations and settings changes are logged with the user, the time, the record and what changed. The app only ever adds entries.",
+    glyph: <path d="M4 5h12M4 10h12M4 15h7" />
   },
   {
-    title: "Soft Deletes Only",
-    badge: "Always recoverable",
-    description:
-      "No data is ever permanently destroyed by a user action. Clients, documents, and users are soft-deleted with a deleted_at timestamp. Recovery is always possible for admins."
+    title: "Soft deletes",
+    badge: "Erasure on request",
+    body: "Deleting a client, document or user in the app hides it with a deleted_at timestamp rather than destroying it, so a mistaken delete isn't a lost record. Permanent erasure happens when you ask for it.",
+    glyph: <path d="M4.5 6h11M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" />
   }
 ];
 
-const architecture = [
+const LAYERS = [
   {
     layer: "Browser",
-    items: ["HTTPS only", "httpOnly cookies (no JS access to refresh token)", "CSP headers", "XSS protection via React"]
+    items: [
+      "Refresh token in an httpOnly cookie",
+      "Content-Security-Policy and HSTS headers",
+      "React's output escaping against XSS"
+    ]
   },
   {
-    layer: "API (Express)",
-    items: ["Helmet.js security headers", "CORS restricted to frontend origin", "Rate limiting (per route)", "Joi request validation"]
+    layer: "API",
+    items: [
+      "Helmet security headers",
+      "CORS limited to the Verax app's origin",
+      "Rate limits on sensitive routes",
+      "Request validation with Joi schemas"
+    ]
   },
   {
-    layer: "Database (PostgreSQL)",
-    items: ["Row-Level Security on every table", "app.current_firm_id set per request", "No raw SQL with user input", "Parameterised queries via Knex"]
+    layer: "Database",
+    items: ["Row-level security on every table", "Firm id set on every request", "Parameterised queries throughout"]
   },
   {
-    layer: "Storage (AWS S3)",
-    items: ["Presigned URLs (time-limited)", "Bucket policy: private by default", "Per-firm key prefixes", "Presigned download URLs for exports"]
+    layer: "Storage",
+    items: [
+      "Objects reached only through presigned URLs",
+      "Per-firm key prefixes",
+      "Time-limited presigned uploads and downloads"
+    ]
   }
 ];
 
-const dataHandling = [
+const DATA = [
   {
     title: "Document files",
-    detail:
-      "Stored in AWS S3 with private ACL. Accessible only via presigned URLs with time limits. Never served through our application servers."
+    body: "Stored in private cloud storage under your firm's own prefix, reachable only through time-limited presigned links."
   },
   {
     title: "Extracted data",
-    detail:
-      "Stored as JSONB in PostgreSQL, scoped to your firm by RLS. Editable during review, locked once approved."
+    body: "Stored in PostgreSQL and scoped to your firm by row-level security. Editable during review, locked once approved — reprocess a document to change it."
   },
   {
     title: "Passwords",
-    detail:
-      "Hashed with bcrypt (12 rounds). We never store plaintext passwords. Self-service, email-based password reset is available from the login page."
+    body: "Hashed with bcrypt at cost 12; never stored in plain text. Password reset is self-service, by email, from the login page."
   },
   {
     title: "Session tokens",
-    detail:
-      "Refresh tokens stored as SHA-256 hashes, not plaintext. Token metadata (user-agent, IP, expiry) stored for security review. Revocable at any time."
+    body: "Refresh tokens are stored as SHA-256 hashes, with the user-agent, IP address and expiry kept for security review."
   }
 ];
 
+const POLICY = `CREATE POLICY documents_isolation_policy
+  ON documents
+  FOR ALL
+  USING (firm_id = app.current_firm_id())
+  WITH CHECK (firm_id = app.current_firm_id());`;
+
 const SecurityPage = () => (
   <PublicLayout>
-    {/* Hero */}
-    <Section className="pt-20 sm:pt-28">
-      <Reveal className="mx-auto max-w-[46rem] text-center">
-        <Eyebrow className="justify-center">Security &amp; trust</Eyebrow>
-        <h1 className="vx-display-xl mt-6">
-          Your clients&apos; data is
-          <br />
-          safe by design.
-        </h1>
-        <p className="vx-body mx-auto mt-7 max-w-[36rem]">
-          Financial data demands serious security. Every architectural decision in
-          Verax was made with isolation, auditability, and recoverability as
-          first-class requirements.
-        </p>
-      </Reveal>
-
-      <Reveal delay={0.1} className="mx-auto mt-14 grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
-        {["Tenant isolation by database", "Full audit trail", "Presigned, private storage", "Soft deletes only"].map((label) => (
-          <div key={label} className="rounded-xl border border-hairline bg-surface px-3 py-4 text-center">
-            <p className="text-[0.75rem] font-medium leading-snug text-carbon-600">{label}</p>
-          </div>
+    <PageHero
+      kicker="Security"
+      title="Your clients' data,"
+      accent="safe by design."
+      lead="Financial data demands serious security. Isolation, auditability and recoverability were built into Verax's architecture from the first table."
+    >
+      <ul className="mx-auto flex max-w-[56rem] flex-wrap justify-center gap-2.5">
+        {TRUST.map((label) => (
+          <li
+            key={label}
+            className="flex items-center gap-2 rounded-full border border-white/80 bg-white/70 px-4 py-2 text-[13.5px] font-medium text-carbon-700 shadow-[0_8px_24px_-18px_rgba(38,30,110,0.5)] backdrop-blur"
+          >
+            <Tick className="text-verify-600" />
+            {label}
+          </li>
         ))}
-      </Reveal>
-    </Section>
+      </ul>
+    </PageHero>
 
-    {/* Security pillars */}
-    <Section>
-      <SectionHead
-        eyebrow="Security pillars"
-        title="Six layers of protection"
-        body="Not bolt-on security. Each layer is part of the core architecture."
-        align="center"
-      />
-
-      <div className="mt-16 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {pillars.map((p, i) => (
-          <Reveal key={p.title} delay={0.04 * (i % 3)}>
-            <article className="h-full rounded-2xl border border-hairline bg-surface p-6">
+    {/* Pillars */}
+    <Band>
+      <Heading kicker="Six layers" title="Protection built into the architecture," tint="not bolted on." />
+      <RevealGroup className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" stagger={0.07}>
+        {PILLARS.map((pillar) => (
+          <RevealItem key={pillar.title} className="h-full">
+            <GlowCard className="h-full p-7">
               <div className="flex items-start justify-between gap-3">
-                <h3 className="text-[0.9375rem] font-bold text-carbon-900">{p.title}</h3>
-                <span className="flex flex-none items-center gap-1.5 rounded-full border border-hairline bg-well px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-carbon-600">
-                  <Tick className="text-verify-600" />
-                  {p.badge}
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-carbon-900/[0.07] bg-white text-brand-600 shadow-[0_1px_2px_rgba(14,16,19,0.06)]">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    {pillar.glyph}
+                  </svg>
+                </span>
+                <span className="rounded-full bg-verify-500/10 px-2.5 py-1 text-[11.5px] font-medium text-verify-700">
+                  {pillar.badge}
                 </span>
               </div>
-              <p className="mt-3 text-sm leading-relaxed text-carbon-500">{p.description}</p>
-            </article>
-          </Reveal>
+              <h3 className="mt-5 text-[1.0625rem] font-medium tracking-[-0.015em] text-carbon-900">{pillar.title}</h3>
+              <p className="mt-2 text-[0.9375rem] leading-[1.65] text-carbon-500">{pillar.body}</p>
+            </GlowCard>
+          </RevealItem>
         ))}
-      </div>
-    </Section>
+      </RevealGroup>
+    </Band>
 
-    {/* Architecture breakdown */}
-    <Section dark>
-      <SectionHead
-        eyebrow="Architecture"
-        title="Security at every layer"
-        body="From the browser to the database, each layer adds independent safeguards."
+    {/* Layers: the page's one dark band */}
+    <Band dark aurora>
+      <Heading
+        kicker="Architecture"
+        title="Safeguards at every layer,"
+        tint="from the browser to the database."
         align="center"
         dark
       />
-
-      <div className="mt-16 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {architecture.map((layer, i) => (
-          <Reveal key={layer.layer} delay={0.04 * i}>
-            <div className="h-full rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <span aria-hidden="true" className="h-[7px] w-[7px] flex-none bg-brand-400" />
-                <span className="text-sm font-bold text-white">{layer.layer}</span>
-              </div>
-              <ul className="space-y-2.5">
-                {layer.items.map((item) => (
-                  <li key={item} className="flex items-start gap-2 text-xs leading-relaxed text-carbon-300">
-                    <Tick className="mt-0.5 text-verify-400" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </Reveal>
+      <div className="mt-16 grid items-stretch gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr]">
+        {LAYERS.map((layer, index) => (
+          <div key={layer.layer} className="contents">
+            <Reveal delay={0.06 * index} className="h-full">
+              <GlowCard dark className="h-full p-6">
+                <p className="text-[0.8125rem] font-medium tabular-nums text-carbon-400">
+                  {String(index + 1).padStart(2, "0")}
+                </p>
+                <h3 className="mt-1 text-[1.125rem] font-medium tracking-[-0.015em] text-white">{layer.layer}</h3>
+                <ul className="mt-5 space-y-3">
+                  {layer.items.map((item) => (
+                    <li key={item} className="flex items-start gap-2.5 text-[0.875rem] leading-[1.55] text-carbon-300">
+                      <Tick className="mt-[5px] text-verify-500" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </GlowCard>
+            </Reveal>
+            {index < LAYERS.length - 1 ? <Beam dark delay={index * 0.4} className="lg:w-8" /> : null}
+          </div>
         ))}
       </div>
-    </Section>
+    </Band>
 
-    {/* Data handling */}
-    <Section>
-      <div className="grid items-start gap-12 lg:grid-cols-2">
-        <Reveal>
-          <Eyebrow>Data handling</Eyebrow>
-          <h2 className="vx-h2-xl mt-5">What we store. What we don&apos;t.</h2>
-          <div className="mt-8 space-y-4">
-            {dataHandling.map((item) => (
-              <div key={item.title} className="rounded-xl border border-hairline bg-surface p-4">
-                <div className="text-sm font-bold text-carbon-900">{item.title}</div>
-                <div className="mt-1.5 text-sm leading-relaxed text-carbon-500">{item.detail}</div>
+    {/* Data handling + isolation */}
+    <Band>
+      <div className="grid items-start gap-14 lg:grid-cols-2 lg:gap-20">
+        <div>
+          <Heading kicker="Data handling" title="What we store," tint="and how." />
+          <Reveal delay={0.08} className="mt-10 divide-y divide-carbon-900/[0.07] border-y border-carbon-900/[0.07]">
+            {DATA.map((item) => (
+              <div key={item.title} className="py-5">
+                <h3 className="text-[1rem] font-medium text-carbon-900">{item.title}</h3>
+                <p className="mt-1.5 text-[0.9375rem] leading-[1.65] text-carbon-500">{item.body}</p>
               </div>
             ))}
-          </div>
-        </Reveal>
+          </Reveal>
+        </div>
 
-        <Reveal delay={0.1}>
-          <Eyebrow>Tenant isolation</Eyebrow>
-          <h2 className="vx-h2-xl mt-5 text-[1.75rem]">Your data is invisible to other firms</h2>
-          <p className="vx-body mt-6 max-w-[34rem]">
-            Multi-tenancy in Verax is not enforced by application code — it&apos;s
-            enforced by the database itself. PostgreSQL Row-Level Security
-            policies run inside the database engine before any query returns
-            data.
-          </p>
-          <p className="vx-body mt-4 max-w-[34rem]">
-            Even if there were a bug in application routing that sent the wrong
-            firm_id, the database would return zero rows. No workaround exists
-            at the application layer.
-          </p>
-
-          <div className="mt-8 rounded-2xl border border-hairline bg-well p-5">
-            <div className="vx-index mb-3">RLS policy example</div>
-            <pre className="overflow-x-auto rounded-lg bg-carbon-950 p-4 text-xs leading-relaxed text-verify-400">
-{`CREATE POLICY firm_isolation ON documents
-  USING (
-    firm_id = current_setting(
-      'app.current_firm_id'
-    )::uuid
-  );`}
-            </pre>
-            <p className="mt-3 text-xs text-carbon-500">
-              Every table has an equivalent policy. Every request sets{" "}
-              <code className="vx-mono text-carbon-700">app.current_firm_id</code>{" "}
-              before executing queries.
+        <div>
+          <Heading kicker="Tenant isolation" title="Your data is invisible" tint="to every other firm." />
+          <Reveal delay={0.08} className="mt-6 space-y-4 text-[1rem] leading-[1.7] text-carbon-500">
+            <p>
+              Isolation isn&apos;t left to application code. PostgreSQL row-level security policies run inside the
+              database engine before any query returns a row.
             </p>
-          </div>
-        </Reveal>
+            <p>Even if a bug sent the wrong firm id, the database would return nothing that belongs to another firm.</p>
+          </Reveal>
+          <Reveal
+            delay={0.14}
+            className="mt-8 overflow-hidden rounded-2xl border border-white/10 bg-carbon-950 shadow-[0_30px_70px_-40px_rgba(14,16,19,0.8)]"
+          >
+            <WindowChrome label="migrations · initial schema" dark />
+            <pre className="overflow-x-auto p-5 text-[0.8125rem] leading-[1.7]">
+              <code className="vx-mono text-carbon-200">{POLICY}</code>
+            </pre>
+            <p className="border-t border-white/10 px-5 py-3.5 text-[0.8125rem] text-carbon-400">
+              Every table has an equivalent policy, and every request sets the firm id before it queries.
+            </p>
+          </Reveal>
+        </div>
       </div>
-    </Section>
+    </Band>
 
     {/* Responsible disclosure */}
-    <Section className="border-y border-hairline bg-well">
-      <Reveal className="mx-auto max-w-[38rem] text-center">
-        <Eyebrow className="justify-center">Responsible disclosure</Eyebrow>
-        <h2 className="vx-h2-xl mt-5 text-[2rem]">Found a vulnerability?</h2>
-        <p className="vx-body mx-auto mt-5 max-w-[32rem]">
-          We take security reports seriously. If you discover a vulnerability,
-          please reach out privately before public disclosure. We aim to
-          acknowledge reports within 24 hours and resolve confirmed issues
-          within 7 days.
-        </p>
-        <Rail className="mx-auto my-8 w-20" />
-        <a
-          href="mailto:verax.hello@gmail.com"
-          className="vx-mono inline-flex items-center gap-2 rounded-full border border-hairline bg-surface px-5 py-3 text-sm font-medium text-carbon-900 transition-colors hover:border-hairline-strong"
-        >
-          verax.hello@gmail.com
-        </a>
+    <Band className="!pt-0">
+      <Reveal>
+        <GlowCard className="mx-auto max-w-[52rem] p-8 text-center sm:p-12">
+          <h2 className="font-inter text-[clamp(1.5rem,2.6vw,2rem)] font-normal tracking-[-0.03em] text-carbon-900">
+            Found a vulnerability? <span className="text-carbon-400">Tell us privately.</span>
+          </h2>
+          <p className="mx-auto mt-4 max-w-[34rem] text-[1rem] leading-[1.7] text-carbon-500">
+            We take security reports seriously. Please reach out before any public disclosure — we aim to acknowledge
+            reports within 24 hours and resolve confirmed issues within 7 days.
+          </p>
+          <div className="mt-8 flex justify-center">
+            <Cta href="mailto:verax.hello@gmail.com" variant="quiet">
+              verax.hello@gmail.com
+            </Cta>
+          </div>
+        </GlowCard>
       </Reveal>
-    </Section>
+    </Band>
 
     <ClosingCTA />
   </PublicLayout>

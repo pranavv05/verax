@@ -3,6 +3,12 @@ export default {
   content: ["./index.html", "./src/**/*.{js,jsx}"],
   theme: {
     extend: {
+      // `/12` tints (e.g. `bg-amber-500/12`) are used across the public
+      // surface's status chips; Tailwind's default opacity scale jumps from 10
+      // to 15, so without this step those classes were never generated.
+      opacity: {
+        12: "0.12"
+      },
       fontFamily: {
         sans: ["Manrope", "Segoe UI", "Helvetica Neue", "sans-serif"],
         mono: ["IBM Plex Mono", "Consolas", "monospace"],

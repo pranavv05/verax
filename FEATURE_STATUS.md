@@ -771,17 +771,94 @@ Notes: The portal deliberately reuses the app's existing design tokens (`panel`,
 ## PUBLIC / MARKETING SURFACE
 
 Scope note: this group covers the unauthenticated pages only (`/`, `/features`, `/pricing`,
-`/about`, `/security`, `/login`, `/signup`, `/client-portal/login`, `/upload/:token`,
-`/upload/:token/status`). Two design systems coexist by design: **V2 ("The Ledger")** on the
-marketing surface, **V1** on the auth and magic-link upload pages. Every token is namespaced
+`/about`, `/security`, `/privacy`, `/terms`, `/login`, `/signup`, `/forgot-password`,
+`/reset-password/:token`, `/client-portal/login`, `/upload/:token`, `/upload/:token/status`, 404).
+**As of 2026-09-23 all of them use one system, V3** (`frontend/DESIGN_SYSTEM.md`); the V1 / V2
+entries below are kept as history. Every token is namespaced
 (`vx-*`, `canvas`/`surface`/`well`/`hairline`) so no authenticated dashboard page is affected —
 verified by grep: `zinc-*` and `verify-*` have no call sites outside the public surface, and the
 dashboard's `ink`/`sand`/`mint`/`ember`/`graphite` scales are untouched.
 
+### Public pages unified on the V3 system (2026-09-23)
+Status: ✅ Production Ready (visual layer + verified content fixes; no API, schema or submit-path changes)
+Scope: `/features`, `/pricing`, `/about`, `/security`, `/login`, `/signup`, `/forgot-password`,
+`/reset-password/:token`, `/client-portal/login`, `/upload/:token`, `/upload/:token/status` and the
+404 now use the same V3 language as the homepage.
+Docs: `frontend/DESIGN_SYSTEM.md` rewritten as the V3 reference (references, colour, type, layout,
+surfaces, controls, motion, components, honesty rules, accessibility) — replaces the V1/V2 text.
+Shared pieces (new): `components/marketing/PageHero.jsx` (sub-page hero: colour field, faint grid,
+kicker, two-line H1 with gradient second line, lead, actions, optional visual) and
+`components/marketing/Cta.jsx` (brand / glass / quiet / invert pills with the exported `HoverArrow`).
+`components/layout/PublicLayout.jsx` now mounts `ThemeCanvas` (page root transparent), so on every
+sub-page the canvas cross-fades to near-black under dark bands and the nav follows, as on `/`.
+Pages:
+- `/features` — PageHero with the six-stage pipeline (wrapped chips + chevrons below `lg`, travelling
+  `Beam`s from `lg`); a sticky module bar (scroll-spy, sliding `layoutId` pill); six modules
+  alternating copy + a drawn product screen in the bento's inset well (`FitCanvas` 520×400, centred):
+  clients, extraction (per-field confidence), compliance (GSTIN / tax maths / GSTR-2B / duplicate),
+  Tally export (balanced), data tools (register cleaner + bank statement → XML with suggested
+  ledgers from the classifier's real category list), audit log.
+- `/pricing` — Mercury-style joined three-column plan panel ("Everything in Starter, plus:"),
+  Starter's CTA primary; "Planned limits — not enforced during early access" labels on the panel
+  and the comparison; grouped comparison table (Usage / Reading and checks / Export and tools /
+  Records and support); two-column FAQ with animated accordion.
+- `/about` — PageHero, ProofBand, mission band with pipeline, founder card with a photo slot
+  (`public/team/pranav-vatsa.jpg`; initials render underneath and the photo fades in only once it
+  loads, so a missing file never shows a broken image), four value `GlowCard`s.
+- `/security` — PageHero with trust chips, six pillar `GlowCard`s, one dark architecture band (four
+  layers joined by beams), data handling + the RLS policy quoted verbatim from the initial schema
+  migration in a code window, responsible-disclosure card.
+- 404 — inside `PublicLayout`; gradient "404", "Back to home", and "Go to dashboard" only when
+  `useAuth().isAuthenticated` (otherwise "Tell us what broke"); three popular-page cards.
+- Auth — `AuthLayout` retuned to the canvas + hero light field + faint grid, glass top link,
+  refined card, `AuthButton` with the hover arrow, Privacy / Terms / Security / Help below; new
+  `AuthNotice` (success / info / dev). Forgot and reset password moved onto `AuthLayout` +
+  `AuthField` (logic unchanged; reset gains a skeleton while the token validates and an
+  "At least 8 characters" check).
+- Upload pages — `PublicPageShell` rebuilt (canvas, light field, frosted header with lock badge,
+  footer with Privacy / Terms / help); upload page is one card with three numbered steps
+  (document-type segmented pills with a sliding pill, dropzone in the inset well, queue) and a
+  full-width brand button; status page gets a joined summary strip and white document cards.
+  Token validation, upload queue, token rotation and 15-second polling unchanged.
+Content fixes (each verified against the code):
+1. Bank statement → XML was described as "no LLM / zero hallucination risk" (`/features`, `/about`);
+   amounts and dates are rule-based, but `classify_narrations` uses Groq to suggest ledgers — copy
+   now says so.
+2. `/security` "Recovery is always possible for admins" — no restore route exists; removed. Soft
+   deletes now described as "erasure on request", matching `/privacy`.
+3. `/security` "Immutable logs" → "Append-only"; "Joi validation on every request" → "Request
+   validation with Joi schemas" (dashboard/tools/local-upload routes have none); "Bucket policy:
+   private by default" → "Objects reached only through presigned URLs"; the RLS sample now matches
+   the real policy (`app.current_firm_id()`, `WITH CHECK`).
+4. `/features` "no data is ever permanently destroyed" contradicted `/privacy`; reworded.
+5. `/features` sample GSTINs `27AAAAA0000A1Z5`, `06BBBBB1111B2Y4`, `29CCCCC2222C3Z6` failed the
+   checksum; replaced with the homepage's checksum-valid set.
+6. Register cleaner "handles merged cells" → "multi-sheet workbooks, repeated header blocks and
+   multi-row headers" (what `register_cleaner_service.py` does).
+7. `/pricing` FAQ "data retained for a grace period" → the 30-day export window in `/terms`;
+   comparison table "Priority support" was Enterprise-only while the Professional card listed it —
+   aligned to the card; "Talk to us" note duplicated the CTA → "Priced for your firm"; added an
+   honest "Are the plan limits enforced today?" FAQ.
+8. Signup's "Terms of Service" and "Privacy Policy" links pointed at `/security`; now `/terms` and
+   `/privacy`, opening in a new tab so a half-filled form isn't lost.
+9. Upload status "Complete — posted to your accounts" / "processed and posted": `Complete` maps to
+   `exported` (`mapClientStatus`), and Verax can't know the XML was imported — now "exported for
+   Tally".
+10. Upload shell "encrypted in transit and at rest" (hosting/S3 settings not in the repo) →
+    "files go straight to private, per-firm storage".
+Bug fix (site-wide): `bg-amber-500/12`, `bg-verify-500/12`, `bg-indigo-500/12` (13 call sites on
+the homepage plus the new pages) were never generated — Tailwind's default opacity scale has no
+`12`. Added `theme.extend.opacity: { 12: "0.12" }` in `tailwind.config.js`; the production build now
+contains them. A running Vite dev server must be restarted to pick up the config change.
+Verified: production build passes; every page checked in a real browser at 1440px (via a scaled
+iframe), 767px, and the upload/status pages at 390px with mocked API responses (backend not running).
+Scroll-spy on `/features` observed working; on `/privacy` it could not be exercised (hidden
+automation tab pauses IntersectionObserver).
+
 ### Public design system — V2 ("The Ledger", marketing surface)
-Status: ✅ Production Ready for the marketing surface (`/` + shared nav/footer chrome on
-`/features`, `/pricing`, `/about`, `/security`); the four secondary pages' own *body* content is
-still on the pre-V1 sand/ink/mint palette — see "Secondary marketing pages" below.
+Status: Superseded 2026-09-23 by V3 (see "Public pages unified on the V3 system" above and
+`frontend/DESIGN_SYSTEM.md`). `ledger.jsx` still supplies `Tick` / `Caret`; its `Eyebrow`,
+`SectionHead`, `Section`, `Sheet`, `Field` are no longer used by the rebuilt pages.
 Added 2026-08-09.
 Docs: `frontend/DESIGN_SYSTEM.md` §§0.5, 9–12 (V2 supplement; V1 sections below it still describe
 `/login`, `/signup`, `/client-portal/login` and the magic-link upload pages, which V2 does not
@@ -811,10 +888,28 @@ Notes: `primitives.jsx` (the V1 additive primitive layer) is still unimported by
 sections compose from `ledger.jsx` instead. It is now dead code and can be deleted once nothing
 plans to migrate the secondary pages onto it.
 
+### Auth pages — firm login, firm signup, client-portal login (rebuilt 2026-09-23)
+Status: ✅ Production Ready (visual layer only — all schemas, submit paths, redirects and guards
+unchanged)
+Frontend: `components/auth/AuthLayout.jsx` (new; `AuthLayout`, `AuthCard`, `AuthHeading`,
+`AuthButton`, `AuthError`, `AuthLink`) after Mercury's sign-in: soft grey-lavender page with one
+faint light, logo top-left + one contextual link top-right, a single white centred card with a
+quiet regular-weight title and a divided lower section for secondary paths, legal links below.
+`components/auth/AuthField.jsx` restyled (13px label above; soft grey-filled 40px input that turns
+white with a violet ring on focus; password reveal as its own right-hand segment). Pages:
+`LoginPage.jsx`, `SignupPage.jsx` (firm name; name + email side by side; password with a live
+"At least 8 characters" check; optional GSTIN behind an "Add your firm's GSTIN" link;
+terms checkbox kept), `ClientPortalLoginPage.jsx` (same card, "Client portal" badge, no signup
+or reset — "your CA firm can issue a new password"; loading skeleton restyled).
+Removed: `AuthShell.jsx`, `AuthPanel.jsx` (the old split layout). `components/public/FloatingField.jsx`
+now has no importers (dead code). **2026-09-23:** `AuthLayout` retuned to V3 and
+`ForgotPasswordPage` / `ResetPasswordPage` moved onto it — see "Public pages unified on the V3
+system" above.
+
 ### Public design system — V1 (light-first, auth + upload surface)
-Status: ⚠️ Partial — still the system for `/login`, `/signup`, `/client-portal/login`,
-`/upload/:token`, `/upload/:token/status`. Superseded by V2 on the marketing surface. The
-secondary marketing pages' bodies remain on the pre-V1 shell (see below).
+Status: Superseded 2026-09-23 by V3 on every public page (see "Public pages unified on the V3
+system" above). The retuned `zinc` / `canvas` / `surface` / `well` / `hairline` tokens remain in
+`tailwind.config.js` for anything that still references them.
 Docs: `frontend/DESIGN_SYSTEM.md` — supersedes its own previous (dark-canvas) version. Palette with
 hex values, type scale, spacing rhythm, borders/radius/shadows, layout primitives, animation
 contract, migration status, logo rationale.
@@ -870,50 +965,207 @@ three side by side against the V1 canvas colour.
 
 ### Landing page (`/`) — rebuilt on V2, 2026-08-09
 Status: ✅ Production Ready
-Frontend: `pages/HomePage.jsx` — rewritten as composition only (~140 lines: hero + eleven imported
-sections). Every section owns its own markup, copy and motion, so no section can grow into the
-others. Order: hero (`DocumentFlowVisual`) → `ProofBand` → `ProblemSection` →
-`TransformationSection` → `DocumentTypes` → `VeraxEngine` → `DocumentDecode` →
-`ReviewExperience` → `ClientWorkflow` → `TallySection` → `Outcomes` → `ClosingCTA`.
+Frontend: `pages/HomePage.jsx` — composition only (hero + eleven imported sections). Every
+section owns its own markup, copy and motion, so no section can grow into the others. Order:
+`HeroSection` → `ProofBand` → `ProblemSection` →
+`TransformationSection` → `DocumentTypes` → `VeraxEngine` → `ClientWorkflow` → `Outcomes` →
+`ClosingCTA`. (`DocumentDecode` — the document-intelligence comparison slider — was also removed
+and deleted on 2026-09-23 at the user's request.) (`ReviewExperience` and `TallySection` were
+removed from the page and deleted on 2026-09-23 at the user's request — the engine section
+already shows review/approval and the balanced Tally voucher. Footer links that pointed at
+`/#review` and `/#tally` now go to `/#workflow` (the `/#intelligence` link went with DocumentDecode).)
 Section components (all new, `components/marketing/`):
 - `ledger.jsx` — the shared atoms (Sheet/Field/Tick/Caret/Rail/FlowRail/Eyebrow/SectionHead/Section).
-- `DocumentFlowVisual.jsx` — the hero: a drifting pile of six mismatched sheets → a carbon Verax
-  slab with a scan band → a ledger of validated fields. HTML/CSS/SVG, no images, no canvas.
-- `ProblemSection.jsx` — the manual eight-step loop with three ghosted repeats stacked behind it.
-- `TransformationSection.jsx` — 216-cell field resolving to ticks and nine amber carets; the split
-  is **explicitly labelled illustrative**, since nothing in the repo measures a real document mix.
-- `DocumentTypes.jsx` — four document types, each with its own drawing (captured invoice, txn run,
-  spreadsheet grid, two-column reconciliation) rather than a shared icon card.
-- `VeraxEngine.jsx` — the six stages on near-black, each naming what it actually produces.
-- `DocumentDecode.jsx` — the signature visual: a drawn invoice whose capture brackets render
-  *around the real field elements* (so they stay aligned at any width) → `structured_data` →
-  the compliance checks.
-- `ReviewExperience.jsx` — the only place real product UI appears, reusing the existing live
-  `mockups/ReviewMockup` as evidence rather than as the site's identity.
-- `ClientWorkflow.jsx`, `TallySection.jsx` (real `tally-xml.service.js` tag shapes, figures
-  reconciling with the rest of the page), `Outcomes.jsx`, `ClosingCTA.jsx`, `ProofBand.jsx`.
+- `HeroSection.jsx` — **rebuilt 2026-09-23 after Stripe/Mercury references.** Centred Inter
+  headline with a violet→blue→teal gradient second line (`.vx-hero-gradient` in `index.css`),
+  Mercury-style announcement pill ("Now onboarding founding CA firms" → `#demo`), aurora colour
+  field + masked grid + two animated SVG silk ribbons (`.vx-ribbon-band` keyframes, killed by the
+  existing reduced-motion switch), and the product shot `HeroProduct.jsx` (**rebuilt 2026-09-23**
+  from a sparse mock into a high-fidelity review screen: glass bezel, workspace sidebar with icon
+  nav + client list, ⌘K search bar, breadcrumb/status/approve header with tabs, PDF viewer with
+  toolbar and a realistic invoice, grouped form inputs with per-field confidence and a Verified
+  GSTIN, Inter with tabular figures instead of monospace). It runs a loop while in view: the
+  invoice highlight — positioned by measuring `data-hl` elements, so it stays exact at any width —
+  walks the fields in sync with the focused input, then a cursor clicks Approve, the badge flips
+  and an "Exported to Tally" toast appears; reduced motion shows the finished state. The floating
+  "Kumar & Sons uploaded via link" card beside the window was removed 2026-09-23 (along with the
+  unused `UploadToast` / `ChecksToast` exports). Same ACME / INV-2026-0417 / ₹49,560 figures as `DocumentDecode` and `TallySection`.
+  Email capture is `DemoRequestForm tone="hero"` (new variant: field + button share one pill) —
+  same `POST /api/waitlist/join`, no API change. `DemoRequestForm` input ids now come from
+  `useId()` since the form renders twice on the homepage (hero + closing CTA).
+  Mobile: sidebar hidden `<lg`, invoice pane hidden `<md`.
+- **Sections below the hero rebuilt 2026-09-23 (V3, after a section-by-section study of
+  stripe.com and mercury.com).** Shared atoms in `components/marketing/v3.jsx`: `Kicker`,
+  `Heading` (Stripe two-tone headline, Inter weight 400, 28–38px — deliberately lighter than
+  V2's semibold), `Aurora`, `GlowCard` (cursor-following spotlight), `WindowChrome`, `Beam`
+  (connector with a travelling light pulse), `Band` (section rhythm; `dark` bands fade in/out
+  and carry Stripe's dot grid; `fade="top"` for a page-ending band), `ThemeCanvas` (Mercury's
+  scroll-driven page background: a fixed layer cross-fades light/dark as `[data-bg]` sections
+  cross mid-viewport, and emits a `vx-theme` event). (`GuideLines`, Stripe's dashed column guides,
+  was removed 2026-09-23.)
+  New CSS keyframes in `index.css`: `vx-beam-x/y`, `vx-ring`, `vx-log-scroll`, `vx-ribbon-sway`;
+  new text utilities `.vx-hero-gradient`, `.vx-hero-gradient-dark`. All loops sit inside
+  `.vx-page`, so the existing reduced-motion kill switch covers them; JS animations check
+  `useReducedMotion()`.
+- `ProofBand.jsx` — after Mercury's "Loved by…" block: centred medium-weight statement + a
+  subline on what Verax does with those documents (the "logos we haven't earned" line was
+  replaced 2026-09-23), a full-bleed row of grey glyph + wordmark marks (the documents and
+  systems Verax handles — never third-party logos) drifting with faded edges, then three trust
+  notes that are all shipped (RLS per-firm isolation, audit log, magic-link uploads).
+  **2026-09-23**: the marks row now sits on a Mercury-style glow — two CSS layers of brand-hue
+  radial gradients (violet, blue, teal, peach, lavender) drifting against each other
+  (`.vx-proof-glow*` + `vx-proof-drift-a/b` in `index.css`, no filter blur), masked to an
+  ellipse, kept quiet (layer alphas 0.16–0.24; the framing hairlines were removed); mark labels set in
+  Inter 700 with ink gradient lettering and a violet→blue→teal sheen that sweeps
+  through each label as a staggered wave (`.vx-mark-text`, `vx-mark-sheen`; rest state is plain
+  ink), icons tinted `brand-500/60` at a 1.6 stroke. Covered by the existing reduced-motion kill switch.
+- `ProblemSection.jsx` — **rebuilt 2026-09-23 as a pinned, scroll-driven scene** (no tabs): a
+  240vh container with a sticky viewport (shortened 2026-09-23 so the Verax state arrives after
+  ~1.4 screens of scroll), all motion bound to one sprung `scrollYProgress`, so the reader scrubs
+  it both ways. Act I: three representative manual steps (of the eight) play across five realistic
+  app windows
+  (cursor, active window forward, unread count climbing, sticky notes appearing). Act II: a Verax
+  core ignites and every window and note spirals into it (shrink + blur), the stage cools from
+  warm to calm and the headline blurs into "Verax does the eight steps. You review the
+  exceptions." Act III: the review queue rises from the core, counters count up with scroll, and
+  the step rail folds into one. Queue reasons are the three real routing reasons, on the
+  same documents as `TransformationSection`'s live table. Reduced motion: no pinning, static
+  steps then the answer. Two art-directed canvases fitted to the space under the headline:
+  landscape 1040×510, and portrait 520×820 below 640px wide so phones get a full-size scene.
+  **Enlarged 2026-09-23**: the canvas now scales up as well as down (0.2×–1.4×, `MAX_SCALE`) with the
+  stage capped at 1400px instead of 1040px; the landscape canvas was shortened from 560 to 510 (lower
+  windows and notes moved up), the pinned headline set a step smaller (up to 36px) on a wider
+  measure, the padding around the stage tightened, and the "Scroll to see the month" hint floats as
+  a pill over the stage's bottom edge instead of taking a row of height.
+  In Act III the stage frame (warm/cool gradient, border, shadow) is now its own layer that fades
+  to nothing as the review card rises, so the card stands on the plain page; the card itself was
+  redrawn larger (660 canvas px wide, up from 500, with type and spacing scaled to match; drawn at
+  size rather than transform-scaled so text stays crisp).
+  **Smoothed 2026-09-23**: softer critically-damped spring on scroll progress (stiffness 60,
+  damping 20, mass 0.6); every scroll-mapped transform now eased (cubic in/out) instead of linear;
+  the per-frame `blur()` filter on windows and the review card removed (it repainted every window
+  each scroll tick); stage background cross-fades two fixed gradient layers by opacity instead of
+  interpolating a gradient string; cursor, active-window and sticky-note motion use gentle springs;
+  `will-change` on the moving layers.
+- Page-wide scroll polish (2026-09-23): `HeroSection` scroll parallax (copy drifts up, fades and
+  blurs; product rises) via a sprung `useScroll` — note Framer Motion 13 hands un-sprung
+  scroll-linked transforms to native `ViewTimeline`, which left this range frozen, so scroll-linked
+  values on this page are derived from a `useSpring` copy. The brief blur-to-focus on
+  `Reveal` / `fadeUp` was **reverted** the same day: animating `filter: blur()` on large cards is
+  expensive and can leave layered content unpainted (Coverage reported blank) — reveals are
+  opacity + rise only again. Hero ribbons fade out at their bottom edge. `ReviewExperience` header corrected to
+  "Ready for approval · 1 warning" (0.62 confidence is above the 0.40 review threshold).
+- `TransformationSection.jsx` — **rebuilt 2026-09-23**: the Documents table, live. Uploads arrive
+  at the top and move through the real statuses (uploaded → processing → extracted |
+  review_required) with live tab counts; routing reasons mirror `document-processing.worker.js`
+  exactly (confidence < `REVIEW_CONFIDENCE_THRESHOLD`, default 0.40 · unknown type · type
+  mismatch), while compliance findings (GSTR-2B difference, possible duplicate) show as flags on
+  an otherwise-extracted row — because they don't reroute a document. A "What sends a document
+  to review" row explains the three rules. Counts **labelled illustrative**.
+- `DocumentTypes.jsx` — **rebuilt 2026-09-23** (the gradient/sparkle-chip bento read as
+  AI-generated), **re-laid out as a true bento the same day**: Invoices is a tall anchor tile
+  (`lg:col-span-7 row-span-2`), Bank statements and Purchase registers stack beside it, GST data
+  runs full width with its copy beside the screen. Every tile is a white card with its mockup on
+  one shared inset neutral surface (faint dot grid), no tilts/rotations, one shared soft shadow
+  (`SOFT_SHADOW`), each drawn on a fixed canvas scaled to fit (`FitCanvas`, capped at the canvas
+  width and centred). Invoices: an upright stamped, initialled tax invoice beside the extracted
+  fields — hovering a field highlights its exact spot on the paper (measured via `data-hl`
+  offsets, auto-cycles when idle) — plus a compliance checks card (GSTIN checksum, tax maths,
+  duplicate) and the balanced Tally purchase voucher (42,000 + 3,780 + 3,780 = 49,560). Bank statements: a statement-of-account page under
+  Verax's parsed rows; hovering a row highlights its source line. Purchase registers: a real
+  spreadsheet (quiet white title bar with brand-coloured switch, formula bar, column letters, TOTAL + CANCELLED rows) with a "Clean with
+  Verax" switch mirroring `register_cleaner_service.py`. GST data: the GSTR-2B reconciliation
+  screen with filter chips (Matched / Value differs / Not in 2B) that re-sort the table and an
+  Export to Excel control. Statement and reconciliation belong to Mehta Packaging Pvt. Ltd. —
+  the buyer on the hero invoice — so the page reads as one firm's books; all GSTINs are
+  checksum-valid and figures reconcile (e.g. Sharma 12,500 + 2,250 = 14,750).
+- `VeraxEngine.jsx` — **rebuilt again 2026-09-23** (the dark node-diagram version read as
+  AI-generated): one light, high-fidelity Verax window in the hero's glass bezel on the dark
+  band, following one invoice (acme-inv-0417.pdf, client Mehta Packaging) through the pipeline.
+  **Scroll-driven**: a 300vh container with a sticky viewport; the reader's scroll adds events
+  to a newest-first Stripe-style activity timeline (uploaded via secure link 11:48:02 PM →
+  queued → text read → fields extracted 0.87 → GSTIN verified → tax maths → GSTR-2B match next
+  morning → admin approval → exported to Tally) while the invoice reacts (scan + word boxes,
+  check pins, GSTR-2B tag, "Voucher created" stamp) and the header status badge advances;
+  scrolling back rewinds it. The window scales to fill the pinned viewport (up to 1.3×). The
+  earlier 01–06 stage row was removed at the user's request. Reduced motion: unpinned, finished
+  state shown still.
+- `ClientWorkflow.jsx` — client phone on the magic-link upload page → pulsing Verax hub → firm's
+  March-close queue (counters match the illustrative 207 / 9).
+- `Outcomes.jsx` — six Mercury tinted feature cards, each with one animated object (auto-filling
+  fields, compliance toggles, 11:48 PM upload, progress ring, scrolling audit log, clients-vs-
+  retyping chart), then the "In the product today" capability index. No numbers claimed.
+- `ClosingCTA.jsx` — Mercury-style dark close with a breathing glow, gradient headline, the demo
+  form and two arrow cards. Still reused by `/features`, `/pricing`, `/about`, `/security`.
+- **Content fix (2026-09-23):** the demo GSTIN `27AABCA1234A1Z5` used across the marketing surface
+  (and `AuthPanel`) failed the standard GSTIN checksum — Verax's own `compliance.service.js`
+  would flag it — while the page showed it passing. Replaced everywhere with the checksum-valid
+  `27AABCA1234A1ZJ`.
 Chrome: `LandingNav.jsx` (retuned to `carbon`; nav items now How it works / Documents / Security /
 Pricing — every one resolves to a real anchor or route, replacing the Solutions/Resources
 placeholders), `LandingFooter.jsx` (rebuilt: Product / Company / Get started columns, all links
-real). `DemoRequestForm.jsx` gained a third `tone="onDark"` variant for the closing CTA — the two
+real). **2026-09-23 (rebuilt):** `LandingNav` now has Stripe-style morphing dropdowns — one
+floating panel that glides and resizes between "Product" (Coverage, How it works, Client
+workflow, What changes + a featured "Every feature" card → /features) and "Solutions" (For CA
+firms → /features, For their clients → /client-portal/login, About → /about), with a caret
+tracking the trigger; hover / click / ArrowDown / Escape supported. Plain links: Security,
+Pricing. Transparent at the top of the page, frosted glass once scrolled; Stripe hover-arrow on
+"Book a demo"; mobile full-screen sheet with accordion groups and pinned Log in / Book a demo.
+Every destination is a real anchor or route. It still listens for `vx-theme` and turns dark (translucent
+carbon, light logo) while a dark section holds the viewport — pages without `ThemeCanvas` never
+fire the event and stay light. **2026-09-23 (nav polish):** a hover pill (shared `layoutId`
+"vx-nav-pill") glides between the centre items and rests on an open menu's trigger; each dropdown
+panel gained a Stripe-style footer strip (Product: "Questions? verax.hello@gmail.com" + "See pricing ›";
+Solutions: "Clients upload from a link — no login." + "Book a demo ›"), panel heights 344 / 286.
+`LandingFooter` gained a `dark` prop, used only by the homepage. **Rebuilt 2026-09-23** after
+Mercury / Stripe / Ramp: a top band (logo, "Financial documents in. Tally-ready data out." line,
+"Write to us" email, "Book a demo ›"), then four link columns with Stripe's dashed rules and stacked
+groups — Product (Coverage, How it works, Client workflow, What changes, All features, Pricing),
+Solutions + Trust (For CA firms, For their clients; Security & data isolation), Company (About,
+Contact, Book a demo), Account (Create an account, Client portal, Forgot password, "Log in ›") —
+Mercury-style sentence-case muted headings over larger links; a legal row (© 2026 Verax, Privacy →
+/privacy, Terms → /terms, Back to top; the "Made in India" flag was removed); and an oversized
+"verax" wordmark bleeding off the bottom edge, lit by a cursor-following brand-gradient spotlight
+(CSS variables only). Light and dark tones share one token map (`tones()`). `DemoRequestForm.jsx` gained a third `tone="onDark"` variant for the closing CTA — the two
 pre-existing tones are both light-ground and failed contrast on carbon.
 Removed deliberately: the fabricated "Trusted by CA firms across India" avatar row and city
 trust-bar (implied customers that don't exist) — replaced by `ProofBand`, which says the product
 is in its founding-customer phase and lists verifiable capabilities instead. The WhatsApp roadmap
 section was also dropped from the homepage; the feature is still unbuilt.
 Notes: The demo CTA still posts to the existing public `POST /api/waitlist/join`, Gmail addresses
-only — no API change was made for the redesign. Footer "Privacy"/"Terms" still render as plain
-text because those routes still don't exist.
+only — no API change was made for the redesign. Footer "Privacy"/"Terms" now link to the
+`/privacy` and `/terms` pages (2026-09-23).
 Dead code (verified by grep, 2026-08-09 — zero importers each): `HeroVisual.jsx` (already unused
 before this pass), and, as a result of the `HomePage` rewrite, `WorkflowStrip.jsx`,
 `FlowSteps.jsx`, `primitives.jsx`, `mockups/LedgerMockup.jsx`, `mockups/ReconMockup.jsx` and
 `mockups/PortalMockup.jsx`. All are safe to delete; they were left in place rather than removed in
-the same pass as the redesign so the deletion is a reviewable change on its own. Still live:
-`mockups/ReviewMockup.jsx` (its one consumer is now `ReviewExperience`) and
-`mockups/InvoiceDocument.jsx` + `mockups/MockupFrame.jsx`, which it depends on.
+the same pass as the redesign so the deletion is a reviewable change on its own. **As of 2026-09-23** `ReviewExperience` no longer uses
+`mockups/ReviewMockup.jsx`, so it has zero importers too (verified by grep); check
+`mockups/InvoiceDocument.jsx` / `mockups/MockupFrame.jsx` for other consumers before deleting them
+with it. `DocumentFlowVisual.jsx` is likewise dead.
+
+### Legal pages (`/privacy`, `/terms`)
+Status: ⚠️ Partial — built and linked, but the text has not had legal review
+Frontend: `components/legal/LegalDocument.jsx` (shared Stripe-style layout inside `PublicLayout`:
+"Legal" kicker, title, last-updated date, Privacy/Terms switcher, sticky numbered "On this page"
+contents with IntersectionObserver scroll-spy, numbered anchor-linkable sections, contact card;
+exports the `P` / `List` / `Strong` / `Mail` prose atoms), `pages/PrivacyPage.jsx`,
+`pages/TermsPage.jsx`. Routes `/privacy` and `/terms` in `App.jsx`, lazy-loaded. Linked from the
+footer's legal row.
+Notes: Content is written against what the code actually does — per-firm RLS isolation; files in
+AWS S3; document text sent to Groq for extraction; email via Resend/SMTP; GSTIN/GSTR-2B via a GST
+Suvidha Provider; Sentry error reports; a single httpOnly session cookie and no analytics or
+tracking cookies; soft deletes (permanent erasure on request). Privacy cites India's DPDP Act,
+2023 rights and the Data Protection Board; Terms covers accounts, data ownership, the
+review-before-export responsibility, acceptable use, fees (see /pricing), liability capped at 12
+months' fees, a 30-day post-closure export window and Indian governing law. **Missing before ✅:**
+review by a lawyer, the registered legal entity name and address, a grievance officer if required,
+and a decision on the stated retention/export periods. No backend involved; no migration needed.
+Scroll-spy could not be exercised in the automation browser (hidden tab pauses IntersectionObserver).
 
 ### Secondary marketing pages (`/features`, `/pricing`, `/about`, `/security`)
-Status: ⚠️ Partial → ✅ Production Ready (migrated to V2 + content-fixed, 2026-09-21)
+Status: ✅ Production Ready — **rebuilt again on V3 2026-09-23** (see "Public pages unified on the
+V3 system" above; the V2 description below is history).
 Frontend: `components/layout/PublicLayout.jsx` (unchanged this pass, already V2 chrome — `LandingNav` +
 `children` + `LandingFooter`). All four page bodies rewritten onto the V2 "Ledger" system:
 `ledger.jsx`'s `Section`/`SectionHead`/`Eyebrow`/`Field`/`Tick`/`Caret`/`Rail`, the `carbon`/`canvas`/
@@ -978,7 +1230,8 @@ illegible) with its two blurred accent-colour orbs removed — the V1 brief rule
 explicitly, and the panel didn't need them once it had a real dark background of its own.
 
 ### Magic-link upload pages
-Status: ⚠️ Partial → ✅ Production Ready (fixed 2026-09-21)
+Status: ✅ Production Ready — **restyled on V3 2026-09-23** (see "Public pages unified on the V3
+system" above); the 2026-09-21 notes below are history.
 Frontend: `pages/PublicUploadPage.jsx`, `pages/PublicUploadStatusPage.jsx`.
 Notes: These pages render on the light canvas via their shared `PublicPageShell` (`hairline`/`zinc`/
 `indigo` tokens all retuned for V1). **Fixed 2026-09-21:** both files still had literal

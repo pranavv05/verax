@@ -124,7 +124,7 @@ const InvoiceDocument = ({ className = "" }) => (
         <p>
           GSTIN:{" "}
           <span data-vx-field="gstin" className="vx-doc-field font-semibold text-[#1C1B18]">
-            27AABCA1234A1Z5
+            27AABCA1234A1ZJ
           </span>
         </p>
         <p>

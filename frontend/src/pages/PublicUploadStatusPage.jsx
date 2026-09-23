@@ -6,6 +6,7 @@ import { parseApiError } from "../lib/utils";
 import PublicPageShell from "../components/public/PublicPageShell";
 import FileTypeIcon, { fileExtension } from "../components/public/FileTypeIcon";
 import { EASE } from "../components/public/motion";
+import { HoverArrow } from "../components/marketing/Cta";
 
 const DOC_TYPE_LABELS = {
   invoice: "Invoice",
@@ -18,16 +19,16 @@ const DOC_TYPE_LABELS = {
 const STATUS_ORDER = ["Received", "Processing", "Under Review", "Complete"];
 
 const STATUS_STYLES = {
-  Received: "bg-well text-zinc-300",
-  Processing: "bg-amber-500/15 text-amber-300",
-  "Under Review": "bg-indigo-500/15 text-indigo-300",
-  Complete: "bg-verify-500/15 text-verify-300"
+  Received: "bg-carbon-900/[0.05] text-carbon-600",
+  Processing: "bg-amber-500/12 text-amber-700",
+  "Under Review": "bg-brand-500/10 text-brand-700",
+  Complete: "bg-verify-500/10 text-verify-700"
 };
 
 const STATUS_BAR = {
-  Received: "bg-zinc-500",
+  Received: "bg-carbon-400",
   Processing: "bg-amber-500",
-  "Under Review": "bg-indigo-500",
+  "Under Review": "bg-brand-500",
   Complete: "bg-verify-500"
 };
 
@@ -35,7 +36,7 @@ const STATUS_BLURB = {
   Received: "We have your file. It's queued for processing.",
   Processing: "Reading the document and pulling out the figures.",
   "Under Review": "Your accountant is checking this one.",
-  Complete: "Done and posted to your accounts."
+  Complete: "Done — your accountant has exported it for Tally."
 };
 
 const relativeTime = (value) => {
@@ -57,7 +58,7 @@ const StatusTrack = ({ status }) => {
   return (
     <div className="mt-3 flex items-center gap-1.5" aria-hidden="true">
       {STATUS_ORDER.map((step, index) => (
-        <div key={step} className="h-1 flex-1 overflow-hidden rounded-full bg-hairline-strong">
+        <div key={step} className="h-1 flex-1 overflow-hidden rounded-full bg-carbon-900/[0.07]">
           <motion.div
             className={`h-full rounded-full ${STATUS_BAR[status] || STATUS_BAR.Received}`}
             initial={{ scaleX: 0 }}
@@ -81,10 +82,7 @@ const PublicUploadStatusPage = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   const hasActiveDocuments = useMemo(
-    () =>
-      (data?.documents || []).some((document) =>
-        ["Received", "Processing"].includes(document.status)
-      ),
+    () => (data?.documents || []).some((document) => ["Received", "Processing"].includes(document.status)),
     [data]
   );
 
@@ -139,21 +137,22 @@ const PublicUploadStatusPage = () => {
   return (
     <PublicPageShell badge={data?.firmName || "Document status"}>
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={reduced ? false : { opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: EASE }}
+        transition={{ duration: 0.6, ease: EASE }}
       >
         <header>
-          <h1 className="text-2xl font-bold leading-tight tracking-[-0.03em] text-zinc-100 sm:text-3xl">
+          <h1 className="font-inter text-[clamp(1.75rem,4vw,2.375rem)] font-normal leading-[1.14] tracking-[-0.03em] text-carbon-900">
             Your document status
           </h1>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-500 sm:text-base">
+          <p className="mt-3 max-w-[34rem] text-[1rem] leading-[1.65] text-carbon-500">
             {data?.firmName
               ? `Everything you've sent to ${data.firmName}, and where each file has got to.`
               : "Everything you've sent to your CA firm, and where each file has got to."}
           </p>
           {data?.clientName ? (
-            <span className="mt-4 inline-flex items-center gap-2 rounded-full border border-hairline bg-well px-3 py-1.5 text-xs font-semibold text-zinc-300">
+            <span className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3.5 py-1.5 text-[13px] font-medium text-carbon-700 shadow-[0_8px_24px_-18px_rgba(38,30,110,0.5)] backdrop-blur">
+              <span className="h-1.5 w-1.5 rounded-full bg-verify-500" />
               {data.clientName}
             </span>
           ) : null}
@@ -161,17 +160,17 @@ const PublicUploadStatusPage = () => {
 
         {/* ── loading skeleton ─────────────────────────────────────────── */}
         {loading ? (
-          <div className="mt-7 space-y-3">
+          <div className="mt-8 space-y-2.5" role="status" aria-live="polite">
             {[0, 1, 2].map((index) => (
-              <div key={index} className="rounded-2xl border border-hairline bg-surface p-4">
+              <div key={index} className="rounded-2xl border border-carbon-900/[0.07] bg-white p-4">
                 <div className="flex items-center gap-3">
-                  <div className="h-9 w-7 animate-pulse rounded-md bg-hairline-strong" />
+                  <div className="h-9 w-7 animate-pulse rounded-md bg-carbon-900/[0.06]" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-4 w-2/5 animate-pulse rounded bg-hairline-strong" />
-                    <div className="h-3 w-1/4 animate-pulse rounded bg-hairline-strong" />
+                    <div className="h-4 w-2/5 animate-pulse rounded bg-carbon-900/[0.06]" />
+                    <div className="h-3 w-1/4 animate-pulse rounded bg-carbon-900/[0.04]" />
                   </div>
                 </div>
-                <div className="mt-3 h-1 w-full animate-pulse rounded-full bg-hairline-strong" />
+                <div className="mt-3 h-1 w-full animate-pulse rounded-full bg-carbon-900/[0.05]" />
               </div>
             ))}
             <span className="sr-only">Loading your document status…</span>
@@ -180,53 +179,74 @@ const PublicUploadStatusPage = () => {
 
         {/* ── error ────────────────────────────────────────────────────── */}
         {!loading && error ? (
-          <div className="mt-7 rounded-2xl border border-red-500/20 bg-surface p-7 text-center">
-            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/15 text-red-400">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7.5v5.5M12 16.2v.3" />
-              </svg>
-            </span>
-            <p className="mt-4 text-sm font-medium text-zinc-200">{error}</p>
-            <button
-              type="button"
-              onClick={() => loadStatus({ showLoading: true })}
-              className="vx-btn-secondary mt-5 px-5 py-2.5 text-sm"
-            >
-              Try again
-            </button>
+          <div className="mt-8 overflow-hidden rounded-[22px] border border-carbon-900/[0.07] bg-white text-center shadow-[0_1px_2px_rgba(14,16,19,0.04),0_30px_70px_-45px_rgba(38,30,110,0.35)]">
+            <div className="px-7 py-9">
+              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7.5v5.5M12 16.2v.3" />
+                </svg>
+              </span>
+              <p className="mt-4 text-[0.9375rem] text-carbon-700">{error}</p>
+              <button
+                type="button"
+                onClick={() => loadStatus({ showLoading: true })}
+                className="mt-6 inline-flex h-10 items-center rounded-full border border-carbon-900/10 bg-white px-5 text-[14px] font-medium text-carbon-900 transition-colors hover:border-carbon-900/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                Try again
+              </button>
+            </div>
           </div>
         ) : null}
 
         {/* ── data ─────────────────────────────────────────────────────── */}
         {!loading && !error && data ? (
           <>
-            {/* Celebration when every document is finished */}
+            {/* When every document is finished */}
             <AnimatePresence>
               {allComplete ? (
                 <motion.div
-                  initial={{ opacity: 0, y: 12 }}
+                  initial={reduced ? false : { opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.5, ease: EASE }}
-                  className="mt-7 overflow-hidden rounded-2xl border border-verify-500/20 bg-verify-500/[0.06] p-6 text-center"
+                  className="mt-8 overflow-hidden rounded-[22px] border border-verify-500/20 bg-white p-7 text-center shadow-[0_30px_70px_-45px_rgba(20,184,166,0.45)]"
                 >
                   <motion.span
                     initial={reduced ? false : { opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ duration: 0.5, ease: EASE, delay: 0.12 }}
-                    className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-verify-500 text-[#04231F] shadow-[0_12px_30px_-10px_rgba(20,184,166,0.8)]"
+                    className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-verify-500 to-sky-500 text-white shadow-[0_12px_30px_-10px_rgba(20,184,166,0.8)]"
                   >
-                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      width="26"
+                      height="26"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
                       <path d="m5 12.5 4.5 4.5L19 7.5" />
                     </svg>
                   </motion.span>
-                  <h2 className="mt-4 text-xl font-bold tracking-[-0.02em] text-zinc-100">
+                  <h2 className="mt-4 font-inter text-[1.375rem] font-normal tracking-[-0.02em] text-carbon-900">
                     All done
                   </h2>
-                  <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-zinc-500">
-                    Every document you sent has been processed and posted. Nothing left for
-                    you to do.
+                  <p className="mx-auto mt-2 max-w-sm text-[0.9375rem] leading-[1.6] text-carbon-500">
+                    Every document you sent has been processed and exported for Tally by your accountant. Nothing left
+                    for you to do.
                   </p>
                 </motion.div>
               ) : null}
@@ -234,16 +254,19 @@ const PublicUploadStatusPage = () => {
 
             {/* Summary strip */}
             {data.documents.length > 0 ? (
-              <div className="mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                {counts.map(({ status, count }) => (
+              <div className="mt-8 grid grid-cols-2 overflow-hidden rounded-2xl border border-carbon-900/[0.07] bg-white sm:grid-cols-4">
+                {counts.map(({ status, count }, index) => (
                   <div
                     key={status}
-                    className="rounded-xl border border-hairline bg-surface px-3.5 py-3"
+                    className={`px-4 py-3.5 ${index % 2 === 1 ? "border-l" : ""} ${index >= 2 ? "border-t sm:border-t-0" : ""} ${
+                      index === 2 ? "sm:border-l" : ""
+                    } border-carbon-900/[0.06]`}
                   >
-                    <p className="text-xl font-bold tracking-[-0.03em] text-zinc-100">
+                    <p className="font-inter text-[1.5rem] font-semibold tabular-nums tracking-[-0.03em] text-carbon-900">
                       {count}
                     </p>
-                    <p className="mt-0.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-zinc-600">
+                    <p className="mt-0.5 flex items-center gap-1.5 text-[12px] font-medium text-carbon-500">
+                      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_BAR[status]}`} />
                       {status}
                     </p>
                   </div>
@@ -253,36 +276,39 @@ const PublicUploadStatusPage = () => {
 
             {/* Documents */}
             {data.documents.length === 0 ? (
-              <div className="mt-6 rounded-2xl border border-dashed border-hairline bg-surface px-6 py-12 text-center">
-                <p className="text-base font-semibold text-zinc-200">No documents yet</p>
-                <p className="mx-auto mt-2 max-w-sm text-sm text-zinc-500">
-                  Once you upload something through your link, it will show up here with its
-                  progress.
+              <div className="mt-8 rounded-[22px] border border-dashed border-carbon-900/[0.12] bg-white/60 px-6 py-12 text-center">
+                <p className="text-[1rem] font-medium text-carbon-900">No documents yet</p>
+                <p className="mx-auto mt-2 max-w-sm text-[0.875rem] text-carbon-500">
+                  Once you upload something through your link, it will show up here with its progress.
                 </p>
-                <Link to={`/upload/${token}`} className="vx-btn-primary mt-5 px-5 py-2.5 text-sm">
+                <Link
+                  to={`/upload/${token}`}
+                  className="group mt-6 inline-flex h-10 items-center rounded-full bg-brand-500 px-5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(38,30,110,0.3),inset_0_1px_0_rgba(255,255,255,0.18)] transition-colors hover:bg-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+                >
                   Upload documents
+                  <HoverArrow />
                 </Link>
               </div>
             ) : (
-              <ul className="mt-3 space-y-2.5">
+              <ul className="mt-3 space-y-2">
                 {data.documents.map((document, index) => (
                   <motion.li
                     key={document.id}
-                    initial={{ opacity: 0, y: 14 }}
+                    initial={reduced ? false : { opacity: 0, y: 14 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.4, ease: EASE, delay: Math.min(index * 0.06, 0.4) }}
-                    className="rounded-2xl border border-hairline bg-surface p-4"
+                    className="rounded-2xl border border-carbon-900/[0.07] bg-white p-4 shadow-[0_1px_2px_rgba(14,16,19,0.03)]"
                   >
                     <div className="flex items-start gap-3">
                       <FileTypeIcon extension={fileExtension(document.fileName)} size={26} />
 
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
-                          <h2 className="min-w-0 flex-1 truncate text-sm font-bold text-zinc-100">
+                          <h2 className="min-w-0 flex-1 truncate text-[0.875rem] font-medium text-carbon-900">
                             {document.fileName}
                           </h2>
                           <span
-                            className={`inline-flex flex-none items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold ${
+                            className={`inline-flex flex-none items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11.5px] font-medium ${
                               STATUS_STYLES[document.status] || STATUS_STYLES.Received
                             }`}
                           >
@@ -290,16 +316,22 @@ const PublicUploadStatusPage = () => {
                               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
                             ) : null}
                             {document.status === "Complete" ? (
-                              <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                                <path d="M2.5 6.2 4.8 8.5 9.5 3.8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                                <path
+                                  d="M2.5 6.2 4.8 8.5 9.5 3.8"
+                                  stroke="currentColor"
+                                  strokeWidth="2.2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
                               </svg>
                             ) : null}
                             {document.status}
                           </span>
                         </div>
 
-                        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-600">
-                          <span className="font-medium text-zinc-400">
+                        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-carbon-400">
+                          <span className="font-medium text-carbon-600">
                             {DOC_TYPE_LABELS[document.documentType] || "Other"}
                           </span>
                           <span aria-hidden="true">·</span>
@@ -310,7 +342,7 @@ const PublicUploadStatusPage = () => {
 
                         <StatusTrack status={document.status} />
 
-                        <p className="mt-2 text-xs text-zinc-500">
+                        <p className="mt-2 text-[12px] text-carbon-500">
                           {STATUS_BLURB[document.status] || STATUS_BLURB.Received}
                         </p>
                       </div>
@@ -322,17 +354,18 @@ const PublicUploadStatusPage = () => {
 
             {/* Auto-refresh indicator */}
             {lastUpdatedAt ? (
-              <div className="mt-6 flex items-center justify-center gap-2 text-xs text-zinc-600">
+              <div className="mt-6 flex items-center justify-center gap-2 text-[12px] text-carbon-400">
                 {hasActiveDocuments ? (
                   <>
                     <motion.span
-                      className="h-3 w-3 rounded-full border-2 border-indigo-500 border-t-transparent"
+                      aria-hidden="true"
+                      className="h-3 w-3 rounded-full border-2 border-brand-500 border-t-transparent"
                       animate={reduced ? undefined : { rotate: 360 }}
                       transition={{ duration: 1, ease: "linear", repeat: Infinity }}
                     />
                     <span>
                       {refreshing ? "Checking for updates…" : "Updating automatically every 15 seconds"}
-                      <span className="mx-1.5 text-zinc-700">·</span>
+                      <span className="mx-1.5 text-carbon-300">·</span>
                       last checked {relativeTime(lastUpdatedAt)}
                     </span>
                   </>
@@ -342,12 +375,13 @@ const PublicUploadStatusPage = () => {
               </div>
             ) : null}
 
-            <div className="mt-4 text-center">
+            <div className="mt-5 text-center">
               <Link
                 to={`/upload/${token}`}
-                className="text-sm font-semibold text-indigo-400 underline-offset-4 transition hover:text-indigo-300 hover:underline"
+                className="group inline-flex items-center rounded text-[0.875rem] font-medium text-brand-600 transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 Upload more documents
+                <HoverArrow />
               </Link>
             </div>
           </>

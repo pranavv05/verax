@@ -1,37 +1,71 @@
+import { Link } from "react-router-dom";
 import VeraxLogo from "../brand/VeraxLogo";
 
 /**
- * Chrome for the unauthenticated magic-link pages (upload + status).
+ * Chrome for the unauthenticated magic-link pages (upload + status), in the
+ * homepage's light (DESIGN_SYSTEM.md): the ivory canvas with its soft light
+ * sources, a frosted header, and a quiet footer.
  *
  * These are opened by SME clients — usually on a phone, often from a WhatsApp
  * link — so the header stays minimal and the content column is narrow.
  */
-const PublicPageShell = ({ children, badge, maxWidth = "max-w-3xl" }) => (
-  <div className="vx-page flex min-h-screen flex-col">
-    <header className="sticky top-0 z-40 border-b border-hairline bg-surface/85 backdrop-blur-xl">
+
+const FIELD = [
+  "radial-gradient(55% 35% at 12% 0%, rgba(102,87,217,0.13), transparent 70%)",
+  "radial-gradient(45% 35% at 90% 0%, rgba(77,141,255,0.13), transparent 70%)",
+  "radial-gradient(40% 30% at 85% 100%, rgba(20,184,166,0.08), transparent 70%)"
+].join(",");
+
+const footLink =
+  "rounded transition-colors hover:text-carbon-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500";
+
+const PublicPageShell = ({ children, badge, maxWidth = "max-w-2xl" }) => (
+  <div className="relative flex min-h-screen flex-col bg-canvas font-inter text-carbon-900 antialiased">
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: FIELD }} />
+
+    <header className="sticky top-0 z-40 border-b border-carbon-900/[0.06] bg-[#F7F6F2]/80 backdrop-blur-xl">
       <div className={`mx-auto flex ${maxWidth} items-center justify-between gap-4 px-5 py-3.5 sm:px-6`}>
-        <VeraxLogo size={30} />
+        <VeraxLogo size={26} />
         {badge ? (
-          <span className="hidden rounded-full border border-hairline bg-black/[0.02] px-3 py-1 text-[0.7rem] font-medium uppercase tracking-[0.08em] text-zinc-500 sm:inline-flex">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/80 bg-white/70 px-3 py-1 text-[12px] font-medium text-carbon-600 backdrop-blur">
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden="true"
+            >
+              <rect x="4" y="9" width="12" height="8.5" rx="2" />
+              <path d="M7 9V6.5a3 3 0 0 1 6 0V9" />
+            </svg>
             {badge}
           </span>
         ) : null}
       </div>
     </header>
 
-    <main className={`mx-auto w-full flex-1 ${maxWidth} px-5 py-8 sm:px-6 sm:py-12`}>{children}</main>
+    <main className={`relative mx-auto w-full flex-1 ${maxWidth} px-5 py-9 sm:px-6 sm:py-14`}>{children}</main>
 
-    <footer className="border-t border-hairline bg-surface">
-      <div className={`mx-auto flex ${maxWidth} flex-col items-center gap-2 px-5 py-6 text-center sm:flex-row sm:justify-between sm:text-left`}>
-        <p className="text-xs text-zinc-500">
-          Secured by Verax · Your documents are encrypted in transit and at rest.
+    <footer className="relative border-t border-carbon-900/[0.06]">
+      <div
+        className={`mx-auto flex ${maxWidth} flex-col items-center gap-3 px-5 py-6 text-center text-[12.5px] text-carbon-400 sm:flex-row sm:justify-between sm:px-6 sm:text-left`}
+      >
+        <p>Secured by Verax · files go straight to private, per-firm storage.</p>
+        <p className="flex items-center gap-3">
+          <Link to="/privacy" className={footLink}>
+            Privacy
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link to="/terms" className={footLink}>
+            Terms
+          </Link>
+          <span aria-hidden="true">·</span>
+          <a className={footLink} href="mailto:verax.hello@gmail.com">
+            Need help?
+          </a>
         </p>
-        <a
-          className="text-xs font-semibold text-zinc-400 underline-offset-2 hover:text-zinc-100 hover:underline"
-          href="mailto:verax.hello@gmail.com"
-        >
-          Need help?
-        </a>
       </div>
     </footer>
   </div>

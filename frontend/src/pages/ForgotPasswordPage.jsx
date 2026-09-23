@@ -1,12 +1,50 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { authApi } from "../api/auth-api";
 import { parseApiError } from "../lib/utils";
+import AuthLayout, {
+  AuthButton,
+  AuthCard,
+  AuthError,
+  AuthHeading,
+  AuthLink,
+  AuthNotice
+} from "../components/auth/AuthLayout";
+import AuthField from "../components/auth/AuthField";
+import { EASE } from "../components/public/motion";
+
+/**
+ * Forgot password — on the shared auth card (components/auth/AuthLayout).
+ *
+ * Visual layer only: the schema, `authApi.forgotPassword`, the server's
+ * message and the development-only reset link are exactly as before. The
+ * 15-minute, single-use expiry in the subtitle matches
+ * PASSWORD_RESET_TOKEN_TTL_MINUTES and the `used_at` check in auth.service.js.
+ */
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Enter a valid email address")
 });
+
+const Reveal = ({ show, children }) => {
+  const reduced = useReducedMotion();
+  return (
+    <AnimatePresence initial={false}>
+      {show ? (
+        <motion.div
+          initial={reduced ? false : { opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.25, ease: EASE }}
+          className="overflow-hidden"
+        >
+          {children}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+};
 
 const ForgotPasswordPage = () => {
   const [email, setEmail] = useState("");
@@ -17,6 +55,7 @@ const ForgotPasswordPage = () => {
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    if (loading) return;
     setError("");
     setMessage("");
     setDevResetLink("");
@@ -31,8 +70,7 @@ const ForgotPasswordPage = () => {
     try {
       const result = await authApi.forgotPassword(validation.data);
       setMessage(
-        result?.message ||
-          "If an account exists for that email, a password reset link will be available shortly."
+        result?.message || "If an account exists for that email, a password reset link will be available shortly."
       );
       if (result?.devResetLink) {
         setDevResetLink(result.devResetLink);
@@ -45,66 +83,59 @@ const ForgotPasswordPage = () => {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-4 py-12 sm:px-6">
-      <section className="panel p-6 sm:p-8">
-        <Link to="/" className="inline-block rounded-xl bg-ink-900 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-100">
-          Verax
-        </Link>
-        <h1 className="mt-6 text-2xl font-extrabold text-ink-900">Reset your password</h1>
-        <p className="mt-1 text-sm text-ink-500">
-          Enter your account email. Reset links expire in 15 minutes and can be used once.
-        </p>
+    <AuthLayout topLink={{ to: "/login", label: "Log in" }}>
+      <AuthCard
+        footer={
+          <p className="text-[13px] text-carbon-500">
+            Remembered it? <AuthLink to="/login">Back to log in</AuthLink>
+          </p>
+        }
+      >
+        <AuthHeading
+          title="Reset your password"
+          subtitle="Enter your account email. Reset links expire in 15 minutes and can be used once."
+        />
 
-        <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-          <div>
-            <label className="label" htmlFor="reset-email">
-              Email
-            </label>
-            <input
-              id="reset-email"
-              className="field"
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="owner@firm.in"
-            />
-          </div>
+        <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
+          <AuthField
+            id="reset-email"
+            label="Work email"
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            autoFocus
+            value={email}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              if (error) setError("");
+            }}
+          />
 
-          {error ? (
-            <div className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
-              {error}
-            </div>
-          ) : null}
+          <Reveal show={Boolean(error)}>
+            <AuthError>{error}</AuthError>
+          </Reveal>
 
-          {message ? (
-            <div className="rounded-xl border border-mint-500/30 bg-mint-500/10 px-3 py-2 text-sm font-medium text-mint-700">
-              {message}
-            </div>
-          ) : null}
+          <Reveal show={Boolean(message)}>
+            <AuthNotice tone="success">{message}</AuthNotice>
+          </Reveal>
 
-          {devResetLink ? (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+          <Reveal show={Boolean(devResetLink)}>
+            <AuthNotice tone="dev">
               Development reset link:{" "}
-              <a className="underline" href={devResetLink}>
+              <a className="underline underline-offset-2" href={devResetLink}>
                 {devResetLink}
               </a>
-            </div>
-          ) : null}
+            </AuthNotice>
+          </Reveal>
 
-          <button type="submit" disabled={loading} className="btn-primary w-full py-2.5 text-sm">
-            {loading ? "Sending reset link..." : "Send reset link"}
-          </button>
+          <div className="pt-2">
+            <AuthButton loading={loading} loadingLabel="Sending reset link…">
+              Send reset link
+            </AuthButton>
+          </div>
         </form>
-
-        <p className="mt-5 text-center text-sm text-ink-500">
-          Remembered your password?{" "}
-          <Link className="font-semibold text-mint-500 underline transition hover:text-mint-600" to="/login">
-            Back to login
-          </Link>
-        </p>
-      </section>
-    </div>
+      </AuthCard>
+    </AuthLayout>
   );
 };
 

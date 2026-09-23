@@ -22,6 +22,9 @@ export const REVEAL_Y = 40;
 export const REVEAL_DURATION = 0.8;
 
 export const fadeUp = {
+  // No filter here on purpose: animating blur() on large cards is expensive
+  // and Chrome can fail to repaint layered content under it, leaving whole
+  // sections blank or stuck blurred.
   hidden: { opacity: 0, y: REVEAL_Y },
   visible: {
     opacity: 1,

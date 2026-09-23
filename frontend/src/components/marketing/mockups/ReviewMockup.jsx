@@ -16,7 +16,7 @@ const DOC_SCALE = DOC_PANE_WIDTH / INVOICE_WIDTH;
 
 const FIELDS = [
   { label: "Vendor", value: "ACME Trading Co." },
-  { label: "GSTIN", value: "27AABCA1234A1Z5", verified: true },
+  { label: "GSTIN", value: "27AABCA1234A1ZJ", verified: true },
   { label: "Invoice #", value: "INV-2026-0417" },
   { label: "Taxable", value: "₹42,000" },
   { label: "CGST", value: "₹3,780" },

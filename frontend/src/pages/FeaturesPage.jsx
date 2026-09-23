@@ -1,283 +1,643 @@
+import { useEffect, useMemo, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import PublicLayout from "../components/layout/PublicLayout";
 import ClosingCTA from "../components/marketing/ClosingCTA";
-import { Section, SectionHead, Eyebrow, Field, Tick, Caret } from "../components/marketing/ledger";
+import PageHero from "../components/marketing/PageHero";
+import Cta from "../components/marketing/Cta";
+import { Band, Beam, FitCanvas, Kicker } from "../components/marketing/v3";
+import { Caret, Tick } from "../components/marketing/ledger";
 import { Reveal } from "../components/public/motion";
 
-const stats = [
-  { value: "6+", label: "Core modules" },
-  { value: "16", label: "TDS sections supported" },
-  { value: "4", label: "Compliance checks" }
+/**
+ * /features — the product, one module at a time (DESIGN_SYSTEM.md).
+ *
+ * Hero with the six-stage pipeline, a sticky chip bar that follows the reader
+ * (scroll-spy), then one section per module: copy on one side, a drawn
+ * product screen on the other, sitting in the bento's inset well. Every
+ * screen reuses the homepage's books (ACME Trading Co., INV-2026-0417,
+ * ₹49,560; checksum-valid GSTINs) and every bullet is checked against the
+ * code — see FEATURE_STATUS.md.
+ */
+
+const SOFT_SHADOW = "shadow-[0_1px_2px_rgba(14,16,19,0.05),0_14px_34px_-18px_rgba(14,16,19,0.22)]";
+const WINDOW = `overflow-hidden rounded-xl border border-[#E6E5EA] bg-white ${SOFT_SHADOW}`;
+
+const Check = () => (
+  <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full bg-verify-500 text-white">
+    <svg
+      width="8"
+      height="8"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.6"
+      aria-hidden="true"
+    >
+      <path d="M3.5 8.5l3 3 6-7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  </span>
+);
+
+const WindowBar = ({ title, right }) => (
+  <div className="flex items-center justify-between border-b border-[#EFEEF2] px-4 py-2.5">
+    <span className="text-[12px] font-semibold text-carbon-900">{title}</span>
+    {right}
+  </div>
+);
+
+/* ── Screens ────────────────────────────────────────────────────────────── */
+
+const CLIENTS = [
+  { name: "Kumar & Sons", gstin: "27AAACK4410B1Z8", docs: 27, status: "active" },
+  { name: "Sharma Enterprises", gstin: "27AAKFS3321M1ZX", docs: 14, status: "active" },
+  { name: "Patel Hardware", gstin: "24AAHFP9087Q1ZA", docs: 9, status: "pending" },
+  { name: "Shree Balaji Packaging", gstin: "24AAGFS7182K1ZS", docs: 0, status: "inactive" }
 ];
 
-const ClientDirectoryVisual = () => (
-  <div className="rounded-2xl border border-hairline bg-surface p-5">
-    <div className="mb-3 text-sm font-bold text-carbon-900">Client directory</div>
-    {[
-      { name: "M/s ABC Industries", gstin: "27AAAAA0000A1Z5", docs: 14, status: "Active" },
-      { name: "XYZ Traders Pvt Ltd", gstin: "06BBBBB1111B2Y4", docs: 7, status: "Pending" },
-      { name: "PQR Enterprises", gstin: "29CCCCC2222C3Z6", docs: 22, status: "Active" }
-    ].map((c) => (
-      <div key={c.name} className="flex items-center justify-between border-t border-hairline py-2.5 first:border-t-0">
-        <div>
-          <div className="text-sm font-semibold text-carbon-900">{c.name}</div>
-          <div className="vx-mono mt-0.5 text-xs text-carbon-400">{c.gstin}</div>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-carbon-400">{c.docs} docs</span>
-          <span
-            className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-              c.status === "Active" ? "bg-verify-50 text-verify-700" : "bg-amber-50 text-amber-700"
-            }`}
-          >
-            {c.status}
+const CLIENT_STATUS = {
+  active: "bg-verify-500/10 text-verify-700",
+  pending: "bg-amber-500/12 text-amber-700",
+  inactive: "bg-carbon-900/[0.06] text-carbon-500"
+};
+
+const ClientsScreen = () => (
+  <div className="relative h-full w-full p-5">
+    <div className={WINDOW}>
+      <WindowBar
+        title="Clients"
+        right={
+          <span className="flex items-center gap-2 rounded-md border border-[#E4E3E8] px-2 py-1 text-[10.5px] text-carbon-400">
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              aria-hidden="true"
+            >
+              <circle cx="7" cy="7" r="4.5" />
+              <path d="m10.5 10.5 3 3" strokeLinecap="round" />
+            </svg>
+            Search name, email, phone or GSTIN
+          </span>
+        }
+      />
+      <div className="grid grid-cols-[1.6fr_1.3fr_0.6fr_0.8fr] gap-2 bg-[#FAFAFB] px-4 py-1.5 text-[10px] font-medium text-carbon-400">
+        <span>Client</span>
+        <span>GSTIN</span>
+        <span className="text-right">Docs</span>
+        <span className="text-right">Status</span>
+      </div>
+      {CLIENTS.map((client) => (
+        <div
+          key={client.name}
+          className="grid grid-cols-[1.6fr_1.3fr_0.6fr_0.8fr] items-center gap-2 border-t border-[#F2F1F4] px-4 py-2.5 text-[11.5px]"
+        >
+          <span className="truncate font-medium text-carbon-900">{client.name}</span>
+          <span className="vx-mono truncate text-[10.5px] text-carbon-500">{client.gstin}</span>
+          <span className="text-right tabular-nums text-carbon-700">{client.docs}</span>
+          <span className="text-right">
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${CLIENT_STATUS[client.status]}`}
+            >
+              {client.status}
+            </span>
           </span>
         </div>
-      </div>
-    ))}
-  </div>
-);
-
-const ExtractionVisual = () => (
-  <div className="rounded-2xl border border-hairline bg-surface p-5">
-    <div className="mb-3 flex items-center justify-between">
-      <span className="text-sm font-bold text-carbon-900">Extracted fields</span>
-      <span className="rounded-full bg-verify-50 px-2.5 py-0.5 text-xs font-semibold text-verify-700">Confidence 94%</span>
-    </div>
-    <div className="space-y-0">
-      {[
-        { label: "Vendor", value: "ABC Enterprises" },
-        { label: "GSTIN", value: "27AAAAA0000A1Z5" },
-        { label: "Invoice No.", value: "INV-2024-1193" },
-        { label: "Taxable Amt.", value: "₹50,000" },
-        { label: "CGST 9%", value: "₹4,500" },
-        { label: "Total", value: "₹59,000" }
-      ].map((f) => (
-        <Field key={f.label} label={f.label} value={f.value} state="valid" />
       ))}
     </div>
-  </div>
-);
 
-const ComplianceVisual = () => (
-  <div className="rounded-2xl border border-hairline bg-surface p-5">
-    <div className="mb-3 text-sm font-bold text-carbon-900">Compliance report</div>
-    <div className="space-y-2">
-      <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 p-3">
-        <Caret className="mt-0.5 text-red-500" />
-        <div>
-          <div className="text-xs font-bold text-red-700">GSTIN checksum invalid</div>
-          <div className="text-xs text-red-600">27AAAAA0000A1Z5 — last digit mismatch</div>
-        </div>
-      </div>
-      <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3">
-        <Caret className="mt-0.5 text-amber-500" />
-        <div>
-          <div className="text-xs font-bold text-amber-700">Tax math mismatch</div>
-          <div className="text-xs text-amber-600">CGST + SGST = ₹8,900, expected ₹9,000</div>
-        </div>
-      </div>
-      <div className="flex items-start gap-2.5 rounded-lg border border-verify-200 bg-verify-50 p-3">
-        <Tick className="mt-0.5 text-verify-600" />
-        <div>
-          <div className="text-xs font-bold text-verify-700">TDS rate valid</div>
-          <div className="text-xs text-verify-600">194C @ 1% — matches section definition</div>
-        </div>
-      </div>
+    <div
+      className={`absolute bottom-5 right-5 w-[250px] rounded-xl bg-carbon-950 p-3.5 text-white shadow-[0_20px_40px_-12px_rgba(14,16,19,0.55)]`}
+    >
+      <p className="flex items-center gap-2 text-[12px] font-medium">
+        <Check />
+        Upload link copied
+      </p>
+      <p className="mt-1 pl-6 text-[11px] text-carbon-400">Kumar &amp; Sons · expires in 24 hours</p>
     </div>
   </div>
 );
 
-const ExportVisual = () => (
-  <div className="rounded-2xl border border-hairline bg-surface p-5">
-    <div className="mb-3 text-sm font-bold text-carbon-900">Export workspace</div>
-    <div className="mb-3 rounded-lg border border-hairline bg-well p-3">
-      <div className="mb-2 text-xs font-semibold text-carbon-700">Selected documents (3)</div>
-      {["Invoice_ABC_Nov.pdf", "BankStmt_Oct.pdf", "Bill_XYZ.pdf"].map((f) => (
-        <div key={f} className="flex items-center gap-2 py-1 text-xs text-carbon-600">
-          <Tick className="text-verify-600" />
-          {f}
-        </div>
-      ))}
-    </div>
-    <div className="rounded-lg border border-verify-200 bg-verify-50 p-3 text-center">
-      <div className="text-xs font-semibold text-verify-700">Export ready</div>
-      <div className="vx-mono mt-0.5 text-xs text-verify-600">tally_export_nov2024.xml · 14.2 KB</div>
-    </div>
-  </div>
-);
+const FIELDS = [
+  { label: "Supplier", value: "ACME Trading Co.", conf: 0.98 },
+  { label: "GSTIN", value: "27AABCA1234A1ZJ", conf: 0.99, mono: true },
+  { label: "Invoice no.", value: "INV-2026-0417", conf: 0.97 },
+  { label: "Date", value: "17 Mar 2026", conf: 0.96 },
+  { label: "HSN", value: "4819 · 3919", conf: 0.88 },
+  { label: "Taxable", value: "₹42,000.00", conf: 0.95 },
+  { label: "CGST 9%", value: "₹3,780.00", conf: 0.94 },
+  { label: "SGST 9%", value: "₹3,780.00", conf: 0.94 },
+  { label: "Total", value: "₹49,560.00", conf: 0.97 }
+];
 
-const DataToolsVisual = () => (
-  <div className="rounded-2xl border border-hairline bg-surface p-5">
-    <div className="mb-3 text-sm font-bold text-carbon-900">Data tools</div>
-    <div className="space-y-3">
-      <div className="rounded-xl border border-hairline bg-well p-4">
-        <div className="text-sm font-bold text-carbon-900">Register Cleaner</div>
-        <div className="text-xs text-carbon-500">Clean messy GST Excel registers</div>
-      </div>
-      <div className="rounded-xl border border-hairline bg-well p-4">
-        <div className="text-sm font-bold text-carbon-900">Bank Statement → Tally XML</div>
-        <div className="text-xs text-carbon-500">PDF to vouchers, rule-based, no LLM</div>
-      </div>
-    </div>
-  </div>
-);
-
-const AuditVisual = () => (
-  <div className="rounded-2xl border border-hairline bg-surface p-5">
-    <div className="mb-3 text-sm font-bold text-carbon-900">Audit log</div>
-    <div className="space-y-2">
-      {[
-        { action: "extraction_approved", user: "CA Rajesh", time: "2 min ago" },
-        { action: "tally_export_generated", user: "CA Priya", time: "18 min ago" },
-        { action: "document_upload_initiated", user: "Client (magic)", time: "1 hr ago" },
-        { action: "user_invited", user: "CA Rajesh", time: "3 hrs ago" }
-      ].map((entry) => (
-        <div key={entry.action + entry.time} className="flex items-center justify-between rounded-lg border border-hairline bg-well px-3 py-2">
-          <div>
-            <span className="vx-mono rounded bg-surface px-2 py-0.5 text-xs font-semibold text-carbon-700">
-              {entry.action.replace(/_/g, " ")}
+const ExtractionScreen = () => (
+  <div className="relative h-full w-full p-5">
+    <div className={WINDOW}>
+      <WindowBar
+        title="acme-inv-0417.pdf"
+        right={
+          <span className="rounded-full bg-verify-500/10 px-2 py-0.5 text-[10px] font-medium text-verify-700">
+            Extracted
+          </span>
+        }
+      />
+      <ul className="divide-y divide-[#F2F1F4]">
+        {FIELDS.map((field) => (
+          <li key={field.label} className="grid grid-cols-[76px_1fr_86px] items-center gap-3 px-4 py-[7px]">
+            <span className="text-[10.5px] text-carbon-400">{field.label}</span>
+            <span
+              className={`truncate text-[11.5px] font-medium text-carbon-900 ${field.mono ? "vx-mono text-[10.5px]" : ""}`}
+            >
+              {field.value}
             </span>
-            <div className="mt-0.5 text-xs text-carbon-400">{entry.user}</div>
-          </div>
-          <span className="text-xs text-carbon-400">{entry.time}</span>
-        </div>
-      ))}
+            <span className="flex items-center gap-2">
+              <span className="h-1 flex-1 overflow-hidden rounded-full bg-carbon-900/[0.06]">
+                <span
+                  className={`block h-full rounded-full ${field.conf >= 0.9 ? "bg-verify-500" : "bg-amber-500"}`}
+                  style={{ width: `${field.conf * 100}%` }}
+                />
+              </span>
+              <span className="w-7 text-right text-[10px] tabular-nums text-carbon-400">{field.conf.toFixed(2)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   </div>
 );
 
-const features = [
+const CHECKS = [
+  { label: "GSTIN checksum", detail: "27AABCA1234A1ZJ · format, state code, PAN and check digit", ok: true },
+  { label: "Tax maths", detail: "CGST 3,780 + SGST 3,780 = 7,560 · 42,000 + 7,560 = 49,560", ok: true },
+  { label: "GSTR-2B", detail: "Supplier filed it · 2B value 49,560.00 matches your books", ok: true },
+  { label: "Possible duplicate", detail: "Same GSTIN and invoice number as an approved document", ok: false }
+];
+
+const ComplianceScreen = () => (
+  <div className="relative h-full w-full p-5">
+    <div className={WINDOW}>
+      <WindowBar
+        title="Compliance · INV-2026-0417"
+        right={
+          <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+            1 warning
+          </span>
+        }
+      />
+      <ul className="space-y-2 p-3">
+        {CHECKS.map((check) => (
+          <li
+            key={check.label}
+            className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${
+              check.ok ? "border-[#EFEEF2] bg-white" : "border-amber-500/25 bg-amber-500/[0.06]"
+            }`}
+          >
+            {check.ok ? (
+              <span className="mt-px">
+                <Check />
+              </span>
+            ) : (
+              <Caret size={15} className="mt-px text-amber-600" />
+            )}
+            <span className="min-w-0">
+              <span className={`block text-[11.5px] font-medium ${check.ok ? "text-carbon-900" : "text-amber-800"}`}>
+                {check.label}
+              </span>
+              <span className="mt-0.5 block text-[10.5px] leading-[1.45] text-carbon-500">{check.detail}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+);
+
+const ExportScreen = () => (
+  <div className="relative h-full w-full p-5">
+    <div className={WINDOW}>
+      <WindowBar
+        title="Export to Tally · Kumar & Sons"
+        right={<span className="text-[10.5px] text-carbon-400">March 2026</span>}
+      />
+      <div className="space-y-1.5 p-3">
+        {[
+          ["acme-inv-0417.pdf", "Purchase", "49,560.00"],
+          ["hdfc-statement-mar.pdf", "Payment · Receipt", "42 entries"],
+          ["kumar-bill-221.pdf", "Purchase", "3,528.00"]
+        ].map(([file, voucher, amount]) => (
+          <div key={file} className="flex items-center gap-3 rounded-lg bg-[#FAFAFB] px-3 py-2 text-[11px]">
+            <span className="flex h-4 w-4 items-center justify-center rounded-[4px] bg-brand-500 text-white">
+              <svg
+                width="9"
+                height="9"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                aria-hidden="true"
+              >
+                <path d="M3.5 8.5l3 3 6-7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <span className="vx-mono min-w-0 flex-1 truncate text-[10.5px] text-carbon-800">{file}</span>
+            <span className="text-carbon-400">{voucher}</span>
+            <span className="w-[66px] text-right font-medium tabular-nums text-carbon-900">{amount}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mx-3 mb-3 rounded-lg border border-verify-500/25 bg-verify-500/[0.06] px-3 py-2.5">
+        <p className="flex items-center gap-2 text-[11.5px] font-medium text-verify-700">
+          <Check />
+          Balanced — debits equal credits on every voucher
+        </p>
+      </div>
+      <div className="flex items-center justify-between border-t border-[#EFEEF2] bg-[#FAFAFB] px-4 py-2.5">
+        <span className="vx-mono text-[10.5px] text-carbon-500">tally-export-mar-2026.xml</span>
+        <span className="rounded-md bg-carbon-900 px-3 py-1.5 text-[11px] font-medium text-white">Download XML</span>
+      </div>
+    </div>
+  </div>
+);
+
+const ToolsScreen = () => (
+  <div className="relative grid h-full w-full grid-cols-2 gap-3 p-5">
+    <div className={`${WINDOW} flex flex-col`}>
+      <WindowBar title="Register Cleaner" />
+      <div className="flex-1 space-y-1 p-3 text-[10.5px]">
+        {[
+          ["12/3/26", "Sharma Ent.", "12500", false],
+          ["2026-03-14", "Kumar & Sons", "₹ 3,150", false],
+          ["", "TOTAL", "24,050", true],
+          ["16-03-26", "CANCELLED", "-", true]
+        ].map(([date, party, amount, drop]) => (
+          <div
+            key={party}
+            className={`grid grid-cols-[60px_1fr_50px] gap-1.5 rounded px-1.5 py-1 ${
+              drop ? "bg-rose-500/[0.06] text-carbon-400 line-through" : "text-carbon-700"
+            }`}
+          >
+            <span className="truncate">{date || " "}</span>
+            <span className="truncate">{party}</span>
+            <span className="text-right tabular-nums">{amount}</span>
+          </div>
+        ))}
+      </div>
+      <p className="border-t border-[#EFEEF2] bg-[#FAFAFB] px-3 py-2 text-[10.5px] text-carbon-500">
+        2 rows dropped · formats unified
+      </p>
+    </div>
+
+    <div className={`${WINDOW} flex flex-col`}>
+      <WindowBar title="Bank statement → XML" />
+      <div className="flex-1 space-y-1 p-3 text-[10.5px]">
+        {[
+          ["UPI/SWIGGY/ORDER 8812", "Food & Beverage", 0.94],
+          ["UBER INDIA TRIP 0314", "Travel & Conveyance", 0.92],
+          ["AIRTEL BROADBAND MAR", "Utilities", 0.95],
+          ["NEFT-SALARY-MARCH", "Salary", 0.9]
+        ].map(([narration, ledger, conf]) => (
+          <div key={narration} className="rounded bg-[#FAFAFB] px-2 py-1.5">
+            <p className="vx-mono truncate text-[9.5px] text-carbon-500">{narration}</p>
+            <p className="mt-0.5 flex items-center justify-between text-carbon-800">
+              {ledger}
+              <span className="text-[9.5px] tabular-nums text-carbon-400">{conf.toFixed(2)}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+      <p className="border-t border-[#EFEEF2] bg-[#FAFAFB] px-3 py-2 text-[10.5px] text-carbon-500">
+        Suggested ledgers · you confirm
+      </p>
+    </div>
+  </div>
+);
+
+const AUDIT = [
+  { action: "tally_export_generated", who: "Priya · staff", when: "2 min ago" },
+  { action: "extraction_approved", who: "Priya · staff", when: "6 min ago" },
+  { action: "document_upload_confirmed", who: "Kumar & Sons · upload link", when: "1 hr ago" },
+  { action: "client_portal_invite_emailed", who: "Rajesh · admin", when: "Yesterday" }
+];
+
+const AuditScreen = () => (
+  <div className="relative h-full w-full p-5">
+    <div className={WINDOW}>
+      <WindowBar
+        title="Audit log"
+        right={<span className="text-[10.5px] text-carbon-400">Mehta Packaging Pvt. Ltd.</span>}
+      />
+      <ol className="relative px-4 py-3">
+        <span aria-hidden="true" className="absolute bottom-6 left-[23px] top-6 w-px bg-[#E6E5EA]" />
+        {AUDIT.map((entry) => (
+          <li key={entry.action} className="relative flex items-start gap-3 py-2">
+            <span className="relative z-10 mt-1 h-2.5 w-2.5 flex-none rounded-full border-2 border-white bg-brand-500 ring-1 ring-brand-500/30" />
+            <span className="min-w-0 flex-1">
+              <span className="vx-mono block text-[10.5px] text-carbon-900">{entry.action}</span>
+              <span className="text-[10.5px] text-carbon-400">{entry.who}</span>
+            </span>
+            <span className="text-[10.5px] text-carbon-400">{entry.when}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="flex items-center gap-2 border-t border-[#EFEEF2] bg-[#FAFAFB] px-4 py-2.5 text-[10.5px] text-carbon-500">
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          aria-hidden="true"
+        >
+          <rect x="4" y="9" width="12" height="8.5" rx="2" />
+          <path d="M7 9V6.5a3 3 0 0 1 6 0V9" />
+        </svg>
+        Row-level security: only this firm&apos;s records are visible here
+      </div>
+    </div>
+  </div>
+);
+
+/* ── Content ────────────────────────────────────────────────────────────── */
+
+const MODULES = [
   {
-    tag: "Client management",
-    headline: "Every client. Every document. Fully organized.",
-    body: "Build a complete client roster with GSTIN, contact info, and status. Generate secure magic links for document uploads. Track processing and export status per client in real time.",
+    id: "clients",
+    nav: "Clients",
+    kicker: "Client management",
+    title: "Every client, every document,",
+    tint: "in one place.",
+    body: "Keep a roster of your clients with their GSTINs and contact details, send each one a secure upload link, and see where every document stands.",
     points: [
-      "GSTIN stored and validated per client profile",
-      "One-click upload link generation (24-hour expiry, auto-rotate)",
-      "Document summary: total, pending, reviewed, exported counts",
-      "Search and filter across name, email, phone, and GSTIN",
-      "Status tracking: Active, Pending, or Inactive"
+      "GSTIN stored and validated on each client profile",
+      "One-click upload links that expire after 24 hours and rotate after each use",
+      "Per-client counts: total, pending, reviewed and exported",
+      "Search across name, email, phone and GSTIN",
+      "Client status: active, pending or inactive"
     ],
-    visual: <ClientDirectoryVisual />
+    Screen: ClientsScreen
   },
   {
-    tag: "AI extraction",
-    headline: "OCR that actually understands accounting documents.",
-    body: "PaddleOCR (with Tesseract fallback) reads invoices, bills, and bank statements; a Groq LLM turns the text into structured JSON. Not just text — line items, tax breakdowns, account metadata, and transaction tables.",
+    id: "extraction",
+    nav: "Extraction",
+    kicker: "Document reading",
+    title: "OCR that understands",
+    tint: "accounting documents.",
+    body: "PaddleOCR (with Tesseract as a fallback) reads the page; a language model turns the text into structured fields — not just text, but line items, tax and bank transactions.",
     points: [
-      "Invoices: vendor, GSTIN, invoice no., date, line items, HSN codes, CGST/SGST/IGST, TDS",
-      "Bank statements: account details, all transactions with narration, debit/credit/balance",
-      "Bills: same structure as invoices with payable handling",
-      "Handles scanned PDFs, phone photos, and multi-page documents",
-      "Confidence score per document; low-confidence flagged for review"
+      "Invoices and bills: supplier, GSTIN, number, date, line items, HSN, CGST/SGST/IGST and TDS",
+      "Bank statements: account details and every transaction with narration, debit, credit and balance",
+      "Scanned PDFs, phone photos and multi-page documents",
+      "A confidence score on every document; low-confidence ones go to review"
     ],
-    visual: <ExtractionVisual />
+    Screen: ExtractionScreen
   },
   {
-    tag: "Compliance engine",
-    headline: "Catch errors before they reach your client's filing.",
-    body: "Every extraction runs through automatic compliance checks. Errors and warnings appear inline next to the affected field so you know exactly what to fix.",
+    id: "compliance",
+    nav: "Compliance",
+    kicker: "Compliance checks",
+    title: "Catch the errors",
+    tint: "before they reach a filing.",
+    body: "Every extraction runs through automatic checks, and each finding appears next to the field it concerns, so you know exactly what to fix.",
     points: [
-      "GSTIN: 15-char format, state code, PAN pattern, checksum (base-36 weighted algorithm)",
-      "Tax math: CGST + SGST + IGST must equal tax_amount; taxable + tax must equal total",
-      "TDS: rate validated against 16 defined sections (194C, 194J, 194I, 194H and 12 more)",
-      "Duplicate: same vendor GSTIN + invoice number already approved? Warning shown instantly"
+      "GSTIN: format, state code, PAN pattern and check digit",
+      "Tax maths: CGST + SGST + IGST must equal the tax, and taxable + tax must equal the total",
+      "TDS: the rate is checked against 16 sections (194C, 194J, 194I, 194H and more)",
+      "Duplicates: the same supplier GSTIN and invoice number already approved is flagged",
+      "GSTR-2B reconciliation: purchases matched against 2B, with every difference listed and an Excel report"
     ],
-    visual: <ComplianceVisual />
+    Screen: ComplianceScreen
   },
   {
-    tag: "Tally XML export",
-    headline: "One click from reviewed document to TallyPrime.",
-    body: "Select a client, pick documents, generate. The XML is built to balance by construction — debits always equal credits — and uploaded to S3 for immediate download. Re-download from history any time.",
+    id: "export",
+    nav: "Tally export",
+    kicker: "Tally XML export",
+    title: "From an approved document",
+    tint: "to TallyPrime in one click.",
+    body: "Pick a client and the approved documents, and generate. The XML balances by construction — debits always equal credits — and stays in your export history to download again.",
     points: [
       "Purchase vouchers for invoices and bills",
-      "Payment and Receipt vouchers for bank statement transactions",
-      "Inventory entries with Tally stock item names, HSN, UOM, and rates",
-      "CGST, SGST, IGST ledger entries auto-computed",
-      "Export blocked automatically if a document's tax math doesn't reconcile"
+      "Payment and receipt vouchers for bank transactions",
+      "Inventory entries with your Tally stock-item names, HSN, units and rates",
+      "CGST, SGST and IGST ledger entries computed for you",
+      "Export is blocked if a document's tax maths doesn't reconcile"
     ],
-    visual: <ExportVisual />
+    Screen: ExportScreen
   },
   {
-    tag: "Data tools",
-    headline: "Standalone utilities for your most common tasks.",
-    body: "Two tools that work independently of the document pipeline — for batch processing and bank-statement bulk conversion.",
+    id: "tools",
+    nav: "Data tools",
+    kicker: "Data tools",
+    title: "Two utilities for",
+    tint: "the jobs you do every month.",
+    body: "Both work on their own, outside the document pipeline: upload a file, download the result — no queue.",
     points: [
-      "Register Cleaner: normalize messy GST purchase/sales Excel registers",
-      "Bank Statement XML: convert PDF bank statements directly to Tally XML using pdfplumber (no LLM, rule-based)",
-      "Both tools are instant — upload and download, no queues",
-      "Handles merged cells, repeat headers, multi-sheet workbooks",
-      "Bank converter creates Receipt/Payment vouchers per transaction"
+      "Register Cleaner: tidies messy purchase and sales registers into one clean sheet",
+      "Handles multi-sheet workbooks, repeated header blocks and multi-row headers",
+      "Drops blank, TOTAL and CANCELLED rows, and puts dates and amounts in one format",
+      "Bank Statement → Tally XML: amounts and dates are read straight from the statement's own table",
+      "An AI model only suggests the ledger for each narration, with a confidence score, for you to confirm"
     ],
-    visual: <DataToolsVisual />
+    Screen: ToolsScreen
   },
   {
-    tag: "Security & audit",
-    headline: "Every action logged. Every firm isolated.",
-    body: "Multi-tenant architecture with PostgreSQL Row-Level Security enforces strict data boundaries — no firm can ever see another firm's data. Every critical action is logged with user, timestamp, and metadata.",
+    id: "security",
+    nav: "Security",
+    kicker: "Security & audit",
+    title: "Every action on the record,",
+    tint: "every firm kept apart.",
+    body: "Each firm's data is isolated by the database itself, and every important action is logged with who did it and when.",
     points: [
-      "PostgreSQL RLS — every query scoped to your firm_id by the database itself",
-      "JWT access tokens (15 min) + httpOnly refresh cookies (7 days) with chain rotation",
-      "Magic link tokens expire after 24 hours and rotate after each use",
-      "Audit log: document uploads, approvals, exports, team changes, settings updates",
-      "Soft deletes only — no data is ever permanently destroyed"
+      "PostgreSQL row-level security scopes every query to your firm",
+      "Short-lived access tokens and rotating refresh tokens in an httpOnly cookie",
+      "Audit log of uploads, approvals, exports, invitations and settings changes",
+      "Deletes in the app are soft — records are hidden, not destroyed — and permanent erasure happens only on your request"
     ],
-    visual: <AuditVisual />
+    Screen: AuditScreen
   }
 ];
 
+const PIPELINE = ["Upload link", "Read", "Check", "Review", "Reconcile", "Export"];
+
+/* ── Sticky module bar ──────────────────────────────────────────────────── */
+
+const useActiveModule = (ids) => {
+  const [active, setActive] = useState(null);
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActive(visible[0].target.id);
+      },
+      { rootMargin: "-140px 0px -55% 0px" }
+    );
+    ids.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [ids]);
+
+  return active;
+};
+
+const ModuleBar = () => {
+  const reduced = useReducedMotion();
+  const ids = useMemo(() => MODULES.map((m) => m.id), []);
+  const active = useActiveModule(ids);
+
+  return (
+    <div className="sticky top-16 z-30 border-y border-carbon-900/[0.06] bg-[#F7F6F2]/80 backdrop-blur-xl">
+      <nav aria-label="Product modules" className="vx-shell">
+        <ul className="-mx-2 flex gap-1 overflow-x-auto py-2.5 [scrollbar-width:none] sm:justify-center">
+          {MODULES.map((module) => {
+            const on = active === module.id;
+            return (
+              <li key={module.id} className="flex-none">
+                <a
+                  href={`#${module.id}`}
+                  aria-current={on ? "true" : undefined}
+                  className={`relative block rounded-full px-3.5 py-1.5 text-[13.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
+                    on ? "text-carbon-900" : "text-carbon-500 hover:text-carbon-900"
+                  }`}
+                >
+                  {on ? (
+                    <motion.span
+                      layoutId="vx-module-pill"
+                      aria-hidden="true"
+                      className="absolute inset-0 rounded-full bg-white shadow-[0_1px_2px_rgba(14,16,19,0.08)] ring-1 ring-carbon-900/[0.06]"
+                      transition={reduced ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 36 }}
+                    />
+                  ) : null}
+                  <span className="relative">{module.nav}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    </div>
+  );
+};
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+
+const Module = ({ module, index }) => {
+  const flip = index % 2 === 1;
+  const { Screen } = module;
+
+  return (
+    <div id={module.id} className="scroll-mt-32 grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
+      <Reveal className={flip ? "lg:order-2" : ""}>
+        <Kicker>{module.kicker}</Kicker>
+        <h2 className="mt-5 font-inter text-[clamp(1.75rem,2.9vw,2.375rem)] font-normal leading-[1.14] tracking-[-0.03em] text-carbon-900">
+          {module.title} <span className="text-carbon-400">{module.tint}</span>
+        </h2>
+        <p className="mt-5 max-w-[34rem] text-[1.0625rem] leading-[1.7] text-carbon-500">{module.body}</p>
+        <ul className="mt-7 space-y-3">
+          {module.points.map((point) => (
+            <li key={point} className="flex items-start gap-3 text-[0.9375rem] leading-[1.6] text-carbon-600">
+              <Tick className="mt-[6px] text-verify-600" />
+              {point}
+            </li>
+          ))}
+        </ul>
+      </Reveal>
+
+      <Reveal delay={0.1} className={flip ? "lg:order-1" : ""}>
+        <div className="rounded-[22px] border border-carbon-900/[0.07] bg-white p-2 shadow-[0_1px_2px_rgba(14,16,19,0.04),0_30px_70px_-50px_rgba(38,30,110,0.35)]">
+          <div className="relative overflow-hidden rounded-[16px] bg-[#F5F5F7]">
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0"
+              style={{
+                backgroundImage: "radial-gradient(rgba(14,16,19,0.08) 1px, transparent 1px)",
+                backgroundSize: "16px 16px",
+                maskImage: "radial-gradient(80% 70% at 50% 45%, black, transparent 85%)",
+                WebkitMaskImage: "radial-gradient(80% 70% at 50% 45%, black, transparent 85%)"
+              }}
+            />
+            <div aria-hidden="true" className="relative mx-auto w-full max-w-[520px]">
+              <FitCanvas w={520} h={400}>
+                <Screen />
+              </FitCanvas>
+            </div>
+          </div>
+        </div>
+      </Reveal>
+    </div>
+  );
+};
+
 const FeaturesPage = () => (
   <PublicLayout>
-    {/* Hero */}
-    <Section className="pt-20 sm:pt-28">
-      <Reveal className="mx-auto max-w-[46rem] text-center">
-        <Eyebrow className="justify-center">Platform features</Eyebrow>
-        <h1 className="vx-display-xl mt-6">
-          Built for the way
-          <br />
-          CAs actually work.
-        </h1>
-        <p className="vx-body mx-auto mt-7 max-w-[36rem]">
-          Every feature designed with Indian CA practice in mind — from GSTIN
-          checksum validation to TallyPrime voucher formats.
-        </p>
-      </Reveal>
-
-      <Reveal delay={0.1} className="mx-auto mt-14 grid max-w-2xl grid-cols-3 gap-4">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-2xl border border-hairline bg-surface p-4 text-center">
-            <div className="vx-nums text-2xl font-extrabold text-carbon-900">{s.value}</div>
-            <div className="mt-1 text-xs font-medium text-carbon-500">{s.label}</div>
-          </div>
+    <PageHero
+      kicker="Product"
+      title="Every step from a client's upload"
+      accent="to a balanced Tally voucher."
+      lead="Collection, reading, compliance checks, review and export — built for the way Indian CA firms work, with your team approving every voucher."
+      actions={
+        <>
+          <Cta href="/#demo" size="lg">
+            Book a demo
+          </Cta>
+          <Cta to="/pricing" variant="glass" size="lg">
+            See pricing
+          </Cta>
+        </>
+      }
+    >
+      {/* The pipeline at a glance */}
+      {/* The pipeline at a glance: a wrapped row of stages with chevrons
+          below lg, one line joined by travelling beams from lg up. */}
+      <ol className="mx-auto flex max-w-[64rem] flex-wrap items-center justify-center gap-x-1.5 gap-y-2.5 lg:flex-nowrap lg:gap-0">
+        {PIPELINE.map((stage, index) => (
+          <li key={stage} className="flex items-center gap-1.5 lg:gap-0">
+            <span className="flex items-center gap-2 whitespace-nowrap rounded-full border border-white/80 bg-white/70 px-3.5 py-1.5 text-[13px] font-medium text-carbon-800 shadow-[0_8px_24px_-18px_rgba(38,30,110,0.5)] backdrop-blur sm:px-4 sm:py-2 sm:text-[13.5px]">
+              <span className="text-[11px] tabular-nums text-carbon-400">{String(index + 1).padStart(2, "0")}</span>
+              {stage}
+            </span>
+            {index < PIPELINE.length - 1 ? (
+              <>
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  aria-hidden="true"
+                  className="text-carbon-300 lg:hidden"
+                >
+                  <path
+                    d="M3 1.5 6.5 5 3 8.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <Beam delay={index * 0.35} className="hidden w-12 lg:flex" />
+              </>
+            ) : null}
+          </li>
         ))}
-      </Reveal>
-    </Section>
+      </ol>
+    </PageHero>
 
-    {/* Feature sections */}
-    <Section>
-      <div className="space-y-24">
-        {features.map((f, i) => (
-          <div key={f.tag} className="grid items-center gap-12 lg:grid-cols-2">
-            <Reveal className={i % 2 === 1 ? "lg:order-2" : ""}>
-              <Eyebrow>{f.tag}</Eyebrow>
-              <h2 className="vx-h2-xl mt-5 text-[1.85rem]">{f.headline}</h2>
-              <p className="vx-body mt-5 max-w-[32rem]">{f.body}</p>
-              <ul className="mt-6 space-y-3">
-                {f.points.map((p) => (
-                  <li key={p} className="flex items-start gap-3 text-sm text-carbon-600">
-                    <Tick className="mt-1 text-verify-600" />
-                    {p}
-                  </li>
-                ))}
-              </ul>
-            </Reveal>
-            <Reveal delay={0.1} className={i % 2 === 1 ? "lg:order-1" : ""}>
-              {f.visual}
-            </Reveal>
-          </div>
+    <ModuleBar />
+
+    <Band>
+      <div className="space-y-28 lg:space-y-36">
+        {MODULES.map((module, index) => (
+          <Module key={module.id} module={module} index={index} />
         ))}
       </div>
-    </Section>
+    </Band>
 
     <ClosingCTA />
   </PublicLayout>

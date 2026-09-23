@@ -4,15 +4,13 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { useAuth } from "../contexts/AuthContext";
 import { parseApiError } from "../lib/utils";
-import AuthShell from "../components/auth/AuthShell";
+import AuthLayout, { AuthButton, AuthCard, AuthError, AuthHeading, AuthLink } from "../components/auth/AuthLayout";
 import AuthField from "../components/auth/AuthField";
-import { LoginPanel } from "../components/auth/AuthPanel";
 import { collectFieldErrors } from "../components/auth/validation";
-import { Caret, Eyebrow } from "../components/marketing/ledger";
 import { EASE } from "../components/public/motion";
 
 /**
- * Firm login.
+ * Firm login — Mercury-style single card (see components/auth/AuthLayout).
  *
  * Visual layer only — the schema, the `useAuth().login` call, the
  * `location.state.from` redirect and the already-authenticated guard are all
@@ -74,129 +72,75 @@ const LoginPage = () => {
     setFieldErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
   };
 
-  const enter = (delay) => ({
-    initial: reduced ? false : { opacity: 0, y: 14 },
-    animate: { opacity: 1, y: 0 },
-    transition: { duration: 0.6, ease: EASE, delay: reduced ? 0 : delay }
-  });
-
   return (
-    <AuthShell panel={<LoginPanel />}>
-      <motion.div {...enter(0)}>
-        <Eyebrow>Firm workspace</Eyebrow>
-      </motion.div>
-
-      <motion.h1
-        {...enter(0.06)}
-        className="mt-7 text-[2.25rem] font-bold leading-[1.05] tracking-[-0.04em] text-carbon-900 sm:text-[2.5rem]"
+    <AuthLayout topLink={{ to: "/signup", label: "Set up your firm" }}>
+      <AuthCard
+        footer={
+          <div className="space-y-2 text-[13px] text-carbon-500">
+            <p>
+              New to Verax? <AuthLink to="/signup">Set up your firm</AuthLink>
+            </p>
+            <p>
+              A client of a CA firm? <AuthLink to="/client-portal/login">Use the client portal</AuthLink>
+            </p>
+          </div>
+        }
       >
-        Welcome back.
-      </motion.h1>
+        <AuthHeading title="Log in to Verax" subtitle="Your firm's documents, reviews and exports." />
 
-      <motion.p {...enter(0.12)} className="mt-4 text-[1rem] leading-[1.65] text-carbon-500">
-        Continue to your firm&apos;s financial workspace.
-      </motion.p>
+        <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
+          <AuthField
+            id="email"
+            label="Work email"
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            autoFocus
+            value={form.email}
+            onChange={setField("email")}
+            error={fieldErrors.email}
+          />
 
-      <motion.form {...enter(0.18)} className="mt-10 space-y-5" onSubmit={onSubmit} noValidate>
-        <AuthField
-          id="email"
-          label="Work email"
-          type="email"
-          autoComplete="email"
-          inputMode="email"
-          value={form.email}
-          onChange={setField("email")}
-          error={fieldErrors.email}
-        />
-
-        <AuthField
-          id="password"
-          label="Password"
-          type="password"
-          autoComplete="current-password"
-          value={form.password}
-          onChange={setField("password")}
-          error={fieldErrors.password}
-          action={
+          <div>
+            <AuthField
+              id="password"
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              value={form.password}
+              onChange={setField("password")}
+              error={fieldErrors.password}
+            />
             <Link
               to="/forgot-password"
-              className="rounded text-[0.8125rem] font-medium text-carbon-500 underline
-                         decoration-carbon-200 underline-offset-4 transition-colors
-                         hover:text-carbon-900 hover:decoration-carbon-400 focus-visible:outline-none
-                         focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-4
-                         focus-visible:ring-offset-canvas"
+              className="mt-2 inline-block rounded text-[12.5px] text-carbon-500 transition-colors hover:text-carbon-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >
               Forgot password?
             </Link>
-          }
-        />
+          </div>
 
-        <AnimatePresence initial={false}>
-          {error ? (
-            <motion.div
-              initial={reduced ? false : { opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.25, ease: EASE }}
-              className="overflow-hidden"
-            >
-              <p
-                role="alert"
-                className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3
-                           text-[0.875rem] font-medium leading-[1.5] text-red-700"
+          <AnimatePresence initial={false}>
+            {error ? (
+              <motion.div
+                initial={reduced ? false : { opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25, ease: EASE }}
+                className="overflow-hidden"
               >
-                <span className="mt-[3px] text-red-600">
-                  <Caret size={13} />
-                </span>
-                {error}
-              </p>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+                <AuthError>{error}</AuthError>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
-        <button type="submit" disabled={loading} className="vx-cta w-full disabled:opacity-60">
-          {loading ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white"
-              />
-              Logging in…
-            </>
-          ) : (
-            "Log in"
-          )}
-        </button>
-      </motion.form>
-
-      <motion.div {...enter(0.26)} className="mt-10 border-t border-hairline pt-7">
-        <p className="text-[0.875rem] text-carbon-500">
-          New to Verax?{" "}
-          <Link
-            to="/signup"
-            className="rounded font-medium text-carbon-900 underline decoration-carbon-300
-                       underline-offset-4 transition-colors hover:decoration-carbon-900
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500
-                       focus-visible:ring-offset-4 focus-visible:ring-offset-canvas"
-          >
-            Set up your firm
-          </Link>
-        </p>
-
-        <p className="mt-3 text-[0.8125rem] text-carbon-400">
-          Are you a client of a CA firm?{" "}
-          <Link
-            to="/client-portal/login"
-            className="rounded underline decoration-carbon-200 underline-offset-4 transition-colors
-                       hover:text-carbon-900 hover:decoration-carbon-400 focus-visible:outline-none
-                       focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-4
-                       focus-visible:ring-offset-canvas"
-          >
-            Use the client portal
-          </Link>
-        </p>
-      </motion.div>
-    </AuthShell>
+          <div className="pt-2">
+            <AuthButton loading={loading} loadingLabel="Logging in…">
+              Log in
+            </AuthButton>
+          </div>
+        </form>
+      </AuthCard>
+    </AuthLayout>
   );
 };
 

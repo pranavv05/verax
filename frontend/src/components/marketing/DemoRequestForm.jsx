@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { EASE } from "../public/motion";
 import { waitlistApi } from "../../api/waitlist-api";
@@ -17,6 +17,9 @@ import { waitlistApi } from "../../api/waitlist-api";
  */
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DemoRequestForm = ({ tone = "light" }) => {
+  // The form now appears twice on the homepage (hero + closing CTA), so the
+  // label/input ids have to be unique per instance.
+  const uid = useId();
   const [step, setStep] = useState("email"); // email | details
   const [email, setEmail] = useState("");
   const [firmName, setFirmName] = useState("");
@@ -81,6 +84,9 @@ const DemoRequestForm = ({ tone = "light" }) => {
   // the other two put teal-600 success text and graphite hint text on carbon,
   // neither of which passes contrast.
   const onDark = tone === "dark";
+  // "hero": Mercury-style — the email field and its button share one pill.
+  // Only the email step differs; the details step reuses the light fields.
+  const hero = tone === "hero";
   const inverted = tone === "onDark";
   const busy = status === "loading" || status === "success";
 
@@ -89,11 +95,11 @@ const DemoRequestForm = ({ tone = "light" }) => {
       <div className="w-full max-w-lg">
         {step === "email" ? (
           <form onSubmit={onEmailSubmit} className="flex flex-col gap-2.5 sm:flex-row">
-            <label htmlFor="demo-email" className="sr-only">
+            <label htmlFor={`${uid}-email`} className="sr-only">
               Work email
             </label>
             <input
-              id="demo-email"
+              id={`${uid}-email`}
               type="email"
               required
               value={email}
@@ -130,11 +136,11 @@ const DemoRequestForm = ({ tone = "light" }) => {
                 </button>
               )}
             </div>
-            <label htmlFor="demo-firm" className="sr-only">
+            <label htmlFor={`${uid}-firm`} className="sr-only">
               Firm name
             </label>
             <input
-              id="demo-firm"
+              id={`${uid}-firm`}
               type="text"
               required
               value={firmName}
@@ -148,11 +154,11 @@ const DemoRequestForm = ({ tone = "light" }) => {
                          font-medium text-white outline-none transition placeholder:text-carbon-400
                          focus:border-brand-400 focus:ring-4 focus:ring-brand-500/20 disabled:opacity-60"
             />
-            <label htmlFor="demo-contact" className="sr-only">
+            <label htmlFor={`${uid}-contact`} className="sr-only">
               Your name
             </label>
             <input
-              id="demo-contact"
+              id={`${uid}-contact`}
               type="text"
               required
               value={contactName}
@@ -223,13 +229,45 @@ const DemoRequestForm = ({ tone = "light" }) => {
 
   return (
     <div className="w-full max-w-lg">
-      {step === "email" ? (
-        <form onSubmit={onEmailSubmit} className="flex flex-col gap-2.5 sm:flex-row">
-          <label htmlFor="demo-email" className="sr-only">
+      {step === "email" && hero ? (
+        <form
+          onSubmit={onEmailSubmit}
+          className="flex items-center gap-1.5 rounded-full border border-graphite-300 bg-white/85 p-1.5
+                     shadow-[0_18px_40px_-28px_rgba(14,16,19,0.45)] backdrop-blur transition
+                     focus-within:border-brand-500 focus-within:ring-4 focus-within:ring-brand-500/12"
+        >
+          <label htmlFor={`${uid}-email`} className="sr-only">
             Work email
           </label>
           <input
-            id="demo-email"
+            id={`${uid}-email`}
+            type="email"
+            required
+            value={email}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              resetFeedback();
+            }}
+            placeholder="you@yourfirm.com"
+            className="h-11 min-w-0 flex-1 bg-transparent pl-4 text-sm font-medium text-graphite-900
+                       outline-none placeholder:text-graphite-400"
+          />
+          <motion.button
+            type="submit"
+            whileHover={{ opacity: 0.86 }}
+            transition={{ duration: 0.15, ease: EASE }}
+            className="h-11 flex-none rounded-full bg-carbon-900 px-5 text-sm font-medium text-white sm:px-6"
+          >
+            Request a demo
+          </motion.button>
+        </form>
+      ) : step === "email" ? (
+        <form onSubmit={onEmailSubmit} className="flex flex-col gap-2.5 sm:flex-row">
+          <label htmlFor={`${uid}-email`} className="sr-only">
+            Work email
+          </label>
+          <input
+            id={`${uid}-email`}
             type="email"
             required
             value={email}
@@ -259,11 +297,11 @@ const DemoRequestForm = ({ tone = "light" }) => {
               </button>
             )}
           </div>
-          <label htmlFor="demo-firm" className="sr-only">
+          <label htmlFor={`${uid}-firm`} className="sr-only">
             Firm name
           </label>
           <input
-            id="demo-firm"
+            id={`${uid}-firm`}
             type="text"
             required
             value={firmName}
@@ -275,11 +313,11 @@ const DemoRequestForm = ({ tone = "light" }) => {
             placeholder="Firm / company name"
             className={fieldClass}
           />
-          <label htmlFor="demo-contact" className="sr-only">
+          <label htmlFor={`${uid}-contact`} className="sr-only">
             Your name
           </label>
           <input
-            id="demo-contact"
+            id={`${uid}-contact`}
             type="text"
             required
             value={contactName}

@@ -7,15 +7,16 @@ import { authApi } from "../api/auth-api";
 import { tokenStore, userStore } from "../lib/token-store";
 import { parseApiError } from "../lib/utils";
 import { normalizeGstin, validateGstin } from "../lib/gstin";
-import AuthShell from "../components/auth/AuthShell";
+import AuthLayout, { AuthButton, AuthCard, AuthError, AuthHeading, AuthLink } from "../components/auth/AuthLayout";
 import AuthField from "../components/auth/AuthField";
-import { SignupPanel } from "../components/auth/AuthPanel";
 import { collectFieldErrors } from "../components/auth/validation";
-import { Caret, Eyebrow, Tick } from "../components/marketing/ledger";
+import { Tick } from "../components/marketing/ledger";
 import { EASE } from "../components/public/motion";
 
 /**
- * Firm signup.
+ * Firm signup — Mercury-style single card (see components/auth/AuthLayout).
+ * The optional GSTIN sits behind an "Add" link so the required path is four
+ * fields long.
  *
  * The fields are exactly the four the backend accepts — `auth.routes.js`'s
  * `signupSchema` is `{ name, firmName, email, password (min 8) }` — plus the
@@ -24,6 +25,9 @@ import { EASE } from "../components/public/motion";
  * added, nothing was made required, and the submit path (authApi.signup →
  * tokenStore → userStore → /dashboard) is unchanged.
  */
+
+const legalLinkClass =
+  "rounded font-medium text-carbon-900 underline decoration-carbon-300 underline-offset-[3px] transition-colors hover:decoration-carbon-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500";
 
 const signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -45,6 +49,7 @@ const SignupPage = () => {
     gstin: ""
   });
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [showGstin, setShowGstin] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -114,185 +119,183 @@ const SignupPage = () => {
     gstinCheck.state === "empty" || fieldErrors.gstin
       ? null
       : {
-          tone:
-            gstinCheck.state === "valid"
-              ? "valid"
-              : gstinCheck.state === "incomplete"
-                ? "neutral"
-                : "invalid",
+          tone: gstinCheck.state === "valid" ? "valid" : gstinCheck.state === "incomplete" ? "neutral" : "invalid",
           message: gstinCheck.state === "valid" ? "Valid GSTIN" : gstinCheck.message
         };
 
-  const enter = (delay) => ({
-    initial: reduced ? false : { opacity: 0, y: 14 },
-    animate: { opacity: 1, y: 0 },
-    transition: { duration: 0.6, ease: EASE, delay: reduced ? 0 : delay }
-  });
+  const passwordLongEnough = form.password.length >= 8;
 
   return (
-    <AuthShell panel={<SignupPanel />}>
-      <motion.div {...enter(0)}>
-        <Eyebrow>Founding customer plan</Eyebrow>
-      </motion.div>
-
-      <motion.h1
-        {...enter(0.06)}
-        className="mt-7 text-[2.25rem] font-bold leading-[1.05] tracking-[-0.04em] text-carbon-900 sm:text-[2.5rem]"
+    <AuthLayout topLink={{ to: "/login", label: "Log in" }} width="max-w-[480px]">
+      <AuthCard
+        footer={
+          <p className="text-[13px] text-carbon-500">
+            Already have an account? <AuthLink to="/login">Log in</AuthLink>
+          </p>
+        }
       >
-        Set up your firm.
-      </motion.h1>
-
-      <motion.p {...enter(0.12)} className="mt-4 text-[1rem] leading-[1.65] text-carbon-500">
-        Start turning financial documents into structured, review-ready data.
-      </motion.p>
-
-      <motion.form {...enter(0.18)} className="mt-10 space-y-5" onSubmit={onSubmit} noValidate>
-        <AuthField
-          id="signup-firm"
-          label="Firm name"
-          autoComplete="organization"
-          value={form.firmName}
-          onChange={setField("firmName")}
-          error={fieldErrors.firmName}
+        <AuthHeading
+          title="Set up your firm"
+          subtitle="A few details and you're in. No card needed while we're onboarding founding firms."
         />
 
-        <AuthField
-          id="signup-name"
-          label="Your full name"
-          autoComplete="name"
-          value={form.name}
-          onChange={setField("name")}
-          error={fieldErrors.name}
-        />
-
-        <AuthField
-          id="signup-email"
-          label="Work email"
-          type="email"
-          autoComplete="email"
-          inputMode="email"
-          value={form.email}
-          onChange={setField("email")}
-          error={fieldErrors.email}
-        />
-
-        <AuthField
-          id="signup-password"
-          label="Password"
-          type="password"
-          autoComplete="new-password"
-          value={form.password}
-          onChange={setField("password")}
-          error={fieldErrors.password}
-          hint="Minimum 8 characters."
-        />
-
-        <AuthField
-          id="signup-gstin"
-          label="Firm GSTIN — optional"
-          value={form.gstin}
-          maxLength={15}
-          mono
-          onChange={(event) => {
-            setForm((prev) => ({ ...prev, gstin: normalizeGstin(event.target.value) }));
-            setFieldErrors((prev) => (prev.gstin ? { ...prev, gstin: undefined } : prev));
-          }}
-          error={fieldErrors.gstin}
-          status={gstinStatus}
-          hint="Checked locally against the GSTIN checksum — nothing is sent until you submit."
-        />
-
-        <label className="flex cursor-pointer items-start gap-3 pt-1">
-          <input
-            type="checkbox"
-            checked={acceptedTerms}
-            onChange={(event) => {
-              setAcceptedTerms(event.target.checked);
-              if (event.target.checked) setError("");
-            }}
-            className="mt-[3px] h-[17px] w-[17px] flex-none cursor-pointer rounded-[4px] border-hairline-strong
-                       bg-surface text-brand-500 focus:ring-2 focus:ring-brand-500 focus:ring-offset-2
-                       focus:ring-offset-canvas"
+        <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
+          <AuthField
+            id="signup-firm"
+            label="Firm name"
+            autoComplete="organization"
+            autoFocus
+            value={form.firmName}
+            onChange={setField("firmName")}
+            error={fieldErrors.firmName}
           />
-          <span className="text-[0.8125rem] leading-[1.6] text-carbon-500">
-            I agree to the{" "}
-            <Link
-              to="/security"
-              className="rounded font-medium text-carbon-900 underline decoration-carbon-300 underline-offset-4 hover:decoration-carbon-900"
-            >
-              Terms of Service
-            </Link>{" "}
-            and{" "}
-            <Link
-              to="/security"
-              className="rounded font-medium text-carbon-900 underline decoration-carbon-300 underline-offset-4 hover:decoration-carbon-900"
-            >
-              Privacy Policy
-            </Link>
-            .
-          </span>
-        </label>
 
-        <AnimatePresence initial={false}>
-          {error ? (
-            <motion.div
-              initial={reduced ? false : { opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.25, ease: EASE }}
-              className="overflow-hidden"
-            >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <AuthField
+              id="signup-name"
+              label="Your full name"
+              autoComplete="name"
+              value={form.name}
+              onChange={setField("name")}
+              error={fieldErrors.name}
+            />
+            <AuthField
+              id="signup-email"
+              label="Work email"
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              value={form.email}
+              onChange={setField("email")}
+              error={fieldErrors.email}
+            />
+          </div>
+
+          <div>
+            <AuthField
+              id="signup-password"
+              label="Password"
+              type="password"
+              autoComplete="new-password"
+              value={form.password}
+              onChange={setField("password")}
+              error={fieldErrors.password}
+            />
+            {!fieldErrors.password ? (
               <p
-                role="alert"
-                className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3
-                           text-[0.875rem] font-medium leading-[1.5] text-red-700"
+                className={`mt-1.5 flex items-center gap-1.5 text-[12.5px] transition-colors duration-200 ${
+                  passwordLongEnough ? "text-verify-600" : "text-carbon-400"
+                }`}
               >
-                <span className="mt-[3px] text-red-600">
-                  <Caret size={13} />
+                <span
+                  className={`flex h-3.5 w-3.5 items-center justify-center rounded-full transition-colors duration-200 ${
+                    passwordLongEnough ? "bg-verify-500 text-white" : "border border-carbon-300"
+                  }`}
+                >
+                  {passwordLongEnough ? <Tick size={8} /> : null}
                 </span>
-                {error}
+                At least 8 characters
               </p>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+            ) : null}
+          </div>
 
-        <button type="submit" disabled={loading} className="vx-cta w-full disabled:opacity-60">
-          {loading ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white"
-              />
-              Creating account…
-            </>
-          ) : (
-            "Create firm account"
-          )}
-        </button>
+          {/* Optional GSTIN, tucked away so the required path stays short */}
+          <AnimatePresence initial={false} mode="wait">
+            {showGstin || form.gstin || fieldErrors.gstin ? (
+              <motion.div
+                key="gstin"
+                initial={reduced ? false : { opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25, ease: EASE }}
+                className="overflow-hidden"
+              >
+                <AuthField
+                  id="signup-gstin"
+                  label="Firm GSTIN · optional"
+                  value={form.gstin}
+                  maxLength={15}
+                  mono
+                  onChange={(event) => {
+                    setForm((prev) => ({ ...prev, gstin: normalizeGstin(event.target.value) }));
+                    setFieldErrors((prev) => (prev.gstin ? { ...prev, gstin: undefined } : prev));
+                  }}
+                  error={fieldErrors.gstin}
+                  status={gstinStatus}
+                  hint="Checked against the GSTIN checksum as you type."
+                />
+              </motion.div>
+            ) : (
+              <motion.button
+                key="add-gstin"
+                type="button"
+                initial={false}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowGstin(true)}
+                className="inline-flex items-center gap-1.5 rounded text-[13px] font-medium text-brand-600 transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M8 3.5v9M3.5 8h9" />
+                </svg>
+                Add your firm&apos;s GSTIN (optional)
+              </motion.button>
+            )}
+          </AnimatePresence>
 
-        <p className="flex items-center justify-center gap-2 text-[0.75rem] text-carbon-400">
-          <span className="text-verify-600">
-            <Tick size={11} />
-          </span>
-          No card required while we&apos;re in the founding-customer phase.
-        </p>
-      </motion.form>
+          <label className="flex cursor-pointer items-start gap-2.5 pt-1">
+            <input
+              type="checkbox"
+              checked={acceptedTerms}
+              onChange={(event) => {
+                setAcceptedTerms(event.target.checked);
+                if (event.target.checked) setError("");
+              }}
+              className="mt-[2px] h-4 w-4 flex-none cursor-pointer rounded-[4px] border-[#D6D5DE] text-brand-500 focus:ring-2 focus:ring-brand-500 focus:ring-offset-1"
+            />
+            <span className="text-[12.5px] leading-[1.55] text-carbon-500">
+              {/* New tab, so opening the terms never throws away a half-filled form */}I agree to the{" "}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className={legalLinkClass}>
+                Terms of Service
+              </a>{" "}
+              and{" "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className={legalLinkClass}>
+                Privacy Policy
+              </a>
+              .
+            </span>
+          </label>
 
-      <motion.div {...enter(0.26)} className="mt-10 border-t border-hairline pt-7">
-        <p className="text-[0.875rem] text-carbon-500">
-          Already have an account?{" "}
-          <Link
-            to="/login"
-            className="rounded font-medium text-carbon-900 underline decoration-carbon-300
-                       underline-offset-4 transition-colors hover:decoration-carbon-900
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500
-                       focus-visible:ring-offset-4 focus-visible:ring-offset-canvas"
-          >
-            Log in
-          </Link>
-        </p>
-      </motion.div>
-    </AuthShell>
+          <AnimatePresence initial={false}>
+            {error ? (
+              <motion.div
+                initial={reduced ? false : { opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25, ease: EASE }}
+                className="overflow-hidden"
+              >
+                <AuthError>{error}</AuthError>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          <div className="pt-2">
+            <AuthButton loading={loading} loadingLabel="Creating account…">
+              Create firm account
+            </AuthButton>
+          </div>
+        </form>
+      </AuthCard>
+    </AuthLayout>
   );
 };
 

@@ -1,8 +1,28 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { authApi } from "../api/auth-api";
 import { parseApiError } from "../lib/utils";
+import AuthLayout, {
+  AuthButton,
+  AuthCard,
+  AuthError,
+  AuthHeading,
+  AuthLink,
+  AuthNotice
+} from "../components/auth/AuthLayout";
+import AuthField from "../components/auth/AuthField";
+import { Tick } from "../components/marketing/ledger";
+import { EASE } from "../components/public/motion";
+
+/**
+ * Reset password — on the shared auth card (components/auth/AuthLayout).
+ *
+ * Visual layer only: token validation on mount, the schema (min 8, must
+ * match), `authApi.resetPassword` and the redirect to /login after success are
+ * exactly as before.
+ */
 
 const resetPasswordSchema = z
   .object({
@@ -13,6 +33,25 @@ const resetPasswordSchema = z
     message: "Passwords do not match",
     path: ["confirmPassword"]
   });
+
+const Reveal = ({ show, children }) => {
+  const reduced = useReducedMotion();
+  return (
+    <AnimatePresence initial={false}>
+      {show ? (
+        <motion.div
+          initial={reduced ? false : { opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.25, ease: EASE }}
+          className="overflow-hidden"
+        >
+          {children}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+};
 
 const ResetPasswordPage = () => {
   const { token } = useParams();
@@ -55,6 +94,7 @@ const ResetPasswordPage = () => {
 
   const onSubmit = async (event) => {
     event.preventDefault();
+    if (loading) return;
     setError("");
     setSuccess("");
 
@@ -79,94 +119,103 @@ const ResetPasswordPage = () => {
     }
   };
 
+  const setField = (key) => (event) => {
+    const { value } = event.target;
+    setForm((prev) => ({ ...prev, [key]: value }));
+    if (error) setError("");
+  };
+
+  const longEnough = form.password.length >= 8;
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-4 py-12 sm:px-6">
-      <section className="panel p-6 sm:p-8">
-        <Link to="/" className="inline-block rounded-xl bg-ink-900 px-3 py-2 text-xs font-bold uppercase tracking-widest text-sand-100">
-          Verax
-        </Link>
-        <h1 className="mt-6 text-2xl font-extrabold text-ink-900">Create a new password</h1>
-        <p className="mt-1 text-sm text-ink-500">
-          Reset links expire in 15 minutes and become invalid after use.
-        </p>
+    <AuthLayout topLink={{ to: "/login", label: "Log in" }}>
+      <AuthCard
+        footer={
+          <p className="text-[13px] text-carbon-500">
+            Link not working? <AuthLink to="/forgot-password">Request a new one</AuthLink>
+          </p>
+        }
+      >
+        <AuthHeading
+          title="Create a new password"
+          subtitle="Reset links expire in 15 minutes and stop working once used."
+        />
 
         {tokenLoading ? (
-          <div className="mt-6 rounded-xl border border-[#e7dcc8] bg-sand-50 px-3 py-2 text-sm font-medium text-ink-700">
-            Validating reset link...
+          <div className="mt-7 space-y-4" role="status" aria-live="polite">
+            <div className="h-10 w-full animate-pulse rounded-lg bg-carbon-900/[0.04]" />
+            <div className="h-10 w-full animate-pulse rounded-lg bg-carbon-900/[0.04]" />
+            <div className="h-10 w-36 animate-pulse rounded-full bg-carbon-900/[0.06]" />
+            <span className="sr-only">Validating reset link…</span>
           </div>
         ) : null}
 
         {tokenError ? (
-          <div className="mt-6 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
-            {tokenError}
+          <div className="mt-7">
+            <AuthError>{tokenError}</AuthError>
           </div>
         ) : null}
 
         {!tokenLoading && !tokenError ? (
-          <form className="mt-6 space-y-4" onSubmit={onSubmit}>
+          <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
             {tokenInfo?.email ? (
-              <div className="rounded-xl border border-[#e7dcc8] bg-sand-50 px-3 py-2 text-xs font-medium text-ink-600">
-                Resetting password for <span className="font-semibold text-ink-900">{tokenInfo.email}</span>
-              </div>
+              <AuthNotice>
+                Resetting the password for <span className="font-medium text-carbon-900">{tokenInfo.email}</span>
+              </AuthNotice>
             ) : null}
 
             <div>
-              <label className="label" htmlFor="new-password">
-                New password
-              </label>
-              <input
+              <AuthField
                 id="new-password"
-                className="field"
+                label="New password"
                 type="password"
                 autoComplete="new-password"
+                autoFocus
                 value={form.password}
-                onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-                placeholder="Minimum 8 characters"
+                onChange={setField("password")}
               />
+              <p
+                className={`mt-1.5 flex items-center gap-1.5 text-[12.5px] transition-colors duration-200 ${
+                  longEnough ? "text-verify-600" : "text-carbon-400"
+                }`}
+              >
+                <span
+                  className={`flex h-3.5 w-3.5 items-center justify-center rounded-full transition-colors duration-200 ${
+                    longEnough ? "bg-verify-500 text-white" : "border border-carbon-300"
+                  }`}
+                >
+                  {longEnough ? <Tick size={8} /> : null}
+                </span>
+                At least 8 characters
+              </p>
             </div>
 
-            <div>
-              <label className="label" htmlFor="confirm-password">
-                Confirm password
-              </label>
-              <input
-                id="confirm-password"
-                className="field"
-                type="password"
-                autoComplete="new-password"
-                value={form.confirmPassword}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, confirmPassword: event.target.value }))
-                }
-                placeholder="Re-enter password"
-              />
+            <AuthField
+              id="confirm-password"
+              label="Confirm new password"
+              type="password"
+              autoComplete="new-password"
+              value={form.confirmPassword}
+              onChange={setField("confirmPassword")}
+            />
+
+            <Reveal show={Boolean(error)}>
+              <AuthError>{error}</AuthError>
+            </Reveal>
+
+            <Reveal show={Boolean(success)}>
+              <AuthNotice tone="success">{success}</AuthNotice>
+            </Reveal>
+
+            <div className="pt-2">
+              <AuthButton loading={loading} loadingLabel="Updating password…">
+                Update password
+              </AuthButton>
             </div>
-
-            {error ? (
-              <div className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
-                {error}
-              </div>
-            ) : null}
-
-            {success ? (
-              <div className="rounded-xl border border-mint-500/30 bg-mint-500/10 px-3 py-2 text-sm font-medium text-mint-700">
-                {success}
-              </div>
-            ) : null}
-
-            <button type="submit" disabled={loading} className="btn-primary w-full py-2.5 text-sm">
-              {loading ? "Updating password..." : "Update password"}
-            </button>
           </form>
         ) : null}
-
-        <p className="mt-5 text-center text-sm text-ink-500">
-          <Link className="font-semibold text-mint-500 underline transition hover:text-mint-600" to="/login">
-            Back to login
-          </Link>
-        </p>
-      </section>
-    </div>
+      </AuthCard>
+    </AuthLayout>
   );
 };
 

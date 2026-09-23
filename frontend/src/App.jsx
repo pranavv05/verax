@@ -41,6 +41,9 @@ const ClientPortalDocumentsPage = lazy(() => import("./pages/ClientPortalDocumen
 const ClientPortalLoginPage = lazy(() => import("./pages/ClientPortalLoginPage"));
 const ClientPortalReconciliationPage = lazy(() => import("./pages/ClientPortalReconciliationPage"));
 const ClientPortalSettingsPage = lazy(() => import("./pages/ClientPortalSettingsPage"));
+// Legal pages are public but rarely visited, so they load on demand too.
+const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
+const TermsPage = lazy(() => import("./pages/TermsPage"));
 
 const Protected = ({ children }) => <ProtectedRoute>{children}</ProtectedRoute>;
 const ProtectedClient = ({ children }) => <ProtectedClientRoute>{children}</ProtectedClientRoute>;
@@ -64,6 +67,8 @@ const App = () => (
       <Route path="/about" element={<AboutPage />} />
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/security" element={<SecurityPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />

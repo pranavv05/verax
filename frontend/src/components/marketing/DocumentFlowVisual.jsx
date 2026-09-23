@@ -29,7 +29,7 @@ const PILE = [
 
 const OUTPUT = [
   { label: "Vendor", value: "ACME Trading Co.", state: "valid" },
-  { label: "GSTIN", value: "27AABCA1234A1Z5", state: "valid" },
+  { label: "GSTIN", value: "27AABCA1234A1ZJ", state: "valid" },
   { label: "Invoice no.", value: "INV-2026-0417", state: "valid" },
   { label: "Taxable", value: "42,000.00", state: "valid" },
   { label: "CGST + SGST", value: "7,560.00", state: "valid" },

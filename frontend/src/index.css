@@ -490,6 +490,113 @@ a {
   animation: vx-float-y 7s ease-in-out infinite;
 }
 
+/* Hero ribbon (after Stripe's): silk bands bleeding off the top-right. Each
+   band drifts on its own slow sway so the ribbon never looks like a still. */
+@keyframes vx-ribbon-sway {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(-18px, 14px, 0) rotate(-1.2deg);
+  }
+}
+
+.vx-ribbon-band {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vx-ribbon-sway 14s ease-in-out infinite;
+}
+
+/* The second line of the hero headline: Stripe-vivid, in the brand's own
+   violet → blue → teal. The padding keeps the last glyph's overhang from
+   being clipped by background-clip. */
+.vx-hero-gradient {
+  background-image: linear-gradient(95deg, #6657d9 0%, #4d8dff 50%, #14b8a6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  padding-right: 0.08em;
+}
+
+/* A pulse of light travelling along a connector — data moving between two
+   stages. Horizontal on desktop, vertical on mobile. */
+@keyframes vx-beam-x {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(250%);
+    opacity: 0;
+  }
+}
+
+@keyframes vx-beam-y {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(250%);
+    opacity: 0;
+  }
+}
+
+.vx-beam-x {
+  animation: vx-beam-x 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.vx-beam-y {
+  animation: vx-beam-y 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+/* Concentric rings breathing out of the Verax hub. */
+@keyframes vx-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+.vx-ring {
+  animation: vx-ring 3s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+/* A vertical log that scrolls forever (two copies, -50%). */
+@keyframes vx-log-scroll {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+.vx-log-scroll {
+  animation: vx-log-scroll 14s linear infinite;
+}
+
+/* Same gradient, lifted for near-black grounds. */
+.vx-hero-gradient-dark {
+  background-image: linear-gradient(95deg, #a99bff 0%, #7caeff 50%, #5eead4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 /* Infinite marquee for the trust bar. The track holds two identical copies of
    the list, so translating by exactly -50% loops seamlessly. */
 @keyframes vx-marquee {
@@ -513,6 +620,88 @@ a {
 .vx-marquee-mask {
   mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+
+/* Proof band glow, after Mercury's logo row: a soft wash of the brand hues
+   behind the marquee. Two layers of plain radial gradients (no filter blur,
+   so it costs nothing to composite) drift against each other; the band
+   dissolves top, bottom and at both edges. */
+.vx-proof-glow {
+  mask-image: radial-gradient(62% 58% at 50% 50%, black 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(62% 58% at 50% 50%, black 30%, transparent 100%);
+}
+
+.vx-proof-glow-a,
+.vx-proof-glow-b {
+  position: absolute;
+  inset: 0 -15%;
+  will-change: transform;
+}
+
+.vx-proof-glow-a {
+  background:
+    radial-gradient(34% 70% at 22% 50%, rgba(102, 87, 217, 0.24), transparent 72%),
+    radial-gradient(32% 70% at 55% 45%, rgba(77, 141, 255, 0.22), transparent 72%),
+    radial-gradient(30% 70% at 84% 55%, rgba(20, 184, 166, 0.18), transparent 72%);
+  animation: vx-proof-drift-a 16s ease-in-out infinite alternate;
+}
+
+.vx-proof-glow-b {
+  background:
+    radial-gradient(28% 62% at 38% 60%, rgba(245, 180, 90, 0.16), transparent 72%),
+    radial-gradient(30% 66% at 70% 40%, rgba(167, 139, 250, 0.2), transparent 72%);
+  animation: vx-proof-drift-b 22s ease-in-out infinite alternate;
+}
+
+@keyframes vx-proof-drift-a {
+  from {
+    transform: translate3d(-6%, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(6%, 4%, 0) scale(1.08);
+  }
+}
+
+@keyframes vx-proof-drift-b {
+  from {
+    transform: translate3d(8%, 3%, 0) scale(1.05);
+  }
+  to {
+    transform: translate3d(-8%, -3%, 0) scale(1);
+  }
+}
+
+/* Proof band marks: ink-dark gradient lettering with a violet → blue → teal
+   sheen that sweeps through each label, then rests. The rest state (both ends
+   of the 300% gradient) is plain ink, so the reduced-motion switch — which
+   jumps every animation to its end — leaves clean, static text. */
+.vx-mark-text {
+  background-image: linear-gradient(
+    100deg,
+    #2b2e36 0%,
+    #4a4e5a 38%,
+    #6657d9 46%,
+    #4d8dff 50%,
+    #14b8a6 54%,
+    #4a4e5a 62%,
+    #2b2e36 100%
+  );
+  background-size: 300% 100%;
+  background-position: 0% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: vx-mark-sheen 7s ease-in-out infinite;
+}
+
+@keyframes vx-mark-sheen {
+  0% {
+    background-position: 100% 0;
+  }
+  45%,
+  100% {
+    background-position: 0% 0;
+  }
 }
 
 /* Reduced-motion: Framer Motion respects this via useReducedMotion, but kill

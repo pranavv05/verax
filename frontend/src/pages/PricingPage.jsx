@@ -1,64 +1,69 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Link } from "react-router-dom";
 import PublicLayout from "../components/layout/PublicLayout";
 import ClosingCTA from "../components/marketing/ClosingCTA";
-import { Section, SectionHead, Eyebrow, Tick } from "../components/marketing/ledger";
-import { Reveal } from "../components/public/motion";
+import PageHero from "../components/marketing/PageHero";
+import Cta from "../components/marketing/Cta";
+import { Band, Heading } from "../components/marketing/v3";
+import { Tick } from "../components/marketing/ledger";
+import { EASE, Reveal } from "../components/public/motion";
 
-const plans = [
+/**
+ * /pricing — after Mercury's joined plan panel and Linear's "Everything in X,
+ * plus" inheritance (DESIGN_SYSTEM.md).
+ *
+ * The plan limits (documents per month, team size, audit retention, TDS on
+ * Professional) are the *planned* plans. Nothing in the backend enforces them
+ * yet — `firms.plan` is stored ('starter' on signup) but never checked — so the
+ * page says so plainly next to the plans and above the comparison table.
+ */
+
+const PLANS = [
   {
     name: "Starter",
-    tagline: "Perfect for solo practitioners",
+    tagline: "For solo practitioners and small firms.",
     price: "Free",
-    priceNote: "forever",
-    highlight: false,
-    badge: null,
-    cta: "Create free account",
-    ctaTo: "/signup",
-    featureLabels: [
+    note: "No card needed",
+    cta: { label: "Create free account", to: "/signup", variant: "primary" },
+    intro: "Includes:",
+    features: [
       "50 documents / month",
       "2 team members",
       "Unlimited clients",
-      "AI OCR extraction",
+      "AI document reading",
       "GSTIN validation",
       "Tally XML export",
-      "Magic link uploads",
+      "Upload links for clients",
       "Audit log (7 days)"
     ]
   },
   {
     name: "Professional",
-    tagline: "For growing CA practices",
-    price: "Early access",
-    priceNote: "pricing confirmed at onboarding",
-    highlight: true,
     badge: "In development",
-    cta: "Join early access",
-    ctaHref: "#demo",
-    featureLabels: [
+    tagline: "For growing CA practices.",
+    price: "Early access",
+    note: "Pricing confirmed with you at onboarding",
+    cta: { label: "Join early access", href: "/#demo", variant: "quiet" },
+    intro: "Everything in Starter, plus:",
+    features: [
       "500 documents / month",
       "10 team members",
-      "Unlimited clients",
-      "Everything in Starter",
-      "Audit log (90 days)",
       "TDS rate validation",
+      "Audit log (90 days)",
       "Priority support"
     ]
   },
   {
     name: "Enterprise",
-    tagline: "For large firms and networks",
+    tagline: "For large firms and networks.",
     price: "Custom",
-    priceNote: "talk to us",
-    highlight: false,
-    badge: null,
-    cta: "Talk to us",
-    ctaHref: "#demo",
-    featureLabels: [
+    note: "Priced for your firm",
+    cta: { label: "Talk to us", href: "/#demo", variant: "quiet" },
+    intro: "Everything in Professional, plus:",
+    features: [
       "Unlimited documents",
       "Unlimited team members",
-      "Unlimited clients",
-      "Everything in Professional",
       "Audit log (unlimited)",
       "Dedicated onboarding",
       "Custom integrations"
@@ -66,203 +71,328 @@ const plans = [
   }
 ];
 
-const comparisonRows = [
-  { label: "Documents / month", values: ["50", "500", "Unlimited"] },
-  { label: "Team members", values: ["2", "10", "Unlimited"] },
-  { label: "Clients", values: ["Unlimited", "Unlimited", "Unlimited"] },
-  { label: "AI OCR extraction", values: [true, true, true] },
-  { label: "GSTIN validation", values: [true, true, true] },
-  { label: "Tax math cross-check", values: [true, true, true] },
-  { label: "TDS section validation", values: [false, true, true] },
-  { label: "Duplicate invoice detection", values: [true, true, true] },
-  { label: "Smart name mapping", values: [true, true, true] },
-  { label: "Tally XML export", values: [true, true, true] },
-  { label: "Register Cleaner tool", values: [true, true, true] },
-  { label: "Bank Statement XML tool", values: [true, true, true] },
-  { label: "Magic link client uploads", values: [true, true, true] },
-  { label: "Audit log retention", values: ["7 days", "90 days", "Unlimited"] },
-  { label: "Priority support", values: [false, false, true] },
-  { label: "Custom integrations", values: [false, false, true] }
-];
-
-const faqs = [
+const COMPARISON = [
   {
-    q: "Is the Starter plan really free forever?",
-    a: "Yes. 50 documents per month, 2 users, and full access to OCR, compliance validation, and Tally XML export — free forever. No credit card required to sign up."
+    group: "Usage",
+    rows: [
+      ["Documents / month", "50", "500", "Unlimited"],
+      ["Team members", "2", "10", "Unlimited"],
+      ["Clients", "Unlimited", "Unlimited", "Unlimited"]
+    ]
   },
   {
-    q: "What counts as a document?",
-    a: "Each uploaded file (invoice, bank statement, or bill) counts as one document. Re-processing an existing document does not count as a new document."
+    group: "Reading and checks",
+    rows: [
+      ["AI document reading", true, true, true],
+      ["GSTIN validation", true, true, true],
+      ["Tax maths cross-check", true, true, true],
+      ["TDS section validation", false, true, true],
+      ["Duplicate invoice detection", true, true, true],
+      ["Learned item-name mapping", true, true, true]
+    ]
   },
   {
-    q: "Verax is in early access — what does that mean for Professional and Enterprise?",
-    a: "Those tiers are what we're building toward, not a live checkout. Join early access and we'll onboard you directly, confirm pricing with you before anything is billed, and take your feedback into how the paid tiers actually ship."
+    group: "Export and tools",
+    rows: [
+      ["Tally XML export", true, true, true],
+      ["Register Cleaner", true, true, true],
+      ["Bank statement → Tally XML", true, true, true],
+      ["Upload links for clients", true, true, true]
+    ]
   },
   {
-    q: "Is my data safe if I stop using Verax?",
-    a: "Yes. You can export all your data at any time. After a firm is closed, data is retained for a grace period before being permanently deleted, giving you time to export."
-  },
-  {
-    q: "Do you offer discounts for NGOs or educational institutions?",
-    a: "Reach out to us directly — we're happy to talk about discounted access for charitable organizations, CA institutes, and university accounting departments."
+    group: "Records and support",
+    rows: [
+      ["Audit log retention", "7 days", "90 days", "Unlimited"],
+      ["Priority support", false, true, true],
+      ["Dedicated onboarding", false, false, true],
+      ["Custom integrations", false, false, true]
+    ]
   }
 ];
 
-const FaqItem = ({ q, a }) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="border-b border-hairline last:border-0">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between py-5 text-left"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-      >
-        <span className="pr-4 text-sm font-bold text-carbon-900">{q}</span>
-        <svg
-          className={`h-5 w-5 flex-shrink-0 text-carbon-400 transition-transform duration-200 ${open ? "rotate-45" : ""}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
+const FAQS = [
+  {
+    q: "Is the Starter plan really free forever?",
+    a: "Yes. Starter is free forever, with no credit card needed to sign up, and it includes document reading, compliance checks and Tally XML export."
+  },
+  {
+    q: "Are the plan limits enforced today?",
+    a: "Not yet. The limits shown are the plans we are building toward. During early access every account can use the full product while we confirm the paid tiers with our first firms."
+  },
+  {
+    q: "What counts as a document?",
+    a: "Each uploaded file — an invoice, bill or bank statement — counts as one document. Reprocessing a document you already uploaded does not count again."
+  },
+  {
+    q: "What does early access mean for Professional and Enterprise?",
+    a: "Those tiers are what we're building toward, not a live checkout. Join early access and we'll onboard you directly, confirm pricing with you before anything is billed, and shape the paid tiers with your feedback."
+  },
+  {
+    q: "What happens to my data if I stop using Verax?",
+    a: (
+      <>
+        Your data is yours. When your account closes you can ask us for an export within 30 days; after that it is
+        deleted. The details are in our{" "}
+        <Link
+          to="/terms"
+          className="text-brand-600 underline decoration-brand-600/30 underline-offset-2 hover:decoration-brand-600"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-        </svg>
-      </button>
-      {open && <div className="pb-5 text-sm leading-relaxed text-carbon-500">{a}</div>}
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link
+          to="/privacy"
+          className="text-brand-600 underline decoration-brand-600/30 underline-offset-2 hover:decoration-brand-600"
+        >
+          Privacy Policy
+        </Link>
+        .
+      </>
+    )
+  },
+  {
+    q: "Do you offer discounts for NGOs or educational institutions?",
+    a: "Write to us — we're happy to talk about discounted access for charitable organisations, CA institutes and university accounting departments."
+  }
+];
+
+/* ── Pieces ─────────────────────────────────────────────────────────────── */
+
+const Planned = () => (
+  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-0.5 text-[12px] font-medium text-amber-700">
+    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+    Planned limits — not enforced during early access
+  </span>
+);
+
+const Cell = ({ value }) =>
+  typeof value === "boolean" ? (
+    value ? (
+      <Tick className="mx-auto text-verify-600" size={13} />
+    ) : (
+      <span className="text-carbon-300" aria-label="Not included">
+        —
+      </span>
+    )
+  ) : (
+    <span className="text-[0.875rem] font-medium tabular-nums text-carbon-700">{value}</span>
+  );
+
+const FaqItem = ({ item, open, onToggle, id }) => {
+  const reduced = useReducedMotion();
+  return (
+    <div className="border-b border-carbon-900/[0.08]">
+      <h3>
+        <button
+          type="button"
+          id={`${id}-q`}
+          aria-expanded={open}
+          aria-controls={`${id}-a`}
+          onClick={onToggle}
+          className="group flex w-full items-center justify-between gap-6 py-5 text-left focus-visible:outline-none"
+        >
+          <span className="text-[1rem] font-medium text-carbon-900 group-focus-visible:underline">{item.q}</span>
+          <span
+            aria-hidden="true"
+            className={`flex h-7 w-7 flex-none items-center justify-center rounded-full border border-carbon-900/10 bg-white text-carbon-500 transition-transform duration-300 ${
+              open ? "rotate-45" : ""
+            }`}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            >
+              <path d="M6 1.5v9M1.5 6h9" />
+            </svg>
+          </span>
+        </button>
+      </h3>
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            id={`${id}-a`}
+            role="region"
+            aria-labelledby={`${id}-q`}
+            initial={reduced ? false : { height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={reduced ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            transition={{ duration: 0.35, ease: EASE }}
+            className="overflow-hidden"
+          >
+            <p className="max-w-[40rem] pb-6 text-[0.9375rem] leading-[1.7] text-carbon-500">{item.a}</p>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 };
 
-const PricingPage = () => (
-  <PublicLayout>
-    {/* Hero */}
-    <Section className="pt-20 sm:pt-28">
-      <Reveal className="mx-auto max-w-[46rem] text-center">
-        <Eyebrow className="justify-center">Simple, transparent pricing</Eyebrow>
-        <h1 className="vx-display-xl mt-6">
-          Start free.
-          <br />
-          Scale when you&apos;re ready.
-        </h1>
-        <p className="vx-body mx-auto mt-7 max-w-[34rem]">
-          No per-user seat fees, no hidden charges. Starter is free today;
-          Professional and Enterprise are in early access — join now and we&apos;ll
-          onboard you directly.
-        </p>
-      </Reveal>
-    </Section>
+/* ── Page ───────────────────────────────────────────────────────────────── */
 
-    {/* Pricing cards */}
-    <Section className="pt-0">
-      <div className="grid gap-6 lg:grid-cols-3">
-        {plans.map((plan, i) => (
-          <Reveal key={plan.name} delay={0.05 * i}>
-            <div
-              className={`relative flex h-full flex-col rounded-2xl border p-8 ${
-                plan.highlight ? "border-carbon-900 bg-surface" : "border-hairline bg-surface"
-              }`}
-            >
-              {plan.badge && (
-                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-                  <span className="rounded-full bg-carbon-900 px-4 py-1 text-xs font-bold text-white">{plan.badge}</span>
+const PricingPage = () => {
+  const [openFaq, setOpenFaq] = useState(0);
+
+  return (
+    <PublicLayout>
+      <PageHero
+        kicker="Pricing"
+        title="Start free."
+        accent="Grow when you're ready."
+        lead="No per-user seat fees and no hidden charges. Starter is free today; Professional and Enterprise are in early access — join now and we'll onboard you directly."
+      >
+        {/* Mercury's joined plan panel */}
+        <div className="mx-auto max-w-[68rem] overflow-hidden rounded-[22px] border border-carbon-900/[0.07] bg-white shadow-[0_1px_2px_rgba(14,16,19,0.04),0_40px_90px_-60px_rgba(38,30,110,0.45)]">
+          <div className="grid divide-y divide-carbon-900/[0.07] lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+            {PLANS.map((plan) => (
+              <div key={plan.name} className="relative flex flex-col p-7 sm:p-8">
+                {plan.badge ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-brand-500 via-sky-500 to-verify-500"
+                  />
+                ) : null}
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="font-inter text-[1.25rem] font-medium tracking-[-0.02em] text-carbon-900">
+                    {plan.name}
+                  </h2>
+                  {plan.badge ? (
+                    <span className="rounded-full bg-brand-500/10 px-2.5 py-0.5 text-[12px] font-medium text-brand-700">
+                      {plan.badge}
+                    </span>
+                  ) : null}
                 </div>
-              )}
+                <p className="mt-1.5 text-[0.9375rem] text-carbon-500">{plan.tagline}</p>
 
-              <h3 className="text-lg font-extrabold text-carbon-900">{plan.name}</h3>
-              <p className="mt-1 text-sm text-carbon-500">{plan.tagline}</p>
+                <p className="mt-7 font-inter text-[2.25rem] font-semibold leading-none tracking-[-0.035em] text-carbon-900">
+                  {plan.price}
+                </p>
+                <p className="mt-2 text-[0.8125rem] text-carbon-400">{plan.note}</p>
 
-              <div className="mt-6">
-                <span className="text-4xl font-extrabold text-carbon-900">{plan.price}</span>
-                <div className="mt-1 text-xs text-carbon-400">{plan.priceNote}</div>
+                <Cta to={plan.cta.to} href={plan.cta.href} variant={plan.cta.variant} className="mt-7 w-full">
+                  {plan.cta.label}
+                </Cta>
+
+                <p className="mt-8 text-[0.875rem] font-medium text-carbon-900">{plan.intro}</p>
+                <ul className="mt-4 space-y-3">
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-3 text-[0.9375rem] text-carbon-600">
+                      <Tick className="mt-[6px] text-verify-600" />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
               </div>
+            ))}
+          </div>
+          <div className="flex flex-col gap-2 border-t border-carbon-900/[0.06] bg-[#FAFAFB] px-7 py-4 text-[0.8125rem] text-carbon-500 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+            <Planned />
+            <span>
+              Starter is live today. Paid-tier pricing is confirmed with early-access firms before anything is billed.
+            </span>
+          </div>
+        </div>
+      </PageHero>
 
-              {plan.ctaTo ? (
-                <Link
-                  to={plan.ctaTo}
-                  className={`mt-8 block rounded-full py-3 text-center text-sm font-medium ${
-                    plan.highlight ? "bg-carbon-900 text-white hover:bg-carbon-700" : "border border-hairline text-carbon-900 hover:border-hairline-strong"
-                  }`}
-                >
-                  {plan.cta}
-                </Link>
-              ) : (
-                <a
-                  href={plan.ctaHref}
-                  className={`mt-8 block rounded-full py-3 text-center text-sm font-medium ${
-                    plan.highlight ? "bg-carbon-900 text-white hover:bg-carbon-700" : "border border-hairline text-carbon-900 hover:border-hairline-strong"
-                  }`}
-                >
-                  {plan.cta}
-                </a>
-              )}
+      {/* Comparison */}
+      <Band>
+        <Heading kicker="Compare" title="Every plan, side by side." tint="Planned limits included." align="center" />
 
-              <ul className="mt-8 space-y-3">
-                {plan.featureLabels.map((label) => (
-                  <li key={label} className="flex items-start gap-3 text-sm text-carbon-600">
-                    <Tick className="mt-1 text-verify-600" />
-                    {label}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </Reveal>
-        ))}
-      </div>
+        <Reveal className="mt-10 flex justify-center">
+          <Planned />
+        </Reveal>
 
-      <p className="mt-8 text-center text-sm text-carbon-500">
-        Starter is live today. Professional and Enterprise pricing is confirmed
-        directly with early-access customers before anything is billed.
-      </p>
-    </Section>
-
-    {/* Comparison table */}
-    <Section className="border-y border-hairline bg-well">
-      <SectionHead eyebrow="Compare" title="Full feature comparison" align="center" />
-      <div className="mt-12 overflow-x-auto rounded-2xl border border-hairline bg-surface">
-        <table className="min-w-full">
-          <thead>
-            <tr className="border-b border-hairline bg-well">
-              <th className="w-1/2 px-6 py-4 text-left text-xs font-bold uppercase tracking-widest text-carbon-500">Feature</th>
-              {plans.map((p) => (
-                <th key={p.name} className="px-6 py-4 text-center text-sm font-extrabold text-carbon-900">
-                  {p.name}
+        <Reveal className="mt-8 overflow-x-auto rounded-[22px] border border-carbon-900/[0.07] bg-white shadow-[0_1px_2px_rgba(14,16,19,0.04)]">
+          <table className="w-full min-w-[640px] border-collapse">
+            <caption className="sr-only">Feature comparison between Starter, Professional and Enterprise</caption>
+            <thead>
+              <tr className="border-b border-carbon-900/[0.07]">
+                <th scope="col" className="w-[40%] px-6 py-5 text-left text-[0.8125rem] font-medium text-carbon-400">
+                  Feature
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {comparisonRows.map((row, i) => (
-              <tr key={row.label} className={`border-b border-hairline ${i % 2 === 1 ? "bg-well/50" : ""}`}>
-                <td className="px-6 py-3.5 text-sm font-semibold text-carbon-700">{row.label}</td>
-                {row.values.map((v, j) => (
-                  <td key={j} className="px-6 py-3.5 text-center">
-                    {typeof v === "boolean" ? (
-                      v ? <Tick className="mx-auto text-verify-600" /> : <span className="text-carbon-200">—</span>
-                    ) : (
-                      <span className="text-sm font-semibold text-carbon-700">{v}</span>
-                    )}
-                  </td>
+                {PLANS.map((plan) => (
+                  <th key={plan.name} scope="col" className="px-6 py-5 text-center">
+                    <span className="block text-[1rem] font-medium text-carbon-900">{plan.name}</span>
+                    <span className="mt-0.5 block text-[0.8125rem] font-normal text-carbon-400">{plan.price}</span>
+                  </th>
                 ))}
               </tr>
+            </thead>
+            <tbody>
+              {COMPARISON.map((section) => (
+                <Fragment key={section.group}>
+                  <tr className="bg-[#FAFAFB]">
+                    <th
+                      colSpan={4}
+                      scope="colgroup"
+                      className="px-6 pb-2.5 pt-5 text-left text-[0.8125rem] font-semibold text-carbon-900"
+                    >
+                      {section.group}
+                    </th>
+                  </tr>
+                  {section.rows.map(([label, ...values]) => (
+                    <tr
+                      key={label}
+                      className="border-t border-carbon-900/[0.05] transition-colors hover:bg-brand-500/[0.025]"
+                    >
+                      <th scope="row" className="px-6 py-3.5 text-left text-[0.9375rem] font-normal text-carbon-600">
+                        {label}
+                      </th>
+                      {values.map((value, index) => (
+                        <td key={index} className="px-6 py-3.5 text-center">
+                          <Cell value={value} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </Reveal>
+      </Band>
+
+      {/* FAQ: Linear's two-column layout */}
+      <Band className="!pt-0">
+        <div className="grid gap-10 lg:grid-cols-[1fr_1.6fr] lg:gap-20">
+          <Heading
+            kicker="FAQ"
+            title="Questions,"
+            tint="answered plainly."
+            className="lg:sticky lg:top-28 lg:self-start"
+          >
+            <p className="mt-6 text-[0.9375rem] leading-[1.7] text-carbon-500">
+              Something else?{" "}
+              <a
+                href="mailto:verax.hello@gmail.com"
+                className="text-brand-600 underline decoration-brand-600/30 underline-offset-2 hover:decoration-brand-600"
+              >
+                verax.hello@gmail.com
+              </a>
+            </p>
+          </Heading>
+          <Reveal className="border-t border-carbon-900/[0.08]">
+            {FAQS.map((item, index) => (
+              <FaqItem
+                key={item.q}
+                id={`faq-${index}`}
+                item={item}
+                open={openFaq === index}
+                onToggle={() => setOpenFaq(openFaq === index ? null : index)}
+              />
             ))}
-          </tbody>
-        </table>
-      </div>
-    </Section>
+          </Reveal>
+        </div>
+      </Band>
 
-    {/* FAQ */}
-    <Section>
-      <SectionHead eyebrow="FAQ" title="Common questions" align="center" />
-      <Reveal className="mx-auto mt-12 max-w-3xl rounded-2xl border border-hairline bg-surface px-6">
-        {faqs.map((faq) => (
-          <FaqItem key={faq.q} q={faq.q} a={faq.a} />
-        ))}
-      </Reveal>
-    </Section>
-
-    <ClosingCTA />
-  </PublicLayout>
-);
+      <ClosingCTA />
+    </PublicLayout>
+  );
+};
 
 export default PricingPage;

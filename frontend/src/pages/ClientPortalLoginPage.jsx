@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { AnimatePresence, motion } from "framer-motion";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { useClientPortalAuth } from "../contexts/ClientPortalAuthContext";
 import { parseApiError } from "../lib/utils";
-import VeraxLogo, { VeraxMark } from "../components/brand/VeraxLogo";
-import FloatingField from "../components/public/FloatingField";
+import AuthLayout, { AuthButton, AuthCard, AuthError, AuthHeading, AuthLink } from "../components/auth/AuthLayout";
+import AuthField from "../components/auth/AuthField";
 import { EASE } from "../components/public/motion";
 
 const loginSchema = z.object({
@@ -14,50 +14,45 @@ const loginSchema = z.object({
 });
 
 /**
- * Deliberately a different world from the firm login: teal instead of blue, a
- * single centred card instead of the split layout, larger type, and no signup
- * path — clients are invited by their CA firm, never self-serve.
+ * Client-portal sign in — the same Mercury-style card as the firm login, told
+ * apart by a "Client portal" badge beside the logo and by what it leaves out:
+ * no self-serve signup and no password reset, because clients are invited and
+ * managed by their CA firm. Logic is unchanged: `useClientPortalAuth().login`,
+ * the `location.state.from` redirect, and the loading / already-signed-in
+ * guards.
  */
-const PortalFrame = ({ children }) => (
-  <div className="vx-page relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 py-10">
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-      {/* Teal counterpart to the landing page's indigo hero glow. */}
-      <div className="absolute left-1/2 top-[-30rem] h-[46rem] w-[46rem] max-w-[160vw] -translate-x-1/2 rounded-full bg-verify-500/10 blur-[100px]" />
-      <div className="absolute -right-16 bottom-[-14rem] h-[28rem] w-[28rem] rounded-full bg-indigo-500/[0.07] blur-[100px]" />
-    </div>
-    <div className="relative w-full max-w-[26rem]">{children}</div>
-  </div>
-);
 
 const ClientPortalLoginPage = () => {
   const { isAuthenticated, isLoading, login } = useClientPortalAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const reduced = useReducedMotion();
 
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const layoutProps = {
+    badge: "Client portal",
+    topLink: { to: "/login", label: "CA firm? Log in" }
+  };
+
   if (isLoading) {
     return (
-      <PortalFrame>
-        <div className="rounded-2xl border border-hairline bg-surface p-8">
-          <div className="flex items-center gap-3">
-            <VeraxMark size={34} />
-            <div className="h-4 w-24 animate-pulse rounded-full bg-white/10" />
+      <AuthLayout {...layoutProps}>
+        <AuthCard>
+          <div className="space-y-3">
+            <div className="h-5 w-2/5 animate-pulse rounded-md bg-carbon-900/[0.06]" />
+            <div className="h-3.5 w-3/4 animate-pulse rounded-md bg-carbon-900/[0.04]" />
           </div>
-          <div className="mt-8 space-y-3">
-            <div className="h-7 w-2/3 animate-pulse rounded-lg bg-white/10" />
-            <div className="h-4 w-full animate-pulse rounded-lg bg-white/5" />
-          </div>
-          <div className="mt-8 space-y-3">
-            <div className="h-[3.4rem] w-full animate-pulse rounded-xl bg-white/5" />
-            <div className="h-[3.4rem] w-full animate-pulse rounded-xl bg-white/5" />
-            <div className="h-[3.1rem] w-full animate-pulse rounded-xl bg-white/10" />
+          <div className="mt-7 space-y-4">
+            <div className="h-10 w-full animate-pulse rounded-lg bg-carbon-900/[0.04]" />
+            <div className="h-10 w-full animate-pulse rounded-lg bg-carbon-900/[0.04]" />
+            <div className="h-10 w-28 animate-pulse rounded-full bg-carbon-900/[0.06]" />
           </div>
           <span className="sr-only">Loading your session…</span>
-        </div>
-      </PortalFrame>
+        </AuthCard>
+      </AuthLayout>
     );
   }
 
@@ -86,109 +81,71 @@ const ClientPortalLoginPage = () => {
     }
   };
 
-  const setField = (key) => (event) =>
-    setForm((prev) => ({ ...prev, [key]: event.target.value }));
+  const setField = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
 
   return (
-    <PortalFrame>
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: EASE }}
-      >
-        <div className="overflow-hidden rounded-2xl border border-hairline bg-surface">
-          {/* Teal band is the one strong signal that this is not the firm login */}
-          <div className="h-1.5 w-full bg-gradient-to-r from-teal-400 via-teal-500 to-indigo-500" />
-
-          <div className="p-7 sm:p-9">
-            <span className="inline-flex items-center gap-2 rounded-full bg-teal-500/15 px-3 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-teal-300">
-              Client Portal
-            </span>
-
-            <h1 className="mt-4 text-[1.7rem] font-bold leading-tight tracking-[-0.03em] text-zinc-100">
-              Sign in
-            </h1>
-            <p className="mt-2 text-[0.95rem] leading-relaxed text-zinc-400">
-              Access your document status and reports.
+    <AuthLayout {...layoutProps}>
+      <AuthCard
+        footer={
+          <div className="space-y-2 text-[13px] text-carbon-500">
+            <p>
+              <span className="font-medium text-carbon-700">Forgot your password?</span> Your CA firm can
+              issue you a new one.
             </p>
-
-            <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
-              <FloatingField
-                id="client-email"
-                label="Email"
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                accent="teal"
-                value={form.email}
-                onChange={setField("email")}
-              />
-
-              <FloatingField
-                id="client-password"
-                label="Password"
-                type="password"
-                autoComplete="current-password"
-                accent="teal"
-                value={form.password}
-                onChange={setField("password")}
-              />
-
-              <AnimatePresence>
-                {error ? (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.25, ease: EASE }}
-                    role="alert"
-                    className="overflow-hidden"
-                  >
-                    <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-[0.95rem] font-medium text-red-300">
-                      {error}
-                    </p>
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-
-              <motion.button
-                type="submit"
-                disabled={submitting}
-                whileHover={submitting ? undefined : { opacity: 0.82 }}
-                transition={{ duration: 0.15, ease: EASE }}
-                className="vx-btn w-full bg-teal-500 py-3.5 text-base text-white hover:bg-teal-400 focus-visible:ring-teal-500 focus-visible:ring-offset-canvas"
-              >
-                {submitting ? (
-                  <>
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                    Signing in…
-                  </>
-                ) : (
-                  "Login"
-                )}
-              </motion.button>
-            </form>
-
-            <p className="mt-6 rounded-xl bg-white/[0.04] px-4 py-3.5 text-sm leading-relaxed text-zinc-400">
-              <span className="font-semibold text-zinc-200">Forgot your password?</span>{" "}
-              Contact your CA firm — they can issue you a new one.
+            <p>
+              Are you a CA firm? <AuthLink to="/login">Log in here</AuthLink>
             </p>
           </div>
-        </div>
+        }
+      >
+        <AuthHeading
+          title="Sign in to your client portal"
+          subtitle="Upload documents for your CA and see where each one stands."
+        />
 
-        <div className="mt-6 flex items-center justify-center gap-2">
-          <VeraxLogo size={22} showWordmark={false} />
-          <span className="text-xs font-medium text-zinc-500">Powered by Verax</span>
-        </div>
+        <form className="mt-7 space-y-4" onSubmit={onSubmit} noValidate>
+          <AuthField
+            id="client-email"
+            label="Email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            autoFocus
+            value={form.email}
+            onChange={setField("email")}
+          />
 
-        <p className="mt-4 text-center text-xs text-zinc-500">
-          Are you a CA firm?{" "}
-          <Link to="/login" className="font-semibold text-zinc-300 underline-offset-4 hover:underline">
-            Sign in here →
-          </Link>
-        </p>
-      </motion.div>
-    </PortalFrame>
+          <AuthField
+            id="client-password"
+            label="Password"
+            type="password"
+            autoComplete="current-password"
+            value={form.password}
+            onChange={setField("password")}
+          />
+
+          <AnimatePresence initial={false}>
+            {error ? (
+              <motion.div
+                initial={reduced ? false : { opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25, ease: EASE }}
+                className="overflow-hidden"
+              >
+                <AuthError>{error}</AuthError>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          <div className="pt-2">
+            <AuthButton loading={submitting} loadingLabel="Signing in…">
+              Sign in
+            </AuthButton>
+          </div>
+        </form>
+      </AuthCard>
+    </AuthLayout>
   );
 };
 
