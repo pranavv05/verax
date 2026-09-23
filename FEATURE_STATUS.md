@@ -779,6 +779,14 @@ entries below are kept as history. Every token is namespaced
 verified by grep: `zinc-*` and `verify-*` have no call sites outside the public surface, and the
 dashboard's `ink`/`sand`/`mint`/`ember`/`graphite` scales are untouched.
 
+### Scroll-to-top on navigation (2026-09-23)
+Status: ✅ Production Ready (frontend-only; no API/schema changes)
+`frontend/src/components/ScrollToTop.jsx`, mounted inside `BrowserRouter` in `frontend/src/main.jsx`,
+applies app-wide (public + dashboard). PUSH/REPLACE to a new pathname jumps to the top before paint;
+back/forward (POP) is left to the browser; hash deep links (`/#demo`) are skipped so HomePage can
+scroll to its section. Clicking a link to the current page (e.g. the navbar logo on `/`) smooth-scrolls
+to the top (instant under `prefers-reduced-motion`). Query-string-only changes (filters) don't scroll.
+
 ### Public pages unified on the V3 system (2026-09-23)
 Status: ✅ Production Ready (visual layer + verified content fixes; no API, schema or submit-path changes)
 Scope: `/features`, `/pricing`, `/about`, `/security`, `/login`, `/signup`, `/forgot-password`,
