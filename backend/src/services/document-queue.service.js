@@ -28,8 +28,37 @@ const checkRedisHealth = async () => {
   await redisConnection.ping();
 };
 
+// Job states that mean "this document's previous run is over". The job id is
+// the document id (so a double-submitted confirm can't queue the same document
+// twice), and failed jobs are kept (removeOnFail: false) for inspection. But
+// BullMQ silently ignores an add() whose id already exists in ANY state — so
+// without clearing a finished job first, reprocessing a document whose last
+// run failed permanently was a no-op that still reported success.
+const FINISHED_JOB_STATES = new Set(["failed", "completed"]);
+
+const clearFinishedJob = async (queue, jobId) => {
+  const existing = await queue.getJob(jobId);
+  if (!existing) {
+    return;
+  }
+  const state = await existing.getState();
+  if (!FINISHED_JOB_STATES.has(state)) {
+    return;
+  }
+  try {
+    await existing.remove();
+  } catch (error) {
+    // A concurrent enqueue may have removed it first; if it's still there,
+    // add() below dedupes against it and we return its id, as before.
+    if (await queue.getJob(jobId)) {
+      throw error;
+    }
+  }
+};
+
 const enqueueDocumentProcessingJob = async ({ documentId, s3Key, docType, firmId, clientId }) => {
   const queue = getQueue();
+  await clearFinishedJob(queue, documentId);
   let job;
   try {
     job = await queue.add(
@@ -65,5 +94,6 @@ const enqueueDocumentProcessingJob = async ({ documentId, s3Key, docType, firmId
 
 module.exports = {
   enqueueDocumentProcessingJob,
+  clearFinishedJob,
   checkRedisHealth
 };
