@@ -13,10 +13,17 @@ const env = require("./config/env");
 const pool = require("./db/pool");
 const { assertRuntimeRoleIsNotSuperuser } = require("./db/assert-safe-role");
 const { addScheduledRequestsJob } = require("./jobs/scheduled-requests.job");
+const { getFrontendDomainWarning } = require("./config/deployment-checks");
 
 let server;
 
 const startServer = async () => {
+  const frontendDomainWarning =
+    env.NODE_ENV === "production" ? getFrontendDomainWarning(env.FRONTEND_URL) : null;
+  if (frontendDomainWarning) {
+    process.stderr.write(`[config warning] ${frontendDomainWarning}
+`);
+  }
   await pool.query("SELECT 1");
   await assertRuntimeRoleIsNotSuperuser();
   await addScheduledRequestsJob();
