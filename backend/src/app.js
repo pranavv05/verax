@@ -31,6 +31,8 @@ const localUploadRoutes = env.LOCAL_STORAGE ? require("./routes/local-upload.rou
 const app = express();
 
 app.disable("x-powered-by");
+// See TRUST_PROXY in config/env.js — must match the real proxy hop count.
+app.set("trust proxy", env.TRUST_PROXY);
 app.use(
   helmet({
     contentSecurityPolicy: {

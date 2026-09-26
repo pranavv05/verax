@@ -1,9 +1,9 @@
 const express = require("express");
 const Joi = require("joi");
-const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { requireClientAuth } = require("../middlewares/client-auth.middleware");
+const { buildAuthLimiters } = require("../middlewares/rate-limit.middleware");
 const {
   CLIENT_REFRESH_COOKIE_NAME,
   getClientRefreshCookieOptions,
@@ -15,19 +15,12 @@ const {
 
 const router = express.Router();
 
-// Separate from the firm portal's authRateLimiter — client-portal brute force
+// Separate from the firm portal's limiters — client-portal brute force
 // attempts must not consume, or be masked by, the firm portal's budget.
-const clientAuthRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "Too many attempts. Please try again in a few minutes.",
-    statusCode: 429
-  }
+const clientAuthLimiters = buildAuthLimiters({
+  message: "Too many attempts. Please try again in a few minutes."
 });
+const clientAuthRateLimiter = clientAuthLimiters.attempt;
 
 const loginSchema = Joi.object({
   email: Joi.string().email().required(),
@@ -41,7 +34,8 @@ const changePasswordSchema = Joi.object({
 
 router.post(
   "/login",
-  clientAuthRateLimiter,
+  clientAuthLimiters.loginPerIp,
+  clientAuthLimiters.loginPerAccount,
   validate(loginSchema),
   asyncHandler(async (req, res) => {
     const result = await clientLogin({
@@ -59,7 +53,7 @@ router.post(
 
 router.post(
   "/refresh",
-  clientAuthRateLimiter,
+  clientAuthLimiters.session,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies[CLIENT_REFRESH_COOKIE_NAME];
     const result = await clientRefreshToken({ refreshToken });
@@ -74,7 +68,7 @@ router.post(
 
 router.post(
   "/logout",
-  clientAuthRateLimiter,
+  clientAuthLimiters.session,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies[CLIENT_REFRESH_COOKIE_NAME];
     await clientLogout({ refreshToken });
