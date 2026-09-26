@@ -3,7 +3,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services import llm_service as llm_service_module
-from app.services.llm_service import LLMService, _to_number, validate_and_adjust_confidence
+from app.services.llm_service import (
+    LLMExtractionError,
+    LLMService,
+    _to_number,
+    validate_and_adjust_confidence,
+)
 
 
 # A real invoice contains plenty of alnum text and >10 words, so it clears
@@ -118,15 +123,17 @@ class TestValidateAndAdjustConfidence:
 
 
 class TestExtractStructuredDataDegradesGracefully:
-    def test_malformed_json_response_degrades_instead_of_raising(self):
+    def test_malformed_json_response_raises_extraction_error(self):
+        # Must NOT degrade to an empty "confidence 0.0" result — that is
+        # indistinguishable from a genuine "not an invoice" answer and used
+        # to hide failures as blank review forms. Raising lets the backend's
+        # job queue retry and record the reason.
         service = make_service()
         service._client.chat.completions.create.return_value = mock_response(
             '{"vendor_name": "Acme", "total_amount": '  # truncated mid-object
         )
-        result = service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
-        assert result["confidence"] == 0.0
-        assert result["document_type_detected"] == "unknown"
-        assert "_llm_error" in result
+        with pytest.raises(LLMExtractionError, match="malformed JSON"):
+            service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
 
     def test_valid_json_response_is_normalized(self):
         service = make_service()
@@ -148,27 +155,64 @@ class TestExtractStructuredDataDegradesGracefully:
         assert result["vendor_name"] == "Acme"
         assert service._client.chat.completions.create.call_count == 2
 
-    def test_does_not_retry_a_4xx_error(self):
+    def test_does_not_retry_a_non_retryable_4xx_error(self):
         service = make_service()
-        bad_request = RuntimeError("bad request")
+        bad_request = RuntimeError("model_decommissioned")
         bad_request.status_code = 400
         service._client.chat.completions.create.side_effect = bad_request
-        result = service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
-        assert result["confidence"] == 0.0
+        with pytest.raises(LLMExtractionError, match="model_decommissioned"):
+            service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
         assert service._client.chat.completions.create.call_count == 1
 
-    def test_gives_up_after_max_attempts_on_persistent_5xx(self):
+    @pytest.mark.parametrize("status_code", [408, 429])
+    def test_retries_a_rate_limit_or_timeout_then_succeeds(self, status_code):
+        service = make_service()
+        throttled = RuntimeError("rate limit reached")
+        throttled.status_code = status_code
+        service._client.chat.completions.create.side_effect = [
+            throttled,
+            mock_response('{"vendor_name": "Acme", "total_amount": 5900}'),
+        ]
+        with patch.object(llm_service_module.time, "sleep"):
+            result = service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
+        assert result["vendor_name"] == "Acme"
+        assert service._client.chat.completions.create.call_count == 2
+
+    def test_raises_after_max_attempts_on_persistent_rate_limit(self):
+        service = make_service()
+        throttled = RuntimeError("rate limit reached")
+        throttled.status_code = 429
+        service._client.chat.completions.create.side_effect = throttled
+        with patch.object(llm_service_module.time, "sleep"):
+            with pytest.raises(LLMExtractionError, match="rate limit reached"):
+                service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
+        assert (
+            service._client.chat.completions.create.call_count
+            == llm_service_module.GROQ_MAX_ATTEMPTS
+        )
+
+    def test_raises_after_max_attempts_on_persistent_5xx(self):
         service = make_service()
         server_error = RuntimeError("service unavailable")
         server_error.status_code = 503
         service._client.chat.completions.create.side_effect = server_error
         with patch.object(llm_service_module.time, "sleep"):
-            result = service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
-        assert result["confidence"] == 0.0
+            with pytest.raises(LLMExtractionError, match="service unavailable"):
+                service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
         assert (
             service._client.chat.completions.create.call_count
             == llm_service_module.GROQ_MAX_ATTEMPTS
         )
+
+    def test_not_an_invoice_answer_is_still_a_normal_result(self):
+        # A genuine "wrong document type" answer from the model is data, not
+        # a failure — it must keep flowing to review_required, not raise.
+        service = make_service()
+        service._client.chat.completions.create.return_value = mock_response(
+            '{"document_type_detected": "unknown", "confidence": 0.0}'
+        )
+        result = service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
+        assert result["document_type_detected"] == "unknown"
 
     def test_short_garbage_ocr_text_skips_the_llm_call_entirely(self):
         service = make_service()

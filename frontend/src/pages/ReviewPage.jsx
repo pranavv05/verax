@@ -8,7 +8,7 @@ import { extractionsApi } from "../api/extractions-api";
 import { complianceApi } from "../api/compliance-api";
 import { documentVersionsApi } from "../api/document-versions-api";
 import { useAuth } from "../contexts/AuthContext";
-import { parseApiError, triggerFileDownload } from "../lib/utils";
+import { cn, parseApiError, triggerFileDownload } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 /* ─── field configs by doc type ────────────────────────────────────────────── */
@@ -206,6 +206,17 @@ const normalizeValue = (value) =>
 
 /* ─── component ─────────────────────────────────────────────────────────────── */
 
+
+// Mirrors the backend worker: a document is retried automatically up to 3
+// times (BullMQ attempts), and processing_attempts is reset on Reprocess. A
+// failed attempt puts the document back to "uploaded" with processingError set,
+// so "uploaded + error + attempts >= 3" means every automatic retry failed.
+const MAX_PROCESSING_ATTEMPTS = 3;
+const hasPermanentlyFailed = (doc) =>
+  doc?.status === "uploaded" &&
+  Boolean(doc?.processingError) &&
+  Number(doc?.processingAttempts || 0) >= MAX_PROCESSING_ATTEMPTS;
+
 const ReviewPage = () => {
   const { doc_id: documentId } = useParams();
   const { user } = useAuth();
@@ -372,10 +383,14 @@ const ReviewPage = () => {
           return;
         }
 
-        if (doc.status === "failed") {
+        if (doc.status === "failed" || hasPermanentlyFailed(doc)) {
           stopPolling();
           setIsPolling(false);
-          setPollError("Processing failed. Please try again.");
+          setPollError(
+            doc.processingError
+              ? `Processing failed: ${doc.processingError}`
+              : "Processing failed. Please try again."
+          );
           setDocument(doc);
           return;
         }
@@ -578,6 +593,9 @@ const ReviewPage = () => {
   const isExported = document?.status === "exported";
   const isReviewed = document?.status === "reviewed";
   const isLocked = isExported || isReviewed;
+  const processingFailed = hasPermanentlyFailed(document);
+  const processingRetrying =
+    document?.status === "uploaded" && Boolean(document?.processingError) && !processingFailed;
   const canApprove = ["extracted", "review_required"].includes(document?.status);
   const canAdmin = isAdmin(user);
 
@@ -766,11 +784,35 @@ const ReviewPage = () => {
         </div>
       )}
 
+      {/* Processing failure banner — the reason comes from documents.processing_error */}
+      {!loading && !error && !isPolling && (processingFailed || processingRetrying) && (
+        <div
+          className={cn(
+            "mb-4 rounded-lg border px-4 py-3 text-sm",
+            processingFailed
+              ? "border-red-300 bg-red-50 text-red-800"
+              : "border-amber-300 bg-amber-50 text-amber-800"
+          )}
+        >
+          <p className="font-semibold">
+            {processingFailed
+              ? "Processing failed after all automatic retries."
+              : "The last processing attempt failed — retrying automatically."}
+          </p>
+          <p className="mt-1 break-words">Reason: {document.processingError}</p>
+          {processingFailed && (
+            <p className="mt-1">
+              {canAdmin ? "Use Reprocess to try again." : "Ask a firm admin to reprocess this document."}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Not yet processed banner */}
       {!loading && !error && !isPolling && !extractionReady && extractionMessage && (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
           {extractionMessage}
-          {document && (["uploaded", "processing"].includes(document.status)) && (
+          {document && (["uploaded", "processing"].includes(document.status)) && !processingFailed && (
             <span className="ml-2 font-normal">Current status: <strong>{document.status}</strong>. Refresh the page in a few moments.</span>
           )}
         </div>

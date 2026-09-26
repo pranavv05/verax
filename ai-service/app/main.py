@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from app.config import settings
 from app.models import ProcessRequest
 from app.models import ProcessResponse
+from app.services.llm_service import LLMExtractionError
 from app.services.llm_service import LLMService
 from app.services.ocr_service import OCRService
 from app.services.persistence_service import PersistenceService
@@ -178,6 +179,11 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
         )
     except HTTPException:
         raise
+    except LLMExtractionError as error:
+        # Upstream dependency failure, not a bug here — 503 so the backend
+        # worker records the reason and retries the job.
+        logger.error("LLM extraction failed for document_id=%s: %s", request.document_id, error)
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as error:  # noqa: BLE001
         logger.exception("Failed to process document_id=%s", request.document_id)
         raise HTTPException(status_code=500, detail=str(error)) from error

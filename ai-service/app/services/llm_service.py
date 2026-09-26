@@ -17,6 +17,24 @@ logger = logging.getLogger("ai-service")
 # retries with a short backoff absorbs that without adding a dependency.
 GROQ_MAX_ATTEMPTS = 3
 GROQ_RETRY_BACKOFF_SECONDS = 2
+# 4xx responses that are worth retrying: 429 (rate limited — the main failure
+# mode under load on Groq's per-minute token limits) and 408 (timeout). Every
+# other 4xx (bad request, auth, decommissioned model) fails identically on
+# retry, so it is raised immediately.
+GROQ_RETRYABLE_4XX = {408, 429}
+
+
+class LLMExtractionError(Exception):
+    """The LLM call failed or returned unusable output.
+
+    Raised instead of returning an empty "confidence 0.0" result: that shape
+    is indistinguishable downstream from a real "this isn't an invoice"
+    answer, so an outage (e.g. the 2026-08 model decommissioning, or sustained
+    429s) used to surface as blank review forms with no error and no retry.
+    main.py turns this into a 503, which fails the backend's BullMQ job — so
+    it is retried with backoff, recorded in documents.processing_error, and
+    alerts firm admins if every attempt fails.
+    """
 
 # ── Invoice / Bill ────────────────────────────────────────────────────────────
 
@@ -478,7 +496,11 @@ class LLMService:
                 # A 4xx like bad-request/auth/model-not-found will fail identically
                 # on retry — only worth retrying once we know it's worth trying at all.
                 status_code = getattr(e, "status_code", None)
-                if status_code is not None and 400 <= status_code < 500:
+                if (
+                    status_code is not None
+                    and 400 <= status_code < 500
+                    and status_code not in GROQ_RETRYABLE_4XX
+                ):
                     break
                 if attempt < GROQ_MAX_ATTEMPTS:
                     logger.warning(
@@ -488,25 +510,17 @@ class LLMService:
 
         if response is None:
             logger.error(f"Groq extraction failed after {GROQ_MAX_ATTEMPTS} attempt(s): {last_error}")
-            return {
-                "document_type_detected": "unknown",
-                "confidence": 0.0,
-                "_llm_error": str(last_error),
-            }
+            raise LLMExtractionError(f"AI extraction failed: {last_error}") from last_error
 
         raw_output = response.choices[0].message.content or ""
         try:
             parsed = parse_json_object(raw_output)
         except (ValueError, TypeError) as e:
             # A truncated or malformed Groq response (e.g. hit max_tokens
-            # mid-object) must degrade like an API failure, not bubble up as
-            # an unhandled 500 that loses the OCR text and confidence.
+            # mid-object) is treated like an API failure: retried by the
+            # backend's job queue, and reported if it keeps happening.
             logger.error(f"Failed to parse LLM JSON response: {e}")
-            return {
-                "document_type_detected": "unknown",
-                "confidence": 0.0,
-                "_llm_error": f"malformed_json_response: {e}",
-            }
+            raise LLMExtractionError(f"AI returned malformed JSON: {e}") from e
 
         if doc_type == "bank_statement":
             return self._normalize_bank_payload(parsed)
