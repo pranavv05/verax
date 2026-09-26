@@ -2,8 +2,13 @@ const crypto = require("crypto");
 const path = require("path");
 const ApiError = require("../utils/api-error");
 const env = require("../config/env");
-const { createUploadUrl, assertObjectExists, createDownloadUrl } = require("./s3.service");
-const { assertAllowedFile } = require("../utils/upload-validation");
+const {
+  createUploadUrl,
+  inspectStoredObject,
+  createDownloadUrl,
+  deleteObject
+} = require("./s3.service");
+const { assertAllowedFile, assertStoredUploadIsValid } = require("../utils/upload-validation");
 const { withTenantTransaction, setLocalConfig } = require("../db/tenant-context");
 
 const DOC_TYPES = new Set(["invoice", "bank_statement", "bill", "other"]);
@@ -322,7 +327,26 @@ const confirmUploadForFirm = async (
     throw ApiError.badRequest("Upload session has expired");
   }
 
-  await assertObjectExists({ key: session.s3_key });
+  const storedObject = await inspectStoredObject({ key: session.s3_key });
+  try {
+    assertStoredUploadIsValid({
+      fileName: session.file_name,
+      size: storedObject.size,
+      head: storedObject.head
+    });
+  } catch (validationError) {
+    // Don't leave a rejected (oversized or non-document) object in storage.
+    // Cleanup is best-effort: the validation error is what the caller needs.
+    try {
+      await deleteObject({ key: session.s3_key });
+    } catch (deleteError) {
+      process.stderr.write(
+        `Failed to delete rejected upload ${session.s3_key}: ${deleteError.message}
+`
+      );
+    }
+    throw validationError;
+  }
 
   const insertResult = await db.query(
     `
