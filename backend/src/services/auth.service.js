@@ -18,8 +18,7 @@ const {
 } = require("../utils/token-utils");
 
 const PASSWORD_RESET_TOKEN_TTL_MINUTES = 15;
-const PASSWORD_RESET_SUCCESS_MESSAGE =
-  "If an account exists for that email, a password reset link will be available shortly.";
+const PASSWORD_RESET_SUCCESS_MESSAGE = "If this email exists, a password reset link has been sent";
 
 const mapUserResponse = (row) => ({
   id: row.id,
@@ -249,10 +248,14 @@ const requestPasswordReset = async ({ email, userAgent, ipAddress }) => {
     );
   }
 
-  return {
-    message: PASSWORD_RESET_SUCCESS_MESSAGE,
-    devResetLink: env.NODE_ENV !== "production" ? result?.resetUrl ?? null : undefined
-  };
+  // Same response whether or not the email exists, so this endpoint can't be
+  // used to enumerate accounts. The reset URL is only ever returned outside
+  // production, as a local-dev convenience when no email provider is set up.
+  const responseData = { message: PASSWORD_RESET_SUCCESS_MESSAGE };
+  if (process.env.NODE_ENV !== "production") {
+    responseData.devResetLink = result?.resetUrl ?? null;
+  }
+  return responseData;
 };
 
 const getPasswordResetToken = async (client, { tokenHash, forUpdate = false }) => {

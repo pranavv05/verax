@@ -72,7 +72,7 @@ const ForgotPasswordPage = () => {
       setMessage(
         result?.message || "If an account exists for that email, a password reset link will be available shortly."
       );
-      if (result?.devResetLink) {
+      if (import.meta.env.DEV && result?.devResetLink) {
         setDevResetLink(result.devResetLink);
       }
     } catch (submitError) {
