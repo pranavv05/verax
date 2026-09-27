@@ -234,17 +234,17 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
   const errorRows = state.rows.filter((r) => r.status === "error");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm p-4">
-      <div className="panel flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden">
-        <div className="flex items-start justify-between gap-4 border-b border-[#eadfcf] px-6 py-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-carbon-950/40 p-4 backdrop-blur-[2px] dark:bg-black/60">
+      <div role="dialog" aria-modal="true" aria-label="Import clients" className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-ui-line bg-ui-raised shadow-ui-pop">
+        <div className="flex items-start justify-between gap-4 border-b border-ui-line px-6 py-5">
           <div>
-            <h3 className="text-lg font-bold text-ink-900">
-              {state.view === "upload" && "Import Clients"}
-              {state.view === "preview" && "Review Import"}
-              {state.view === "success" && "Import Complete"}
+            <h3 className="text-base font-semibold tracking-[-0.015em] text-ui-fg">
+              {state.view === "upload" && "Import clients"}
+              {state.view === "preview" && "Review import"}
+              {state.view === "success" && "Import complete"}
             </h3>
             {state.view === "upload" && (
-              <p className="mt-1 text-sm text-[#66778f]">
+              <p className="mt-1 text-[0.8125rem] text-ui-fg-3">
                 Upload a CSV or Excel file to import multiple clients at once.
               </p>
             )}
@@ -253,7 +253,7 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-ink-500 transition-colors hover:bg-sand-100 hover:text-ink-900"
+            className="btn-icon -mr-2"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -264,11 +264,11 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {state.view === "upload" && (
             <div>
-              <div className="rounded-lg border border-[#e7dcc8] bg-sand-50 px-4 py-3 text-sm">
-                <span className="font-semibold text-ink-900">Don&apos;t have a template? </span>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-ui-line bg-ui-subtle px-4 py-3 text-[0.8125rem]">
+                <span className="font-semibold text-ui-fg">Don&apos;t have a template? </span>
                 <button
                   type="button"
-                  className="btn-secondary ml-2 px-3 py-1.5 text-xs"
+                  className="btn-secondary btn-sm"
                   onClick={async () => {
                     try {
                       await clientsApi.downloadImportTemplate();
@@ -277,13 +277,13 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                     }
                   }}
                 >
-                  Download Template
+                  Download template
                 </button>
               </div>
 
               <label
-                className={`mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
-                  state.dragActive ? "border-ink-700 bg-sand-100" : "border-[#d9c9a8] bg-white"
+                className={`mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-6 py-10 text-center transition-colors ${
+                  state.dragActive ? "border-ui-accent bg-ui-accent/[0.05]" : "border-ui-line-strong bg-ui-surface hover:border-ui-accent/50"
                 }`}
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -292,12 +292,12 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                 onDragLeave={() => patch({ dragActive: false })}
                 onDrop={onDrop}
               >
-                <span className="text-ink-400">
+                <span className="text-ui-fg-3">
                   <UploadIcon />
                 </span>
-                <span className="text-sm font-semibold text-ink-900">Drag your CSV or Excel file here</span>
-                <span className="text-xs text-ink-500">or click to browse</span>
-                <span className="text-xs text-ink-400">CSV or XLSX · Maximum 500 clients · 5MB limit</span>
+                <span className="text-sm font-semibold text-ui-fg">Drag your CSV or Excel file here</span>
+                <span className="text-xs text-ui-fg-3">or click to browse</span>
+                <span className="text-xs text-ui-fg-3">CSV or XLSX · Maximum 500 clients · 5MB limit</span>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -308,17 +308,17 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
               </label>
 
               {state.selectedFile && (
-                <div className="mt-4 flex items-center gap-3 rounded-lg border border-[#e7dcc8] bg-white px-4 py-3 text-sm">
-                  <span className="flex-1 truncate font-medium text-ink-900">{state.selectedFile.name}</span>
-                  <span className="text-xs text-ink-400">{formatFileSize(state.selectedFile.size)}</span>
+                <div className="mt-4 flex items-center gap-3 rounded-lg border border-ui-line bg-ui-surface px-4 py-3 text-sm">
+                  <span className="flex-1 truncate font-medium text-ui-fg">{state.selectedFile.name}</span>
+                  <span className="text-xs text-ui-fg-3">{formatFileSize(state.selectedFile.size)}</span>
                   {state.uploading && (
-                    <span className="h-4 w-4 flex-shrink-0 animate-spin rounded-full border-2 border-ink-300 border-t-ink-800" />
+                    <span className="h-4 w-4 flex-shrink-0 animate-spin rounded-full border-2 border-ui-line-strong border-t-ui-accent" />
                   )}
                 </div>
               )}
 
               {state.uploadError && (
-                <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <div className="mt-3 rounded-lg border border-ui-err/25 bg-ui-err/[0.06] px-3 py-2 text-sm text-ui-err">
                   {state.uploadError}
                 </div>
               )}
@@ -328,22 +328,22 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
           {state.view === "preview" && (
             <div>
               <div className="mb-4 flex flex-wrap gap-2">
-                <span className="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  {summary.valid} Ready
+                <span className="rounded-full border border-ui-ok/25 bg-ui-ok/[0.08] px-3 py-1 text-xs font-semibold text-ui-ok">
+                  {summary.valid} ready
                 </span>
-                <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                  {summary.warning} Warnings
+                <span className="rounded-full border border-ui-warn/25 bg-ui-warn/[0.07] px-3 py-1 text-xs font-semibold text-ui-warn">
+                  {summary.warning} warnings
                 </span>
-                <span className="rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
-                  {summary.error} Errors
+                <span className="rounded-full border border-ui-err/25 bg-ui-err/[0.06] px-3 py-1 text-xs font-semibold text-ui-err">
+                  {summary.error} errors
                 </span>
               </div>
 
               {validRows.length > 0 && (
-                <div className="mb-4 overflow-hidden rounded-lg border border-emerald-200">
+                <div className="mb-4 overflow-hidden rounded-lg border border-ui-ok/25">
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between bg-emerald-50 px-4 py-2 text-left text-sm font-semibold text-emerald-800"
+                    className="flex w-full items-center justify-between bg-ui-ok/[0.08] px-4 py-2 text-left text-sm font-semibold text-ui-ok"
                     onClick={() => setReadyCollapsed((prev) => !prev)}
                   >
                     Ready to import ({validRows.length})
@@ -353,7 +353,7 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                     <div className="overflow-x-auto">
                       <table className="min-w-full text-sm">
                         <thead>
-                          <tr className="border-b border-emerald-100 text-left text-xs uppercase text-emerald-700/70">
+                          <tr className="border-b border-ui-ok/15 text-left text-xs font-medium text-ui-ok/80">
                             <th className="px-4 py-2">Name</th>
                             <th className="px-4 py-2">GSTIN</th>
                             <th className="px-4 py-2">Email</th>
@@ -362,17 +362,17 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                         </thead>
                         <tbody>
                           {validRows.slice(0, 50).map((row) => (
-                            <tr key={row.rowNumber} className="border-b border-emerald-50 last:border-0">
-                              <td className="px-4 py-2 font-medium text-ink-900">{row.data.clientName}</td>
-                              <td className="px-4 py-2 font-mono text-xs text-ink-500">{row.data.gstin || "-"}</td>
-                              <td className="px-4 py-2 text-ink-600">{row.data.email || "-"}</td>
-                              <td className="px-4 py-2 text-ink-600">{row.data.phone || "-"}</td>
+                            <tr key={row.rowNumber} className="border-b border-ui-ok/10 last:border-0">
+                              <td className="px-4 py-2 font-medium text-ui-fg">{row.data.clientName}</td>
+                              <td className="px-4 py-2 font-mono text-xs text-ui-fg-3">{row.data.gstin || "-"}</td>
+                              <td className="px-4 py-2 text-ui-fg-2">{row.data.email || "-"}</td>
+                              <td className="px-4 py-2 text-ui-fg-2">{row.data.phone || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                       {validRows.length > 50 && (
-                        <p className="bg-emerald-50/50 px-4 py-2 text-xs text-emerald-700">
+                        <p className="bg-ui-ok/[0.05] px-4 py-2 text-xs text-ui-ok">
                           and {validRows.length - 50} more...
                         </p>
                       )}
@@ -382,14 +382,14 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
               )}
 
               {warningRows.length > 0 && (
-                <div className="mb-4 overflow-hidden rounded-lg border border-amber-200">
-                  <div className="bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800">
+                <div className="mb-4 overflow-hidden rounded-lg border border-ui-warn/25">
+                  <div className="bg-ui-warn/[0.07] px-4 py-2 text-sm font-semibold text-ui-warn">
                     Warnings ({warningRows.length}) — these will be imported but have issues:
                   </div>
                   <div className="overflow-x-auto">
                     <table className="min-w-full text-sm">
                       <thead>
-                        <tr className="border-b border-amber-100 text-left text-xs uppercase text-amber-700/70">
+                        <tr className="border-b border-ui-warn/20 text-left text-xs font-medium text-ui-warn/80">
                           <th className="px-4 py-2">Name</th>
                           <th className="px-4 py-2">GSTIN</th>
                           <th className="px-4 py-2">Issue</th>
@@ -397,10 +397,10 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                       </thead>
                       <tbody>
                         {warningRows.map((row) => (
-                          <tr key={row.rowNumber} className="border-b border-amber-50 last:border-0">
-                            <td className="px-4 py-2 font-medium text-ink-900">{row.data.clientName}</td>
-                            <td className="px-4 py-2 font-mono text-xs text-ink-500">{row.data.gstin || "-"}</td>
-                            <td className="px-4 py-2 text-amber-700">{row.issues.join("; ")}</td>
+                          <tr key={row.rowNumber} className="border-b border-ui-warn/10 last:border-0">
+                            <td className="px-4 py-2 font-medium text-ui-fg">{row.data.clientName}</td>
+                            <td className="px-4 py-2 font-mono text-xs text-ui-fg-3">{row.data.gstin || "-"}</td>
+                            <td className="px-4 py-2 text-ui-warn">{row.issues.join("; ")}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -410,14 +410,14 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
               )}
 
               {errorRows.length > 0 && (
-                <div className="mb-4 overflow-hidden rounded-lg border border-rose-200">
-                  <div className="bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800">
+                <div className="mb-4 overflow-hidden rounded-lg border border-ui-err/25">
+                  <div className="bg-ui-err/[0.06] px-4 py-2 text-sm font-semibold text-ui-err">
                     Errors ({errorRows.length}) — these will NOT be imported:
                   </div>
                   <div className="overflow-x-auto">
                     <table className="min-w-full text-sm">
                       <thead>
-                        <tr className="border-b border-rose-100 text-left text-xs uppercase text-rose-700/70">
+                        <tr className="border-b border-ui-err/15 text-left text-xs font-medium text-ui-err/80">
                           <th className="px-4 py-2">Row</th>
                           <th className="px-4 py-2">Name</th>
                           <th className="px-4 py-2">GSTIN</th>
@@ -426,9 +426,9 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                       </thead>
                       <tbody>
                         {errorRows.map((row) => (
-                          <tr key={row.rowNumber} className="border-b border-rose-50 last:border-0">
-                            <td className="px-4 py-2 text-ink-500">{row.rowNumber}</td>
-                            <td className="px-4 py-2 font-medium text-ink-900">{row.data.clientName || "-"}</td>
+                          <tr key={row.rowNumber} className="border-b border-ui-err/10 last:border-0">
+                            <td className="px-4 py-2 text-ui-fg-3">{row.rowNumber}</td>
+                            <td className="px-4 py-2 font-medium text-ui-fg">{row.data.clientName || "-"}</td>
                             <td className="px-4 py-2">
                               {state.editingRowNumber === row.rowNumber ? (
                                 <div className="flex items-center gap-1">
@@ -445,14 +445,14 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                                   />
                                   <button
                                     type="button"
-                                    className="text-xs font-semibold text-emerald-700"
+                                    className="text-xs font-semibold text-ui-ok"
                                     onClick={() => saveEditGstin(row.rowNumber)}
                                   >
                                     Save
                                   </button>
                                   <button
                                     type="button"
-                                    className="text-xs text-ink-400"
+                                    className="text-xs text-ui-fg-3"
                                     onClick={cancelEditGstin}
                                   >
                                     Cancel
@@ -461,7 +461,7 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                               ) : (
                                 <button
                                   type="button"
-                                  className="flex items-center gap-1.5 font-mono text-xs text-ink-500 hover:text-ink-900"
+                                  className="flex items-center gap-1.5 font-mono text-xs text-ui-fg-3 hover:text-ui-fg"
                                   onClick={() => startEditGstin(row)}
                                 >
                                   {row.data.gstin || "-"}
@@ -469,7 +469,7 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                                 </button>
                               )}
                             </td>
-                            <td className="px-4 py-2 text-rose-700">{row.issues.join("; ")}</td>
+                            <td className="px-4 py-2 text-ui-err">{row.issues.join("; ")}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -479,7 +479,7 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
               )}
 
               {state.confirmError && (
-                <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <div className="mb-4 rounded-lg border border-ui-err/25 bg-ui-err/[0.06] px-3 py-2 text-sm text-ui-err">
                   {state.confirmError}
                 </div>
               )}
@@ -488,32 +488,32 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
 
           {state.view === "success" && (
             <div className="flex flex-col items-center py-8 text-center">
-              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-ui-ok/10 text-ui-ok">
                 <CheckIcon />
               </span>
-              <h4 className="mt-4 text-lg font-bold text-ink-900">Import Complete</h4>
-              <p className="mt-1 text-sm text-ink-600">
+              <h4 className="mt-4 text-lg font-semibold text-ui-fg">Import complete</h4>
+              <p className="mt-1 text-sm text-ui-fg-2">
                 {state.successResult?.imported || 0} client{state.successResult?.imported === 1 ? "" : "s"} imported
                 successfully
               </p>
               {state.successResult?.skipped > 0 && (
-                <p className="mt-1 text-sm text-ink-500">
+                <p className="mt-1 text-sm text-ui-fg-3">
                   {state.successResult.skipped} client{state.successResult.skipped === 1 ? "" : "s"} already existed
                   and were skipped
                 </p>
               )}
               <button type="button" className="btn-primary mt-6" onClick={onViewAllClients}>
-                View All Clients
+                View all clients
               </button>
             </div>
           )}
         </div>
 
         {state.view === "preview" && (
-          <div className="border-t border-[#eadfcf] px-6 py-4">
+          <div className="border-t border-ui-line bg-ui-subtle px-6 py-3.5">
             <div className="flex items-center justify-between gap-3">
               <button type="button" className="btn-secondary" onClick={goBackToUpload}>
-                ← Back
+                Back
               </button>
               <button
                 type="button"
@@ -521,13 +521,13 @@ const ClientImportModal = ({ open, onClose, onImported }) => {
                 disabled={importableCount === 0 || state.confirmLoading}
                 onClick={onConfirmImport}
               >
-                {state.confirmLoading ? "Importing..." : `Import ${importableCount} Clients`}
+                {state.confirmLoading ? "Importing…" : `Import ${importableCount} client${importableCount === 1 ? "" : "s"}`}
               </button>
             </div>
             {importableCount === 0 ? (
-              <p className="mt-2 text-right text-xs text-rose-600">Fix errors above to import</p>
+              <p className="mt-2 text-right text-xs text-ui-err">Fix errors above to import</p>
             ) : errorRows.length > 0 ? (
-              <p className="mt-2 text-right text-xs text-ink-500">
+              <p className="mt-2 text-right text-xs text-ui-fg-3">
                 {errorRows.length} client{errorRows.length === 1 ? "" : "s"} with errors will be skipped.
               </p>
             ) : null}

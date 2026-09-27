@@ -63,11 +63,11 @@ const ClientSearchSelect = ({ clients, value, onChange, placeholder = "Search cl
   if (selectedClient) {
     return (
       <div className="field flex items-center justify-between gap-2">
-        <span className="truncate text-ink-900">{selectedClient.name}</span>
+        <span className="truncate text-ui-fg">{selectedClient.name}</span>
         <button
           type="button"
           aria-label="Clear selected client"
-          className="text-ink-400 hover:text-ink-700"
+          className="text-ui-fg-3 hover:text-ui-fg-2"
           onClick={clearSelection}
           disabled={disabled}
         >
@@ -92,16 +92,16 @@ const ClientSearchSelect = ({ clients, value, onChange, placeholder = "Search cl
         onKeyDown={onKeyDown}
       />
       {open && (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-[#e4d8c4] bg-white shadow-lg">
+        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-ui-line bg-ui-surface shadow-lg">
           {filteredClients.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-[#6f8097]">No clients found.</p>
+            <p className="px-3 py-2 text-sm text-ui-fg-3">No clients found.</p>
           ) : (
             filteredClients.map((client, index) => (
               <button
                 key={client.id}
                 type="button"
                 className={`block w-full truncate px-3 py-2 text-left text-sm ${
-                  index === highlightIndex ? "bg-sand-100 text-ink-900" : "text-ink-700 hover:bg-sand-50"
+                  index === highlightIndex ? "bg-ui-inset text-ui-fg" : "text-ui-fg-2 hover:bg-ui-subtle"
                 }`}
                 onMouseEnter={() => setHighlightIndex(index)}
                 onClick={() => selectClient(client)}

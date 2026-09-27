@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 import ClientPortalShell from "../components/layout/ClientPortalShell";
+import LoadingState from "../components/ui/LoadingState";
+import { Alert, Card, CardHeader, FormField } from "../components/app/primitives";
+import { IconCheckCircle, IconLock, IconUser } from "../components/app/icons";
 import { clientPortalApi } from "../api/client-portal-api";
 import { useClientPortalAuth } from "../contexts/ClientPortalAuthContext";
 import { formatDateTime, parseApiError } from "../lib/utils";
@@ -42,10 +45,7 @@ const ClientPortalSettingsPage = () => {
       setLoading(true);
       setLoadError("");
       try {
-        const [me, exportsResult] = await Promise.all([
-          clientPortalApi.me(),
-          clientPortalApi.exports()
-        ]);
+        const [me, exportsResult] = await Promise.all([clientPortalApi.me(), clientPortalApi.exports()]);
         if (!active) return;
         setProfile(me);
         setExportsList(exportsResult.data || []);
@@ -91,161 +91,112 @@ const ClientPortalSettingsPage = () => {
     }
   };
 
+  const details = [
+    ["Business", profile?.name],
+    ["Email", profile?.email],
+    ["GST number", profile?.gstin, true],
+    ["Your accountant", profile?.firmName],
+    ["Last signed in", profile?.portalLastLoginAt ? formatDateTime(profile.portalLastLoginAt) : "This is your first visit"]
+  ];
+
   return (
-    <ClientPortalShell title="Settings" subtitle="Your details and your password.">
+    <ClientPortalShell title="Settings." subtitle="Your details and your password.">
       {loadError ? (
-        <div className="mb-6 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-base font-medium text-rose-700">
+        <Alert tone="err" className="mb-6">
           {loadError}
-        </div>
+        </Alert>
       ) : null}
 
       {loading ? (
-        <p className="text-base text-[#607086]">Loading your details...</p>
+        <div className="flex justify-center py-16">
+          <LoadingState message="Loading your details…" />
+        </div>
       ) : (
-        <>
-          <section className="rounded-2xl border border-[#e7dcc8] bg-white p-5">
-            <h2 className="text-xl font-bold text-ink-900">Your details</h2>
-            <dl className="mt-4 grid gap-4 sm:grid-cols-2">
-              <div>
-                <dt className="text-sm font-semibold uppercase tracking-wide text-[#6a7b90]">
-                  Business
-                </dt>
-                <dd className="text-base font-semibold text-ink-900">{profile?.name || "-"}</dd>
-              </div>
-              <div>
-                <dt className="text-sm font-semibold uppercase tracking-wide text-[#6a7b90]">
-                  Email
-                </dt>
-                <dd className="break-all text-base font-semibold text-ink-900">
-                  {profile?.email || "-"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-sm font-semibold uppercase tracking-wide text-[#6a7b90]">
-                  GST number
-                </dt>
-                <dd className="text-base font-semibold text-ink-900">{profile?.gstin || "-"}</dd>
-              </div>
-              <div>
-                <dt className="text-sm font-semibold uppercase tracking-wide text-[#6a7b90]">
-                  Your accountant
-                </dt>
-                <dd className="text-base font-semibold text-ink-900">
-                  {profile?.firmName || "-"}
-                </dd>
-              </div>
-              <div className="sm:col-span-2">
-                <dt className="text-sm font-semibold uppercase tracking-wide text-[#6a7b90]">
-                  Last signed in
-                </dt>
-                <dd className="text-base font-semibold text-ink-900">
-                  {profile?.portalLastLoginAt
-                    ? formatDateTime(profile.portalLastLoginAt)
-                    : "This is your first visit"}
-                </dd>
-              </div>
+        <div className="space-y-6">
+          <Card>
+            <CardHeader title="Your details" icon={<IconUser size={14} />} />
+            <dl className="grid gap-x-6 gap-y-5 px-5 py-5 sm:grid-cols-2">
+              {details.map(([label, value, mono]) => (
+                <div key={label}>
+                  <dt className="text-sm text-ui-fg-3">{label}</dt>
+                  <dd className={`mt-1 break-all text-base font-medium text-ui-fg ${mono ? "ui-mono" : ""}`}>{value || "—"}</dd>
+                </div>
+              ))}
             </dl>
-          </section>
+          </Card>
 
-          <section className="mt-6 rounded-2xl border border-[#e7dcc8] bg-white p-5">
-            <h2 className="text-xl font-bold text-ink-900">Filed to your accounts</h2>
-            <p className="mt-1 text-base text-[#607086]">
-              Each time your accountant files a batch of your documents, it shows up here.
-            </p>
+          <Card className="overflow-hidden">
+            <CardHeader title="Filed to your accounts" description="Each time your accountant files a batch of your documents, it shows up here." />
             {exportsList.length === 0 ? (
-              <p className="mt-4 rounded-xl border border-[#e7dcc8] bg-sand-50 px-4 py-4 text-base text-[#607086]">
-                Nothing has been filed yet.
-              </p>
+              <p className="px-5 py-8 text-center text-[0.9375rem] text-ui-fg-3">Nothing has been filed yet.</p>
             ) : (
-              <ul className="mt-4 space-y-3">
+              <ul className="divide-y divide-ui-line">
                 {exportsList.map((entry) => (
-                  <li
-                    key={entry.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e7dcc8] px-4 py-3"
-                  >
-                    <div>
-                      <p className="text-base font-semibold text-ink-900">
+                  <li key={entry.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
+                    <IconCheckCircle size={18} className="text-ui-ok" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-medium text-ui-fg">
                         {entry.documentCount} document{entry.documentCount === 1 ? "" : "s"}
                       </p>
-                      <p className="text-sm text-[#607086]">{entry.period || "-"}</p>
+                      <p className="text-sm text-ui-fg-3">{entry.period || "—"}</p>
                     </div>
-                    <p className="text-sm text-[#607086]">{formatDateTime(entry.exportedAt)}</p>
+                    <p className="text-sm text-ui-fg-3">{formatDateTime(entry.exportedAt)}</p>
                   </li>
                 ))}
               </ul>
             )}
-          </section>
+          </Card>
 
-          <section className="mt-6 rounded-2xl border border-[#e7dcc8] bg-white p-5">
-            <h2 className="text-xl font-bold text-ink-900">Change your password</h2>
+          <Card>
+            <CardHeader title="Change your password" icon={<IconLock size={14} />} />
+            <div className="px-5 py-5">
+              {done ? (
+                <Alert tone="ok" title="Password changed">
+                  Please sign in again with your new password — taking you back to the sign-in page now.
+                </Alert>
+              ) : (
+                <form className="max-w-md space-y-5" onSubmit={onChangePassword}>
+                  <FormField label="Current password" htmlFor="current-password">
+                    <input
+                      id="current-password"
+                      className="field py-2.5 text-[0.9375rem]"
+                      type="password"
+                      autoComplete="current-password"
+                      value={form.currentPassword}
+                      onChange={(event) => setForm((prev) => ({ ...prev, currentPassword: event.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="New password" htmlFor="new-password" hint="At least 8 characters.">
+                    <input
+                      id="new-password"
+                      className="field py-2.5 text-[0.9375rem]"
+                      type="password"
+                      autoComplete="new-password"
+                      value={form.newPassword}
+                      onChange={(event) => setForm((prev) => ({ ...prev, newPassword: event.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Repeat new password" htmlFor="confirm-password">
+                    <input
+                      id="confirm-password"
+                      className="field py-2.5 text-[0.9375rem]"
+                      type="password"
+                      autoComplete="new-password"
+                      value={form.confirmPassword}
+                      onChange={(event) => setForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                    />
+                  </FormField>
 
-            {done ? (
-              <div className="mt-4 rounded-xl border border-mint-300 bg-mint-500/10 px-4 py-4 text-base text-mint-700">
-                Password changed. Please sign in again with your new password — taking you back to
-                the sign-in page now.
-              </div>
-            ) : (
-              <form className="mt-4 space-y-5" onSubmit={onChangePassword}>
-                <div>
-                  <label className="label" htmlFor="current-password">
-                    Current password
-                  </label>
-                  <input
-                    id="current-password"
-                    className="field py-3 text-base"
-                    type="password"
-                    autoComplete="current-password"
-                    value={form.currentPassword}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, currentPassword: event.target.value }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="label" htmlFor="new-password">
-                    New password
-                  </label>
-                  <input
-                    id="new-password"
-                    className="field py-3 text-base"
-                    type="password"
-                    autoComplete="new-password"
-                    value={form.newPassword}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, newPassword: event.target.value }))
-                    }
-                  />
-                  <p className="mt-1 text-sm text-[#607086]">At least 8 characters.</p>
-                </div>
-                <div>
-                  <label className="label" htmlFor="confirm-password">
-                    Repeat new password
-                  </label>
-                  <input
-                    id="confirm-password"
-                    className="field py-3 text-base"
-                    type="password"
-                    autoComplete="new-password"
-                    value={form.confirmPassword}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, confirmPassword: event.target.value }))
-                    }
-                  />
-                </div>
+                  {formError ? <Alert tone="err">{formError}</Alert> : null}
 
-                {formError ? (
-                  <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-base font-medium text-rose-700">
-                    {formError}
-                  </div>
-                ) : null}
-
-                <button type="submit" className="btn-primary w-full py-3 text-base" disabled={saving}>
-                  {saving ? "Saving..." : "Change password"}
-                </button>
-              </form>
-            )}
-          </section>
-        </>
+                  <button type="submit" className="btn-primary py-2.5 text-[0.875rem]" disabled={saving}>
+                    {saving ? "Saving…" : "Change password"}
+                  </button>
+                </form>
+              )}
+            </div>
+          </Card>
+        </div>
       )}
     </ClientPortalShell>
   );

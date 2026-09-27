@@ -2,8 +2,12 @@ import { Fragment, useEffect, useState } from "react";
 import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
 import { SettingsSkeleton } from "../components/ui/skeletons";
+import { TableScroll } from "../components/app/TableKit";
+import { Alert, Avatar, Badge, Card, CardFooter, CardHeader, FormField, PageHeader, SectionLabel } from "../components/app/primitives";
+import { IconCheck } from "../components/app/icons";
+import { useAppTheme } from "../contexts/ThemeContext";
 import { firmsApi } from "../api/firms-api";
-import { parseApiError } from "../lib/utils";
+import { cn, parseApiError } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
 import { isAdmin } from "../utils/permissions";
 
@@ -11,44 +15,53 @@ const firmSchema = z.object({
   name: z.string().min(2, "Firm name must be at least 2 characters").max(255, "Firm name is too long")
 });
 
-const planStyles = {
-  starter: "bg-amber-500/10 text-amber-700 border-amber-500/30",
-  professional: "bg-indigo-500/10 text-indigo-700 border-indigo-500/30",
-  enterprise: "bg-mint-500/10 text-mint-600 border-mint-500/30"
+const PLAN_TONE = { starter: "neutral", professional: "accent", enterprise: "ok" };
+
+const PLAN_COPY = {
+  starter: "Entry-level plan for small firms.",
+  professional: "Extended limits and team features.",
+  enterprise: "Full access with priority support."
 };
 
-const PlanBadge = ({ plan }) => {
-  const normalized = String(plan || "starter").toLowerCase();
-  const style = planStyles[normalized] || planStyles.starter;
-  const label = normalized.charAt(0).toUpperCase() + normalized.slice(1);
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${style}`}>
-      {label}
+const THEME_CHOICES = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" }
+];
+
+// A miniature of the app in each theme. Drawn with fixed colours so every
+// card shows its own theme regardless of the current one.
+const MiniApp = ({ dark }) => (
+  <span className={cn("flex h-full flex-col gap-1.5 p-2.5", dark ? "bg-[#0B0C0E]" : "bg-[#F7F6F2]")}>
+    <span className="flex items-center gap-1">
+      <span className="h-1.5 w-1.5 rounded-full bg-[#6657D9]" />
+      <span className={cn("h-1 w-8 rounded-full", dark ? "bg-white/20" : "bg-black/15")} />
     </span>
-  );
-};
+    <span className={cn("flex-1 rounded-md border p-1.5", dark ? "border-white/10 bg-[#131417]" : "border-black/[0.07] bg-white")}>
+      <span className={cn("block h-1 w-10 rounded-full", dark ? "bg-white/30" : "bg-black/25")} />
+      <span className={cn("mt-1 block h-1 w-14 rounded-full", dark ? "bg-white/10" : "bg-black/10")} />
+      <span className="mt-2 block h-1 w-6 rounded-full bg-[#6657D9]" />
+    </span>
+  </span>
+);
+
+const ThemePreview = ({ variant }) => (
+  <span className="block h-24 overflow-hidden">
+    {variant === "system" ? (
+      <span className="grid h-full grid-cols-2">
+        <MiniApp />
+        <MiniApp dark />
+      </span>
+    ) : (
+      <MiniApp dark={variant === "dark"} />
+    )}
+  </span>
+);
 
 const roleLabelMap = {
   admin: "Admin",
   staff: "Staff",
   owner: "Owner"
-};
-
-const roleStyles = {
-  admin: "bg-indigo-500/10 text-indigo-700 border-indigo-500/30",
-  staff: "bg-ink-900/10 text-ink-700 border-ink-700/30",
-  owner: "bg-mint-500/10 text-mint-600 border-mint-500/30"
-};
-
-const RoleBadge = ({ role }) => {
-  const normalized = String(role || "staff").toLowerCase();
-  const style = roleStyles[normalized] || roleStyles.staff;
-  const label = roleLabelMap[normalized] || normalized;
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${style}`}>
-      {label}
-    </span>
-  );
 };
 
 const permissionSections = [
@@ -85,7 +98,7 @@ const permissionSections = [
     ]
   },
   {
-    title: "Team & Settings",
+    title: "Team and settings",
     rows: [
       ["View notifications", true],
       ["View audit logs", false],
@@ -95,15 +108,21 @@ const permissionSections = [
   }
 ];
 
-const AccessMark = ({ allowed }) => (
-  <span className={allowed ? "font-bold text-mint-700" : "font-bold text-slate-400"}>
-    {allowed ? "✓" : "—"}
-  </span>
-);
+const AccessMark = ({ allowed }) =>
+  allowed ? (
+    <span className="inline-flex text-ui-ok" aria-label="Allowed">
+      <IconCheck size={15} />
+    </span>
+  ) : (
+    <span className="text-ui-fg-4" aria-label="Not allowed">
+      —
+    </span>
+  );
 
 const SettingsPage = () => {
   const { user } = useAuth();
   const canAdmin = isAdmin(user);
+  const { preference, setPreference } = useAppTheme();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -150,7 +169,9 @@ const SettingsPage = () => {
     try {
       const updated = await firmsApi.updateSettings(validation.data);
       setSettings((prev) => ({ ...prev, ...updated }));
-      setToast("Firm settings saved successfully.");
+      // The top bar shows the firm name; tell it about the rename.
+      window.dispatchEvent(new CustomEvent("vx-firm-updated", { detail: { ...settings, ...updated } }));
+      setToast("Firm settings saved.");
     } catch (saveError) {
       setError(parseApiError(saveError, "Unable to save firm settings"));
     } finally {
@@ -158,212 +179,202 @@ const SettingsPage = () => {
     }
   };
 
+  const planKey = String(settings?.plan || "starter").toLowerCase();
+  const sections = [
+    { id: "general", label: "General" },
+    { id: "plan", label: "Plan" },
+    { id: "appearance", label: "Appearance" },
+    { id: "profile", label: "Profile" },
+    canAdmin ? { id: "permissions", label: "Permissions" } : null
+  ].filter(Boolean);
+  const nameChanged = (settings?.name || "") !== form.name;
+
   return (
-    <AppShell title="Settings" subtitle="Manage your firm details and account preferences.">
+    <AppShell>
+      <PageHeader title="Settings." tint="Your firm, your account, your workspace." />
+
       {loading ? (
         <SettingsSkeleton />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Firm Settings */}
-          {canAdmin && (
-          <article className="panel p-6">
-            <div className="mb-5 flex items-start justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-ink-900">Firm Settings</h2>
-                <p className="mt-0.5 text-sm text-ink-500">Update your firm name and view plan details.</p>
-              </div>
-              {settings?.plan && <PlanBadge plan={settings.plan} />}
-            </div>
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[12rem_minmax(0,1fr)]">
+          <nav aria-label="Settings sections" className="lg:sticky lg:top-20 lg:self-start">
+            <ul className="flex gap-1 overflow-x-auto lg:flex-col">
+              {sections.map((section) => (
+                <li key={section.id}>
+                  <a
+                    href={`#${section.id}`}
+                    className="block whitespace-nowrap rounded-lg px-3 py-1.5 text-[0.8125rem] font-medium text-ui-fg-3 transition-colors hover:bg-ui-inset hover:text-ui-fg"
+                  >
+                    {section.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
 
+          <div className="space-y-6">
             {error ? (
-              <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              <Alert tone="err" onDismiss={() => setError("")}>
                 {error}
-              </div>
+              </Alert>
             ) : null}
-
             {toast ? (
-              <div className="mb-4 rounded-lg border border-mint-300 bg-mint-500/10 px-4 py-3 text-sm font-semibold text-mint-700">
+              <Alert tone="ok" onDismiss={() => setToast("")}>
                 {toast}
-              </div>
+              </Alert>
             ) : null}
 
-            <form className="space-y-4" onSubmit={onSaveFirm}>
-              <div>
-                <label className="label">Firm name</label>
-                <input
-                  className="field"
-                  value={form.name}
-                  onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                  placeholder="e.g. Sharma & Associates"
-                />
-              </div>
-
-              <div>
-                <label className="label">Owner email</label>
-                <input
-                  className="field bg-sand-50 text-ink-500"
-                  value={settings?.ownerEmail || settings?.owner_email || ""}
-                  readOnly
-                  disabled
-                />
-                <p className="mt-1 text-xs text-ink-500">Contact support to change the owner email.</p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-xl border border-[#e7dcc8] bg-sand-50/60 px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold text-ink-900">Current plan</p>
-                  <p className="text-xs text-ink-500 mt-0.5">
-                    {settings?.plan === "enterprise"
-                      ? "Full access with priority support"
-                      : settings?.plan === "professional"
-                      ? "Extended limits and team features"
-                      : "Entry-level plan for small firms"}
+            <Card as="section" id="general" className="scroll-mt-24">
+              <form onSubmit={onSaveFirm}>
+                <div className="px-6 py-6">
+                  <h2 className="text-[0.9375rem] font-semibold tracking-[-0.01em] text-ui-fg">Firm</h2>
+                  <p className="mt-1 text-[0.8125rem] text-ui-fg-3">
+                    The name your clients see on upload links, emails and the client portal.
                   </p>
+                  <div className="mt-5 grid max-w-xl gap-4">
+                    <FormField label="Firm name" htmlFor="firm-name">
+                      <input
+                        id="firm-name"
+                        className="field"
+                        value={canAdmin ? form.name : settings?.name || ""}
+                        disabled={!canAdmin}
+                        onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                        placeholder="e.g. Sharma & Associates"
+                      />
+                    </FormField>
+                    <FormField label="Owner email" htmlFor="firm-owner" hint="Contact support to change the owner email.">
+                      <input id="firm-owner" className="field" value={settings?.ownerEmail || settings?.owner_email || ""} readOnly disabled />
+                    </FormField>
+                  </div>
                 </div>
-                <PlanBadge plan={settings?.plan} />
-              </div>
+                <CardFooter>
+                  <span>{canAdmin ? "A new name shows up for your team and clients right away." : "Contact an admin on your team to change firm settings."}</span>
+                  {canAdmin ? (
+                    <button type="submit" className="btn-primary btn-sm" disabled={saving || !nameChanged}>
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  ) : null}
+                </CardFooter>
+              </form>
+            </Card>
 
-              <button type="submit" className="btn-primary w-full" disabled={saving}>
-                {saving ? "Saving..." : "Save changes"}
-              </button>
-            </form>
-          </article>
-          )}
-
-          {/* Firm Settings (read-only) — staff can view the firm name and plan,
-              they just can't edit them. Editing is admin-only above; this panel
-              is the staff-visible equivalent so plan visibility isn't tied to
-              the admin-only edit form. */}
-          {!canAdmin && (
-          <article className="panel p-6">
-            <div className="mb-5">
-              <h2 className="text-lg font-bold text-ink-900">Firm Settings</h2>
-              <p className="mt-0.5 text-sm text-ink-500">Firm details for this account.</p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="label">Firm name</label>
-                <input className="field bg-sand-50 text-ink-500" value={settings?.name || ""} readOnly disabled />
-              </div>
-
-              <div className="flex items-center justify-between rounded-xl border border-[#e7dcc8] bg-sand-50/60 px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold text-ink-900">Current plan</p>
-                  <p className="text-xs text-ink-500 mt-0.5">
-                    {settings?.plan === "enterprise"
-                      ? "Full access with priority support"
-                      : settings?.plan === "professional"
-                      ? "Extended limits and team features"
-                      : "Entry-level plan for small firms"}
-                  </p>
-                </div>
-                <PlanBadge plan={settings?.plan} />
-              </div>
-
-              <p className="text-xs text-ink-500">Contact an admin on your team to change firm settings.</p>
-            </div>
-          </article>
-          )}
-
-          {/* My Profile */}
-          <article className="panel p-6">
-            <div className="mb-5">
-              <h2 className="text-lg font-bold text-ink-900">My Profile</h2>
-              <p className="mt-0.5 text-sm text-ink-500">Your account details for this firm.</p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center gap-4 rounded-xl border border-[#e7dcc8] bg-sand-50/60 px-4 py-4">
-                <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-mint-500 to-mint-600 text-sm font-bold text-white shadow-sm">
-                  {(user?.name || "U")
-                    .split(" ")
-                    .map((n) => n[0])
-                    .join("")
-                    .toUpperCase()
-                    .slice(0, 2)}
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-ink-900">{user?.name || "-"}</p>
-                  <p className="truncate text-xs text-ink-500">{user?.email || "-"}</p>
-                </div>
-                <div className="ml-auto flex-shrink-0">
-                  <RoleBadge role={user?.role} />
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Full name</label>
-                <input
-                  className="field bg-sand-50 text-ink-500"
-                  value={user?.name || ""}
-                  readOnly
-                  disabled
+            <Card as="section" id="plan" className="scroll-mt-24 overflow-hidden">
+              <div className="relative px-6 py-6">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0"
+                  style={{ background: "radial-gradient(50% 120% at 100% 0%, rgb(102 87 217 / 0.08), transparent 70%)" }}
                 />
-              </div>
-
-              <div>
-                <label className="label">Email address</label>
-                <input
-                  className="field bg-sand-50 text-ink-500"
-                  value={user?.email || ""}
-                  readOnly
-                  disabled
-                />
-              </div>
-
-              <div>
-                <label className="label">Role</label>
-                <div className="field flex items-center bg-sand-50">
-                  <RoleBadge role={user?.role} />
+                <div className="relative flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-[0.9375rem] font-semibold tracking-[-0.01em] text-ui-fg">Plan</h2>
+                    <p className="mt-1 text-[0.8125rem] text-ui-fg-3">{PLAN_COPY[planKey] || PLAN_COPY.starter}</p>
+                  </div>
+                  <Badge tone={PLAN_TONE[planKey] || "neutral"} className="text-[0.8125rem] capitalize">
+                    {planKey}
+                  </Badge>
                 </div>
               </div>
+            </Card>
 
-              <p className="text-xs text-ink-500">
-                To update your profile details, contact your firm administrator.
-              </p>
-            </div>
-          </article>
-          {canAdmin && (
-            <article className="panel p-6 lg:col-span-2">
-              <div className="mb-5">
-                <h2 className="text-lg font-bold text-ink-900">Permissions</h2>
-                <p className="mt-0.5 text-sm text-ink-500">
-                  Read-only reference for admin and staff access boundaries.
-                </p>
+            <Card as="section" id="appearance" className="scroll-mt-24">
+              <div className="px-6 py-6">
+                <h2 className="text-[0.9375rem] font-semibold tracking-[-0.01em] text-ui-fg">Appearance</h2>
+                <p className="mt-1 text-[0.8125rem] text-ui-fg-3">Choose how Verax looks on this device.</p>
+                <div role="radiogroup" aria-label="Theme" className="mt-5 grid gap-3 sm:grid-cols-3">
+                  {THEME_CHOICES.map((choice) => {
+                    const active = preference === choice.value;
+                    return (
+                      <button
+                        key={choice.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setPreference(choice.value)}
+                        className={cn(
+                          "group overflow-hidden rounded-xl border text-left outline-none transition-[border-color,box-shadow] focus-visible:ring-2 focus-visible:ring-ui-accent",
+                          active ? "border-ui-accent shadow-[0_0_0_3px_rgb(var(--ui-accent)/0.15)]" : "border-ui-line hover:border-ui-line-strong"
+                        )}
+                      >
+                        <ThemePreview variant={choice.value} />
+                        <span className="flex items-center justify-between border-t border-ui-line px-3 py-2.5">
+                          <span className="text-[0.8125rem] font-medium text-ui-fg">{choice.label}</span>
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "flex h-4 w-4 items-center justify-center rounded-full border",
+                              active ? "border-ui-accent bg-ui-accent text-white" : "border-ui-line-strong"
+                            )}
+                          >
+                            {active ? <IconCheck size={10} strokeWidth={2.4} /> : null}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+            </Card>
 
-              <div className="overflow-x-auto">
-                <table className="min-w-full border-separate border-spacing-0">
-                  <thead>
-                    <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
-                      <th className="rounded-l-lg px-3 py-3">Action</th>
-                      <th className="px-3 py-3 text-center">Admin</th>
-                      <th className="rounded-r-lg px-3 py-3 text-center">Staff</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {permissionSections.map((section) => (
-                      <Fragment key={section.title}>
-                        <tr>
-                          <td colSpan={3} className="px-3 pb-1 pt-4 text-xs font-bold uppercase tracking-wide text-ink-500">
-                            {section.title}
-                          </td>
-                        </tr>
-                        {section.rows.map(([action, staffAllowed]) => (
-                          <tr key={action} className="border-t border-[#eadfcf]">
-                            <td className="px-3 py-3 text-sm font-semibold text-ink-800">{action}</td>
-                            <td className="px-3 py-3 text-center"><AccessMark allowed /></td>
-                            <td className="px-3 py-3 text-center"><AccessMark allowed={staffAllowed} /></td>
+            <Card as="section" id="profile" className="scroll-mt-24">
+              <div className="px-6 py-6">
+                <h2 className="text-[0.9375rem] font-semibold tracking-[-0.01em] text-ui-fg">Profile</h2>
+                <p className="mt-1 text-[0.8125rem] text-ui-fg-3">Your account in this firm.</p>
+                <div className="mt-5 flex items-center gap-4">
+                  <Avatar name={user?.name} size={48} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[0.9375rem] font-medium text-ui-fg">{user?.name || "—"}</p>
+                    <p className="truncate text-[0.8125rem] text-ui-fg-3">{user?.email || "—"}</p>
+                  </div>
+                  <Badge tone={String(user?.role).toLowerCase() === "admin" ? "accent" : "neutral"}>
+                    {roleLabelMap[String(user?.role || "staff").toLowerCase()] || user?.role}
+                  </Badge>
+                </div>
+              </div>
+              <CardFooter>
+                <span>To change your name or email, ask a firm admin.</span>
+              </CardFooter>
+            </Card>
+
+            {canAdmin ? (
+              <Card as="section" id="permissions" className="scroll-mt-24 overflow-hidden">
+                <CardHeader title="Permissions" description="What admins and staff can do. For reference — roles are set per person on the Team page." />
+                <TableScroll>
+                  <table className="ui-table">
+                    <thead>
+                      <tr>
+                        <th>Action</th>
+                        <th className="w-24 text-center">Admin</th>
+                        <th className="w-24 text-center">Staff</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {permissionSections.map((section) => (
+                        <Fragment key={section.title}>
+                          <tr className="hover:!bg-transparent">
+                            <td colSpan={3} className="!border-b-0 !pb-1 !pt-5">
+                              <SectionLabel>{section.title}</SectionLabel>
+                            </td>
                           </tr>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          )}
+                          {section.rows.map(([action, staffAllowed]) => (
+                            <tr key={action}>
+                              <td className="text-ui-fg">{action}</td>
+                              <td className="text-center">
+                                <AccessMark allowed />
+                              </td>
+                              <td className="text-center">
+                                <AccessMark allowed={staffAllowed} />
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableScroll>
+              </Card>
+            ) : null}
+          </div>
         </div>
       )}
     </AppShell>

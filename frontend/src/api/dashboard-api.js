@@ -18,5 +18,11 @@ export const dashboardApi = {
       exportedThisMonth: overview.exportsThisMonth ?? 0,
       activity
     };
+  },
+
+  // Review queue, pipeline, per-client progress, 14-day trend and the work
+  // activity feed for the dashboard home.
+  getInsights() {
+    return request("/api/dashboard/insights");
   }
 };

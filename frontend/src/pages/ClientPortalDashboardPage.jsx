@@ -2,17 +2,12 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import ClientPortalShell from "../components/layout/ClientPortalShell";
 import ClientStatusBadge from "../components/ui/ClientStatusBadge";
+import LoadingState from "../components/ui/LoadingState";
+import { Alert, Card, CardHeader, Progress, StatTile } from "../components/app/primitives";
+import { IconArrowRight, IconFile, IconFiles, IconScale } from "../components/app/icons";
 import { clientPortalApi } from "../api/client-portal-api";
 import { useClientPortalAuth } from "../contexts/ClientPortalAuthContext";
 import { formatDate, parseApiError } from "../lib/utils";
-
-const StatTile = ({ label, value, hint }) => (
-  <div className="rounded-2xl border border-[#e7dcc8] bg-white p-4">
-    <p className="text-3xl font-extrabold text-ink-900">{value}</p>
-    <p className="mt-1 text-base font-semibold text-ink-800">{label}</p>
-    {hint ? <p className="mt-1 text-sm text-[#607086]">{hint}</p> : null}
-  </div>
-);
 
 const ClientPortalDashboardPage = () => {
   const { clientName } = useClientPortalAuth();
@@ -49,97 +44,112 @@ const ClientPortalDashboardPage = () => {
     };
   }, []);
 
+  const total = stats?.totalDocuments ?? 0;
+  const completed = stats?.completedCount ?? 0;
+  const thisMonth = stats?.thisMonthDocuments ?? 0;
+
   return (
     <ClientPortalShell
-      title={`Hello${clientName ? ` ${clientName}` : ""}, here's your status`}
+      title={`Hello${clientName ? `, ${clientName}` : ""}.`}
       subtitle="A quick look at everything your accountant is working on for you."
     >
       {error ? (
-        <div className="mb-6 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-base font-medium text-rose-700">
+        <Alert tone="err" className="mb-6">
           {error}
-        </div>
+        </Alert>
       ) : null}
 
       {loading ? (
-        <p className="text-base text-[#607086]">Loading your summary...</p>
+        <div className="flex justify-center py-16">
+          <LoadingState message="Loading your summary…" />
+        </div>
       ) : (
-        <>
-          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile label="Total documents" value={stats?.totalDocuments ?? 0} />
-            <StatTile
-              label="Processing"
-              value={stats?.processingCount ?? 0}
-              hint="Being read right now"
-            />
-            <StatTile
-              label="Under review"
-              value={stats?.reviewCount ?? 0}
-              hint="With your accountant"
-            />
-            <StatTile label="Complete" value={stats?.completedCount ?? 0} hint="Filed and done" />
+        <div className="space-y-6">
+          <section aria-label="Summary" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label="All documents" value={total} hint={`${thisMonth} added this month`} />
+            <StatTile label="Being read" value={stats?.processingCount ?? 0} tone="accent" hint="Verax is reading these now" />
+            <StatTile label="With your accountant" value={stats?.reviewCount ?? 0} tone="warn" hint="Being checked" />
+            <StatTile label="Complete" value={completed} tone="ok" hint="Filed into your accounts" />
           </section>
 
-          <p className="mt-4 text-base text-[#607086]">
-            {stats?.thisMonthDocuments ?? 0} document
-            {(stats?.thisMonthDocuments ?? 0) === 1 ? "" : "s"} added this month.
-          </p>
-
-          <section className="mt-8">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-bold text-ink-900">Recent documents</h2>
-              <Link
-                className="text-base font-semibold text-ink-700 underline"
-                to="/client-portal/documents"
-              >
-                See all
-              </Link>
-            </div>
-
-            {recent.length === 0 ? (
-              <div className="mt-4 rounded-2xl border border-[#e7dcc8] bg-sand-50 px-4 py-6 text-base text-[#607086]">
-                Nothing here yet. Documents will appear as soon as they're sent in.
+          {total > 0 ? (
+            <Card>
+              <div className="px-5 py-5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-[0.9375rem] font-medium text-ui-fg">Filed so far</p>
+                  <p className="text-[0.9375rem] font-semibold tabular-nums text-ui-fg">
+                    {completed} <span className="font-normal text-ui-fg-3">of {total}</span>
+                  </p>
+                </div>
+                <Progress value={completed} max={total} className="mt-3 h-2" label="Documents filed" />
               </div>
+            </Card>
+          ) : null}
+
+          <Card className="overflow-hidden">
+            <CardHeader
+              title="Recent documents"
+              action={
+                <Link to="/client-portal/documents" className="link-action text-[0.875rem]">
+                  See all
+                  <IconArrowRight size={14} />
+                </Link>
+              }
+            />
+            {recent.length === 0 ? (
+              <p className="px-5 py-10 text-center text-[0.9375rem] text-ui-fg-3">
+                Nothing here yet. Documents appear as soon as they're sent in.
+              </p>
             ) : (
-              <ul className="mt-4 space-y-3">
+              <ul className="divide-y divide-ui-line">
                 {recent.map((document) => (
-                  <li
-                    key={document.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e7dcc8] bg-white p-4"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-semibold text-ink-900">
-                        {document.originalFilename}
-                      </p>
-                      <p className="text-sm text-[#607086]">{formatDate(document.createdAt)}</p>
+                  <li key={document.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ui-line bg-ui-subtle text-ui-fg-3">
+                      <IconFile size={16} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[0.9375rem] font-medium text-ui-fg">{document.originalFilename}</p>
+                      <p className="text-sm text-ui-fg-3">{formatDate(document.createdAt)}</p>
                     </div>
                     <ClientStatusBadge status={document.status} />
                   </li>
                 ))}
               </ul>
             )}
-          </section>
+          </Card>
 
-          <section className="mt-8 grid gap-4 sm:grid-cols-2">
-            <Link
-              className="rounded-2xl border border-[#e7dcc8] bg-white p-5 transition hover:bg-sand-50"
-              to="/client-portal/documents"
-            >
-              <p className="text-lg font-bold text-ink-900">Your documents</p>
-              <p className="mt-1 text-base text-[#607086]">
-                See everything we hold and download your originals.
-              </p>
-            </Link>
-            <Link
-              className="rounded-2xl border border-[#e7dcc8] bg-white p-5 transition hover:bg-sand-50"
-              to="/client-portal/reconciliation"
-            >
-              <p className="text-lg font-bold text-ink-900">GST summary</p>
-              <p className="mt-1 text-base text-[#607086]">
-                Check how your invoices compare against the GST portal.
-              </p>
-            </Link>
+          <section className="grid gap-4 sm:grid-cols-2">
+            {[
+              {
+                to: "/client-portal/documents",
+                icon: IconFiles,
+                title: "Your documents",
+                body: "See everything we hold and download your originals."
+              },
+              {
+                to: "/client-portal/reconciliation",
+                icon: IconScale,
+                title: "GST summary",
+                body: "Check how your invoices compare against the GST portal."
+              }
+            ].map(({ to, icon: Icon, title, body }) => (
+              <Link
+                key={to}
+                to={to}
+                className="panel group flex items-start gap-4 p-5 transition-[border-color,box-shadow,transform] hover:-translate-y-px hover:border-ui-line-strong hover:shadow-ui-pop focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ui-line bg-ui-subtle text-ui-fg-3">
+                  <Icon size={18} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-base font-semibold text-ui-fg">{title}</span>
+                  <span className="mt-1 block text-[0.9375rem] text-ui-fg-3">{body}</span>
+                </span>
+                <IconArrowRight size={16} className="mt-1 text-ui-fg-4 transition-transform group-hover:translate-x-0.5 group-hover:text-ui-fg-2" />
+              </Link>
+            ))}
           </section>
-        </>
+        </div>
       )}
     </ClientPortalShell>
   );

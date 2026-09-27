@@ -1,6 +1,10 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,jsx}"],
+  // `dark:` only ever fires inside the signed-in app (firm dashboard and client
+  // portal), whose shell carries data-theme. The public surface is light-only
+  // and never sets the attribute.
+  darkMode: ["variant", '&:where([data-theme="dark"], [data-theme="dark"] *)'],
   theme: {
     extend: {
       // `/12` tints (e.g. `bg-amber-500/12`) are used across the public
@@ -17,6 +21,34 @@ export default {
         inter: ["Inter", "-apple-system", "Segoe UI", "Helvetica Neue", "sans-serif"]
       },
       colors: {
+        // --- Signed-in app (firm dashboard + client portal) ------------------
+        // Semantic tokens backed by CSS variables on `.vx-app` (index.css), so
+        // one class serves both the light and the dark theme. Values follow
+        // the public V3 system: canvas/carbon/brand/verify.
+        ui: {
+          canvas: "rgb(var(--ui-canvas) / <alpha-value>)",
+          surface: "rgb(var(--ui-surface) / <alpha-value>)",
+          raised: "rgb(var(--ui-raised) / <alpha-value>)",
+          subtle: "rgb(var(--ui-subtle) / <alpha-value>)",
+          inset: "rgb(var(--ui-inset) / <alpha-value>)",
+          line: "rgb(var(--ui-line) / <alpha-value>)",
+          "line-strong": "rgb(var(--ui-line-strong) / <alpha-value>)",
+          fg: "rgb(var(--ui-fg) / <alpha-value>)",
+          "fg-2": "rgb(var(--ui-fg-2) / <alpha-value>)",
+          "fg-3": "rgb(var(--ui-fg-3) / <alpha-value>)",
+          "fg-4": "rgb(var(--ui-fg-4) / <alpha-value>)",
+          accent: "rgb(var(--ui-accent) / <alpha-value>)",
+          "accent-hover": "rgb(var(--ui-accent-hover) / <alpha-value>)",
+          "accent-text": "rgb(var(--ui-accent-text) / <alpha-value>)",
+          invert: "rgb(var(--ui-invert) / <alpha-value>)",
+          "invert-fg": "rgb(var(--ui-invert-fg) / <alpha-value>)",
+          ok: "rgb(var(--ui-ok) / <alpha-value>)",
+          warn: "rgb(var(--ui-warn) / <alpha-value>)",
+          err: "rgb(var(--ui-err) / <alpha-value>)",
+          info: "rgb(var(--ui-info) / <alpha-value>)",
+          "chart-1": "rgb(var(--ui-chart-1) / <alpha-value>)",
+          "chart-2": "rgb(var(--ui-chart-2) / <alpha-value>)"
+        },
         // --- Public-surface design system (V1, light-first) ------------------
         // Additive namespaces. The legacy ink/sand/mint/ember scales below are
         // still used by every authenticated dashboard page and are unchanged.
@@ -186,7 +218,11 @@ export default {
         // Restrained CTA shadow, retuned to the V1 violet accent. Deliberately
         // a tight contact shadow rather than a diffuse bloom — a "glow" here
         // is exactly the AI-flashy effect the V1 brief rules out.
-        brandGlow: "0 8px 20px -10px rgba(102, 87, 217, 0.38)"
+        brandGlow: "0 8px 20px -10px rgba(102, 87, 217, 0.38)",
+        // Signed-in app elevation, theme-aware through CSS variables.
+        "ui-card": "var(--ui-shadow-card)",
+        "ui-pop": "var(--ui-shadow-pop)",
+        "ui-btn": "var(--ui-shadow-btn)"
       },
       keyframes: {
         float: {

@@ -4,14 +4,31 @@ import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
 import { ClientDetailSkeleton } from "../components/ui/skeletons";
-import StatCard from "../components/ui/StatCard";
 import StatusBadge from "../components/ui/StatusBadge";
+import Modal, { ConfirmDialog } from "../components/app/Modal";
+import ExportPreviewModal from "../components/app/ExportPreviewModal";
+import { Alert, Avatar, Badge, Breadcrumbs, Card, CardHeader, FormField, PageHeader, Segmented, StatTile } from "../components/app/primitives";
+import {
+  IconCalendar,
+  IconCheck,
+  IconCheckCircle,
+  IconCopy,
+  IconEdit,
+  IconExport,
+  IconFiles,
+  IconLink,
+  IconLock,
+  IconMail,
+  IconScale,
+  IconSpark,
+  IconTrash
+} from "../components/app/icons";
 import { clientsApi } from "../api/clients-api";
 import { complianceApi } from "../api/compliance-api";
 import { exportsApi } from "../api/exports-api";
 import { scheduledRequestsApi } from "../api/scheduled-requests-api";
 import { useAuth } from "../contexts/AuthContext";
-import { formatDateTime, parseApiError, triggerFileDownload } from "../lib/utils";
+import { cn, formatDateTime, parseApiError, triggerFileDownload } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 const editSchema = z.object({
@@ -26,7 +43,7 @@ const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const docTypeOptions = [
   ["invoice", "Invoice"],
   ["bill", "Bill"],
-  ["bank_statement", "Bank Statement"],
+  ["bank_statement", "Bank statement"],
   ["other", "Other"]
 ];
 const weekDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -37,11 +54,36 @@ const emptyScheduleForm = {
   dayOfWeek: 1
 };
 
-const formatCurrency = (value) =>
-  `₹${Number(value || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
+const DocTypeChecks = ({ value, onChange, name }) => (
+  <fieldset>
+    <legend className="label">Document types</legend>
+    <div className="grid gap-2 sm:grid-cols-2">
+      {docTypeOptions.map(([type, label]) => {
+        const checked = value.includes(type);
+        return (
+          <label
+            key={type}
+            className={cn(
+              "flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[0.8125rem] font-medium transition-colors",
+              checked
+                ? "border-ui-accent/40 bg-ui-accent/[0.06] text-ui-fg"
+                : "border-ui-line bg-ui-surface text-ui-fg-2 hover:border-ui-line-strong"
+            )}
+          >
+            <input
+              type="checkbox"
+              name={name}
+              className="h-4 w-4 accent-[rgb(var(--ui-accent))]"
+              checked={checked}
+              onChange={(event) => onChange(event.target.checked ? [...value, type] : value.filter((t) => t !== type))}
+            />
+            {label}
+          </label>
+        );
+      })}
+    </div>
+  </fieldset>
+);
 
 const ClientDetailPage = () => {
   const { id } = useParams();
@@ -58,7 +100,6 @@ const ClientDetailPage = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showBulkExport, setShowBulkExport] = useState(false);
   const [showExportPreview, setShowExportPreview] = useState(false);
-  const [showPreviewWarnings, setShowPreviewWarnings] = useState(false);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
   const [showRequestDocs, setShowRequestDocs] = useState(false);
   const [showEnablePortal, setShowEnablePortal] = useState(false);
@@ -295,7 +336,6 @@ const ClientDetailPage = () => {
       const result = await exportsApi.preview(payload);
       setShowBulkExport(false);
       setExportPreview(result);
-      setShowPreviewWarnings(false);
       setShowExportPreview(true);
     } catch (previewError) {
       setBulkExportError(parseApiError(previewError, "Unable to preview reviewed documents"));
@@ -396,781 +436,632 @@ const ClientDetailPage = () => {
     .map((type) => docTypeOptions.find(([value]) => value === type)?.[1] || type)
     .join(", ");
 
+  const uploadLink = uploadLinkFor(client?.uploadToken);
+  const gstClass =
+    gstLookup.status === "valid"
+      ? "text-ui-ok"
+      : gstLookup.status === "fallback" || gstLookup.status === "loading"
+        ? "text-ui-fg-3"
+        : "text-ui-err";
+
+
   return (
-    <AppShell title={client?.name || "Client Detail"} subtitle="Client profile, upload status, and compliance pipeline.">
-      {/* Delete confirm modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
-          <div className="panel mx-4 w-full max-w-sm p-6">
-            <h3 className="text-lg font-bold text-ink-900">Delete client?</h3>
-            <p className="mt-2 text-sm text-[#607086]">
-              This will permanently delete <strong>{client?.name}</strong> and all associated data. This cannot be undone.
-            </p>
-            <div className="mt-5 flex gap-3">
-              <button type="button" className="btn-secondary flex-1" onClick={() => setShowDeleteConfirm(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="flex-1 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 transition"
-                onClick={onDelete}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
+    <AppShell>
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+        onConfirm={onDelete}
+        title={`Delete ${client?.name || "client"}?`}
+        description="The client, their documents and upload links will be removed. This cannot be undone."
+        confirmLabel="Delete client"
+        destructive
+        busy={deleting}
+        busyLabel="Deleting…"
+      />
+
+      <Modal
+        open={showBulkExport}
+        onClose={() => {
+          setShowBulkExport(false);
+          setBulkExportError("");
+        }}
+        busy={previewingExport}
+        title="Export to Tally"
+        description={`${reviewedCount} reviewed ${reviewedCount === 1 ? "document" : "documents"} for ${client?.name}. Leave the dates blank to export all of them.`}
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={previewingExport}
+              onClick={() => {
+                setShowBulkExport(false);
+                setBulkExportError("");
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" className="btn-primary" disabled={previewingExport} onClick={onBulkExportPreview}>
+              {previewingExport ? "Preparing preview…" : "Preview vouchers"}
+            </button>
+          </>
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="From" htmlFor="bulk-from">
+            <input
+              id="bulk-from"
+              className="field"
+              type="date"
+              value={bulkExportForm.fromDate}
+              onChange={(event) => setBulkExportForm((prev) => ({ ...prev, fromDate: event.target.value }))}
+            />
+          </FormField>
+          <FormField label="To" htmlFor="bulk-to">
+            <input
+              id="bulk-to"
+              className="field"
+              type="date"
+              value={bulkExportForm.toDate}
+              onChange={(event) => setBulkExportForm((prev) => ({ ...prev, toDate: event.target.value }))}
+            />
+          </FormField>
         </div>
-      )}
+        {bulkExportError ? (
+          <Alert tone="err" className="mt-4">
+            {bulkExportError}
+          </Alert>
+        ) : null}
+      </Modal>
 
-      {showBulkExport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
-          <div className="panel mx-4 w-full max-w-md p-6">
-            <h3 className="text-lg font-bold text-ink-900">Bulk Export to Tally</h3>
-            <p className="mt-1 text-sm font-semibold text-[#607086]">{client?.name}</p>
-            <p className="mt-3 text-xs text-[#6f8097]">
-              Leave blank to export all reviewed documents.
-            </p>
+      <ExportPreviewModal
+        open={showExportPreview}
+        preview={exportPreview}
+        clientName={client?.name}
+        error={exportPreviewError}
+        confirming={confirmingExport}
+        onCancel={() => {
+          setShowExportPreview(false);
+          setExportPreviewError("");
+        }}
+        onConfirm={onConfirmBulkExport}
+      />
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="label">From</label>
-                <input
+      <Modal
+        open={showScheduleForm}
+        onClose={() => setShowScheduleForm(false)}
+        busy={savingSchedule}
+        size="lg"
+        title={schedule ? "Edit recurring request" : "Set up recurring requests"}
+        description={`Verax emails ${client?.name || "the client"} an upload link on a schedule, so you never have to chase.`}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" disabled={savingSchedule} onClick={() => setShowScheduleForm(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={savingSchedule || scheduleForm.documentTypes.length === 0}
+              onClick={onSaveSchedule}
+            >
+              {savingSchedule ? "Saving…" : "Save schedule"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <DocTypeChecks
+            name="schedule-types"
+            value={scheduleForm.documentTypes}
+            onChange={(documentTypes) => setScheduleForm((prev) => ({ ...prev, documentTypes }))}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <p className="label">Frequency</p>
+              <Segmented
+                ariaLabel="Frequency"
+                layoutId="schedule-frequency"
+                value={scheduleForm.frequency}
+                onChange={(frequency) => setScheduleForm((prev) => ({ ...prev, frequency }))}
+                options={[
+                  { value: "monthly", label: "Monthly" },
+                  { value: "weekly", label: "Weekly" }
+                ]}
+              />
+            </div>
+            {scheduleForm.frequency === "monthly" ? (
+              <FormField label="Day of month" htmlFor="schedule-dom">
+                <select
+                  id="schedule-dom"
                   className="field"
-                  type="date"
-                  value={bulkExportForm.fromDate}
-                  onChange={(event) =>
-                    setBulkExportForm((prev) => ({ ...prev, fromDate: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label className="label">To</label>
-                <input
-                  className="field"
-                  type="date"
-                  value={bulkExportForm.toDate}
-                  onChange={(event) =>
-                    setBulkExportForm((prev) => ({ ...prev, toDate: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-
-            <p className="mt-3 text-sm text-[#607086]">
-              {reviewedCount} reviewed {reviewedCount === 1 ? "document" : "documents"} available.
-            </p>
-
-            {bulkExportError ? (
-              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {bulkExportError}
-              </div>
-            ) : null}
-
-            <div className="mt-5 flex gap-3">
-              <button
-                type="button"
-                className="btn-secondary flex-1"
-                disabled={previewingExport}
-                onClick={() => {
-                  setShowBulkExport(false);
-                  setBulkExportError("");
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-primary flex-1"
-                disabled={previewingExport}
-                onClick={onBulkExportPreview}
-              >
-                {previewingExport ? "Preparing preview..." : "Preview"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showExportPreview && exportPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 px-4 py-6 backdrop-blur-sm">
-          <div className="panel flex max-h-[90vh] w-full max-w-4xl flex-col p-0">
-            <div className="border-b border-[#eadfcf] px-5 py-4">
-              <h3 className="text-lg font-bold text-ink-900">Export Preview - {client?.name}</h3>
-              <p className="mt-1 text-sm text-[#607086]">
-                {exportPreview.documentCount} documents · {exportPreview.vouchers?.length || 0} vouchers will be sent to TallyPrime
-              </p>
-            </div>
-
-            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-              {exportPreview.hasWarnings ? (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <p className="font-semibold">
-                      {exportPreview.warnings.length} line items have unresolved Tally item name mappings.
-                      These items will export with their original names.
-                    </p>
-                    <button
-                      type="button"
-                      className="text-xs font-bold text-amber-900 underline"
-                      onClick={() => setShowPreviewWarnings((prev) => !prev)}
-                    >
-                      {showPreviewWarnings ? "Hide details" : "Show details"}
-                    </button>
-                  </div>
-                  <p className="mt-1 text-xs">
-                    Review mappings before exporting for best results.
-                  </p>
-                  {showPreviewWarnings ? (
-                    <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-amber-200 bg-white">
-                      <table className="min-w-full text-left text-xs">
-                        <thead className="bg-amber-100 text-amber-900">
-                          <tr>
-                            <th className="px-3 py-2">Invoice No.</th>
-                            <th className="px-3 py-2">Item Name</th>
-                            <th className="px-3 py-2">Issue</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {exportPreview.warnings.map((warning, index) => (
-                            <tr key={`${warning.documentId}-${warning.itemName}-${index}`} className="border-t border-amber-100">
-                              <td className="px-3 py-2">{warning.invoiceNumber || "-"}</td>
-                              <td className="px-3 py-2">{warning.itemName}</td>
-                              <td className="px-3 py-2">Unresolved mapping</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {exportPreviewError ? (
-                <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {exportPreviewError}
-                </div>
-              ) : null}
-
-              <div className="overflow-x-auto">
-                <table className="min-w-full border-separate border-spacing-0">
-                  <thead>
-                    <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
-                      <th className="rounded-l-lg px-3 py-3">Voucher Type</th>
-                      <th className="px-3 py-3">Date</th>
-                      <th className="px-3 py-3">Party</th>
-                      <th className="px-3 py-3">Line Items</th>
-                      <th className="px-3 py-3 text-right">Amount</th>
-                      <th className="rounded-r-lg px-3 py-3 text-right">GST</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(exportPreview.vouchers || []).slice(0, 20).map((voucher, index) => (
-                      <tr key={`${voucher.voucherType}-${voucher.voucherDate}-${index}`} className="border-t border-[#eadfcf]">
-                        <td className="px-3 py-3 text-sm font-semibold text-ink-800">{voucher.voucherType}</td>
-                        <td className="px-3 py-3 text-sm text-[#5f6f84]">{voucher.voucherDate || "-"}</td>
-                        <td className="px-3 py-3 text-sm text-[#5f6f84]">{voucher.partyName || "-"}</td>
-                        <td className="px-3 py-3 text-sm text-[#5f6f84]">{voucher.lineItemCount || 0}</td>
-                        <td className="px-3 py-3 text-right text-sm font-semibold text-ink-800">
-                          {formatCurrency(voucher.totalAmount)}
-                        </td>
-                        <td className="px-3 py-3 text-right text-sm text-[#5f6f84]">
-                          {formatCurrency(voucher.gstAmount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {(exportPreview.vouchers?.length || 0) > 20 ? (
-                <p className="text-sm text-[#607086]">
-                  ...and {exportPreview.vouchers.length - 20} more vouchers
-                </p>
-              ) : null}
-            </div>
-
-            <div className="flex flex-wrap gap-3 border-t border-[#eadfcf] px-5 py-4">
-              <button
-                type="button"
-                className="btn-secondary flex-1"
-                disabled={confirmingExport}
-                onClick={() => {
-                  setShowExportPreview(false);
-                  setExportPreviewError("");
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-primary flex-1"
-                disabled={confirmingExport}
-                onClick={onConfirmBulkExport}
-              >
-                {confirmingExport
-                  ? "Exporting..."
-                  : exportPreview.hasWarnings
-                  ? "Export Anyway"
-                  : "Confirm Export"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showScheduleForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
-          <div className="panel mx-4 w-full max-w-lg p-6">
-            <h3 className="text-lg font-bold text-ink-900">Schedule Recurring Requests</h3>
-            <p className="mt-1 text-sm text-[#607086]">{client?.name}</p>
-
-            <div className="mt-4 space-y-4">
-              <div>
-                <label className="label">Document types</label>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {docTypeOptions.map(([value, label]) => (
-                    <label key={value} className="flex items-center gap-2 rounded-lg border border-[#e7dcc8] px-3 py-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={scheduleForm.documentTypes.includes(value)}
-                        onChange={(event) =>
-                          setScheduleForm((prev) => ({
-                            ...prev,
-                            documentTypes: event.target.checked
-                              ? [...prev.documentTypes, value]
-                              : prev.documentTypes.filter((type) => type !== value)
-                          }))
-                        }
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Frequency</label>
-                <div className="flex gap-3">
-                  {["monthly", "weekly"].map((value) => (
-                    <label key={value} className="flex items-center gap-2 text-sm font-semibold capitalize text-ink-700">
-                      <input
-                        type="radio"
-                        name="frequency"
-                        checked={scheduleForm.frequency === value}
-                        onChange={() => setScheduleForm((prev) => ({ ...prev, frequency: value }))}
-                      />
-                      {value}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {scheduleForm.frequency === "monthly" ? (
-                <div>
-                  <label className="label">Day of month</label>
-                  <select
-                    className="field"
-                    value={scheduleForm.dayOfMonth}
-                    onChange={(event) => setScheduleForm((prev) => ({ ...prev, dayOfMonth: event.target.value }))}
-                  >
-                    {Array.from({ length: 28 }, (_, index) => index + 1).map((day) => (
-                      <option key={day} value={day}>{day}</option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div>
-                  <label className="label">Day of week</label>
-                  <select
-                    className="field"
-                    value={scheduleForm.dayOfWeek}
-                    onChange={(event) => setScheduleForm((prev) => ({ ...prev, dayOfWeek: event.target.value }))}
-                  >
-                    {weekDays.map((day, index) => (
-                      <option key={day} value={index}>{day}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {scheduleError ? (
-                <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {scheduleError}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-5 flex gap-3">
-              <button
-                type="button"
-                className="btn-secondary flex-1"
-                disabled={savingSchedule}
-                onClick={() => setShowScheduleForm(false)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-primary flex-1"
-                disabled={savingSchedule || scheduleForm.documentTypes.length === 0}
-                onClick={onSaveSchedule}
-              >
-                {savingSchedule ? "Saving..." : "Save Schedule"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showRequestDocs && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 backdrop-blur-sm">
-          <div className="panel mx-4 w-full max-w-md p-6">
-            <h3 className="text-lg font-bold text-ink-900">Request Documents</h3>
-            <p className="mt-1 text-sm text-[#607086]">{client?.name}</p>
-
-            <div className="mt-4">
-              <label className="label">Document types</label>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {docTypeOptions.map(([value, label]) => (
-                  <label key={value} className="flex items-center gap-2 rounded-lg border border-[#e7dcc8] px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={requestDocsTypes.includes(value)}
-                      onChange={(event) =>
-                        setRequestDocsTypes((prev) =>
-                          event.target.checked
-                            ? [...prev, value]
-                            : prev.filter((type) => type !== value)
-                        )
-                      }
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <p className="mt-3 text-xs text-[#6f8097]">
-              {client?.email
-                ? `${client.email} will be emailed a secure upload link automatically.`
-                : "This client has no email on file — share the link below manually."}
-            </p>
-
-            {client?.uploadToken && (
-              <div className="mt-3 rounded-lg border border-[#e4d8c5] bg-sand-50 p-3">
-                <p className="text-xs font-bold uppercase tracking-wide text-[#6a7b90]">Current upload link</p>
-                <p className="mt-1 break-all font-mono text-xs text-[#596a82]">
-                  {uploadLinkFor(client.uploadToken)}
-                </p>
-                <button
-                  type="button"
-                  className="btn-secondary mt-2 px-3 py-1.5 text-xs"
-                  onClick={onCopyUploadLink}
+                  value={scheduleForm.dayOfMonth}
+                  onChange={(event) => setScheduleForm((prev) => ({ ...prev, dayOfMonth: event.target.value }))}
                 >
-                  Copy Link
-                </button>
-                {copyLinkFeedback && (
-                  <p className="mt-1 text-xs font-semibold text-mint-700">{copyLinkFeedback}</p>
-                )}
-              </div>
-            )}
-
-            {requestDocsError ? (
-              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {requestDocsError}
-              </div>
-            ) : null}
-
-            <div className="mt-5 flex gap-3">
-              <button
-                type="button"
-                className="btn-secondary flex-1"
-                disabled={requesting}
-                onClick={() => setShowRequestDocs(false)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-primary flex-1"
-                disabled={requesting || requestDocsTypes.length === 0}
-                onClick={onSendDocRequest}
-              >
-                {requesting ? "Sending..." : "Send Request"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showEnablePortal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 px-4 backdrop-blur-sm">
-          <div className="panel w-full max-w-md p-6">
-            <h3 className="text-lg font-bold text-ink-900">
-              {client?.portal?.enabled ? "Reset portal password" : "Enable client portal"}
-            </h3>
-            <p className="mt-1 text-sm text-[#607086]">{client?.name}</p>
-
-            {tempPassword ? (
-              <>
-                <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wide text-amber-800">
-                    Temporary password
-                  </p>
-                  <p className="mt-2 break-all font-mono text-xl font-bold tracking-wide text-ink-900">
-                    {tempPassword}
-                  </p>
-                  <button
-                    type="button"
-                    className="btn-secondary mt-3 px-3 py-1.5 text-xs"
-                    onClick={onCopyTempPassword}
-                  >
-                    {tempPasswordCopied ? "Copied" : "Copy password"}
-                  </button>
-                  <p className="mt-3 text-sm font-semibold text-amber-900">
-                    Share this password with your client. It will not be shown again.
-                  </p>
-                </div>
-
-                <p className="mt-3 text-xs text-[#6f8097]">
-                  We also emailed these details to {portalEmail}. They can sign in at{" "}
-                  <span className="font-mono">/client-portal/login</span>.
-                </p>
-
-                {portalError ? (
-                  <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                    {portalError}
-                  </div>
-                ) : null}
-
-                <button
-                  type="button"
-                  className="btn-primary mt-5 w-full"
-                  onClick={closeEnablePortalModal}
-                >
-                  Done
-                </button>
-              </>
+                  {Array.from({ length: 28 }, (_, index) => index + 1).map((day) => (
+                    <option key={day} value={day}>
+                      {day}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
             ) : (
-              <>
-                <p className="mt-3 text-sm text-[#607086]">
-                  Your client will be able to sign in and see their own documents, status, and
-                  reconciliation reports. They can never see extracted data or Tally exports.
-                </p>
-
-                <div className="mt-4">
-                  <label className="label" htmlFor="portal-email">
-                    Client's email address
-                  </label>
-                  <input
-                    id="portal-email"
-                    className="field"
-                    type="email"
-                    autoComplete="off"
-                    value={portalEmail}
-                    onChange={(event) => setPortalEmail(event.target.value)}
-                    placeholder="owner@client.in"
-                  />
-                </div>
-
-                {portalError ? (
-                  <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                    {portalError}
-                  </div>
-                ) : null}
-
-                <div className="mt-5 flex gap-3">
-                  <button
-                    type="button"
-                    className="btn-secondary flex-1"
-                    disabled={enablingPortal}
-                    onClick={closeEnablePortalModal}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary flex-1"
-                    disabled={enablingPortal || !portalEmail.trim()}
-                    onClick={onEnablePortal}
-                  >
-                    {enablingPortal ? "Enabling..." : "Enable Portal"}
-                  </button>
-                </div>
-              </>
+              <FormField label="Day of week" htmlFor="schedule-dow">
+                <select
+                  id="schedule-dow"
+                  className="field"
+                  value={scheduleForm.dayOfWeek}
+                  onChange={(event) => setScheduleForm((prev) => ({ ...prev, dayOfWeek: event.target.value }))}
+                >
+                  {weekDays.map((day, index) => (
+                    <option key={day} value={index}>
+                      {day}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
             )}
           </div>
+          {scheduleError ? <Alert tone="err">{scheduleError}</Alert> : null}
         </div>
-      )}
+      </Modal>
 
-      {loading ? <ClientDetailSkeleton /> : null}
+      <Modal
+        open={showRequestDocs}
+        onClose={() => setShowRequestDocs(false)}
+        busy={requesting}
+        title="Request documents"
+        description={
+          client?.email
+            ? `${client.email} will be emailed a secure upload link.`
+            : "This client has no email on file. Share the upload link manually."
+        }
+        footer={
+          <>
+            <button type="button" className="btn-secondary" disabled={requesting} onClick={() => setShowRequestDocs(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={requesting || requestDocsTypes.length === 0}
+              onClick={onSendDocRequest}
+            >
+              <IconMail size={14} />
+              {requesting ? "Sending…" : "Send request"}
+            </button>
+          </>
+        }
+      >
+        <DocTypeChecks name="request-types" value={requestDocsTypes} onChange={setRequestDocsTypes} />
+        {requestDocsError ? (
+          <Alert tone="err" className="mt-4">
+            {requestDocsError}
+          </Alert>
+        ) : null}
+      </Modal>
 
-      {error ? (
-        <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-          {error}
-        </div>
+      <Modal
+        open={showEnablePortal}
+        onClose={closeEnablePortalModal}
+        busy={enablingPortal}
+        title={tempPassword ? "Portal access ready" : client?.portal?.enabled ? "Reset portal password" : "Enable the client portal"}
+        description={
+          tempPassword
+            ? `Share this password with ${client?.name}. It won't be shown again.`
+            : "Your client can sign in to see their own documents, statuses and GST reports — never your extracted data or Tally files."
+        }
+        footer={
+          tempPassword ? (
+            <button type="button" className="btn-primary" onClick={closeEnablePortalModal}>
+              Done
+            </button>
+          ) : (
+            <>
+              <button type="button" className="btn-secondary" disabled={enablingPortal} onClick={closeEnablePortalModal}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={enablingPortal || !portalEmail.trim()}
+                onClick={onEnablePortal}
+              >
+                {enablingPortal ? "Enabling…" : client?.portal?.enabled ? "Reset password" : "Enable portal"}
+              </button>
+            </>
+          )
+        }
+      >
+        {tempPassword ? (
+          <div>
+            <div className="rounded-xl border border-ui-warn/25 bg-ui-warn/[0.06] p-4">
+              <p className="text-xs font-medium text-ui-warn">Temporary password</p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <p className="ui-mono break-all text-lg font-semibold tracking-wide text-ui-fg">{tempPassword}</p>
+                <button type="button" className="btn-secondary btn-sm shrink-0" onClick={onCopyTempPassword}>
+                  {tempPasswordCopied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                  {tempPasswordCopied ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-ui-fg-3">
+              We also emailed these details to {portalEmail}. They sign in at{" "}
+              <span className="ui-mono text-ui-fg-2">/client-portal/login</span>.
+            </p>
+          </div>
+        ) : (
+          <FormField label="Client's email address" htmlFor="portal-email">
+            <input
+              id="portal-email"
+              className="field"
+              type="email"
+              autoComplete="off"
+              value={portalEmail}
+              onChange={(event) => setPortalEmail(event.target.value)}
+              placeholder="owner@client.in"
+            />
+          </FormField>
+        )}
+        {portalError ? (
+          <Alert tone="err" className="mt-4">
+            {portalError}
+          </Alert>
+        ) : null}
+      </Modal>
+
+      {loading ? (
+        <>
+          <PageHeader breadcrumbs={[{ label: "Clients", to: "/clients" }, { label: "Loading…" }]} title="Client" />
+          <ClientDetailSkeleton />
+        </>
       ) : null}
 
       {!loading && !client ? (
-        <EmptyState title="Client not found" description="The requested client is unavailable or you do not have access." />
+        <>
+          <PageHeader breadcrumbs={[{ label: "Clients", to: "/clients" }, { label: "Not found" }]} title="Client not found." />
+          {error ? (
+            <Alert tone="err" className="mb-4">
+              {error}
+            </Alert>
+          ) : null}
+          <EmptyState
+            title="Client not found"
+            description="The client is unavailable or you don't have access."
+            action={
+              <Link to="/clients" className="btn-secondary">
+                Back to clients
+              </Link>
+            }
+          />
+        </>
       ) : null}
 
       {client ? (
         <>
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Total documents" value={summary.totalDocuments ?? 0} />
-            <StatCard label="Processing" value={summary.processingDocuments ?? 0} tone="warning" />
-            <StatCard label="Reviewed" value={summary.reviewedDocuments ?? 0} tone="success" />
-            <StatCard label="Exported" value={summary.exportedDocuments ?? 0} tone="success" />
-          </section>
-
-          <section className="mt-6 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-            {/* Profile / Edit panel */}
-            <article className="panel p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-lg font-bold text-ink-900">Client profile</h2>
-                  <StatusBadge status={client.status} />
+          <header className="mb-7 sm:mb-8">
+            <Breadcrumbs items={[{ label: "Clients", to: "/clients" }, { label: client.name }]} className="mb-4" />
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex min-w-0 items-center gap-4">
+                <Avatar name={client.name} size={52} className="rounded-2xl" />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h1 className="truncate text-[1.625rem] font-semibold leading-tight tracking-[-0.03em] text-ui-fg sm:text-[1.875rem]">
+                      {client.name}
+                    </h1>
+                    <StatusBadge status={client.status} />
+                  </div>
+                  <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] text-ui-fg-3">
+                    {client.gstin ? <span className="ui-mono text-ui-fg-2">{client.gstin}</span> : <span>No GSTIN</span>}
+                    <span aria-hidden="true" className="text-ui-fg-4">·</span>
+                    <span>Last upload {summary.lastUploadedAt ? formatDateTime(summary.lastUploadedAt) : "never"}</span>
+                  </p>
                 </div>
-                {canAdmin && (
-                  <button
-                    type="button"
-                    className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 transition"
-                    onClick={() => { setShowEdit(!showEdit); setError(""); }}
-                  >
-                    {showEdit ? "Cancel edit" : "Edit"}
-                  </button>
-                )}
               </div>
-
-              {canAdmin && showEdit ? (
-                <form className="mt-4 space-y-3" onSubmit={onSaveEdit}>
-                  <div>
-                    <label className="label">Client name</label>
-                    <input
-                      className="field"
-                      value={editForm.name}
-                      onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))}
-                    />
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="label">Email</label>
-                      <input
-                        className="field"
-                        type="email"
-                        value={editForm.email}
-                        onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="label">Phone</label>
-                      <input
-                        className="field"
-                        value={editForm.phone}
-                        onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="label">GSTIN</label>
-                      <input
-                        className="field uppercase"
-                        value={editForm.gstin}
-                        onChange={(e) => setEditForm((p) => ({ ...p, gstin: e.target.value.toUpperCase() }))}
-                      />
-                      {gstLookup.status !== "idle" && gstLookup.message && (
-                        <p
-                          className={`mt-1 text-xs font-semibold ${
-                            gstLookup.status === "valid"
-                              ? "text-mint-700"
-                              : gstLookup.status === "fallback"
-                              ? "text-slate-500"
-                              : gstLookup.status === "loading"
-                              ? "text-[#607086]"
-                              : "text-rose-600"
-                          }`}
-                        >
-                          {gstLookup.status === "valid" ? "GST verified: " : ""}
-                          {gstLookup.message}
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <label className="label">Status</label>
-                      <select
-                        className="field"
-                        value={editForm.status}
-                        onChange={(e) => setEditForm((p) => ({ ...p, status: e.target.value }))}
-                      >
-                        <option value="active">Active</option>
-                        <option value="pending">Pending</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                    </div>
-                  </div>
-                  {error ? (
-                    <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
-                  ) : null}
-                  <button type="submit" className="btn-primary w-full" disabled={saving}>
-                    {saving ? "Saving..." : "Save changes"}
-                  </button>
-                </form>
-              ) : (
-                <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-xs uppercase tracking-wide text-[#6a7b90]">Email</dt>
-                    <dd className="text-sm font-semibold text-ink-900">{client.email || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs uppercase tracking-wide text-[#6a7b90]">Phone</dt>
-                    <dd className="text-sm font-semibold text-ink-900">{client.phone || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs uppercase tracking-wide text-[#6a7b90]">GSTIN</dt>
-                    <dd className="text-sm font-semibold text-ink-900">{client.gstin || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs uppercase tracking-wide text-[#6a7b90]">Last upload</dt>
-                    <dd className="text-sm font-semibold text-ink-900">{formatDateTime(summary.lastUploadedAt)}</dd>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <dt className="text-xs uppercase tracking-wide text-[#6a7b90]">Upload token</dt>
-                    <dd className="font-mono text-xs text-[#596a82] break-all">{client.uploadToken}</dd>
-                  </div>
-                </dl>
-              )}
-            </article>
-
-            {/* Actions panel */}
-            <article className="panel p-5">
-              <h2 className="text-lg font-bold text-ink-900">Actions</h2>
-              <div className="mt-4 space-y-3">
-                {canAdmin && (
-                  <button type="button" className="btn-primary w-full" onClick={openRequestDocsModal}>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Link className="btn-secondary" to={`/clients/${id}/documents`}>
+                  <IconFiles size={14} />
+                  Documents
+                </Link>
+                {canAdmin ? (
+                  <button type="button" className="btn-primary" onClick={openRequestDocsModal}>
+                    <IconLink size={14} />
                     Request documents
                   </button>
-                )}
-                {canAdmin && reviewedCount > 0 && (
-                  <button
-                    type="button"
-                    className="btn-secondary w-full"
-                    onClick={() => {
-                      setBulkExportError("");
-                      setShowBulkExport(true);
-                    }}
-                  >
-                    Export All to Tally
-                  </button>
-                )}
-                {client.gstin && (
-                  <Link className="btn-secondary block w-full text-center" to={`/clients/${id}/gst-reconciliation`}>
-                    GST Reconciliation
-                  </Link>
-                )}
-                <Link className="btn-secondary block w-full text-center" to={`/clients/${id}/documents`}>
-                  View documents
-                </Link>
-                <Link className="btn-secondary block w-full text-center" to="/clients">
-                  Back to clients list
-                </Link>
-                {canAdmin && (
-                  <>
-                <hr className="border-[#e7dcc8]" />
-                <div className="rounded-xl border border-[#e4d8c5] bg-sand-50 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold text-ink-900">Client Portal</h3>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                        client.portal?.enabled
-                          ? "bg-mint-500/15 text-mint-700"
-                          : "bg-sand-100 text-[#6a7b90]"
-                      }`}
-                    >
-                      {client.portal?.enabled ? "Enabled" : "Not enabled"}
-                    </span>
-                  </div>
-                  {client.portal?.enabled ? (
-                    <div className="mt-2 space-y-2 text-sm text-[#607086]">
-                      <p className="break-all">{client.portal.email}</p>
-                      <p>
-                        Last login:{" "}
-                        {client.portal.lastLoginAt
-                          ? formatDateTime(client.portal.lastLoginAt)
-                          : "Never"}
-                      </p>
-                      <button
-                        type="button"
-                        className="btn-secondary px-3 py-1.5 text-xs"
-                        onClick={openEnablePortalModal}
-                      >
-                        Reset password
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="mt-2 text-sm text-[#607086]">
-                        Give this client a secure login to track their own documents.
-                      </p>
-                      <button
-                        type="button"
-                        className="btn-secondary mt-3 w-full"
-                        onClick={openEnablePortalModal}
-                      >
-                        Enable Client Portal
-                      </button>
-                    </>
-                  )}
-                </div>
-                <hr className="border-[#e7dcc8]" />
-                <div className="rounded-xl border border-[#e4d8c5] bg-sand-50 p-3">
-                  <h3 className="text-sm font-bold text-ink-900">Schedule Recurring Requests</h3>
-                  {schedule ? (
-                    <div className="mt-2 space-y-2 text-sm text-[#607086]">
-                      <p>
-                        Sends {schedule.frequency} {scheduleDay} · {scheduleDocTypes}
-                      </p>
-                      <p>Last sent: {schedule.lastSentAt ? formatDateTime(schedule.lastSentAt) : "Never"}</p>
-                      <div className="flex gap-2">
-                        <button type="button" className="btn-secondary px-3 py-1.5 text-xs" onClick={openScheduleForm}>
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                          disabled={deletingSchedule}
-                          onClick={onDeleteSchedule}
-                        >
-                          {deletingSchedule ? "Deleting..." : "Pause / Delete"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <button type="button" className="btn-secondary mt-3 w-full" onClick={openScheduleForm}>
-                      Set up recurring requests
-                    </button>
-                  )}
-                </div>
-                <hr className="border-[#e7dcc8]" />
-                <button
-                  type="button"
-                  disabled={deleting}
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="w-full rounded-lg border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
-                >
-                  {deleting ? "Deleting..." : "Delete client"}
-                </button>
-                  </>
-                )}
+                ) : null}
               </div>
-              {toast ? (
-                <div className="mt-4 rounded-lg border border-mint-300 bg-mint-500/10 px-3 py-2 text-sm text-mint-700">
-                  {toast}
-                </div>
-              ) : null}
-            </article>
+            </div>
+          </header>
+
+          {toast ? (
+            <Alert tone="ok" className="mb-5" onDismiss={() => setToast("")}>
+              {toast}
+            </Alert>
+          ) : null}
+          {error && !showEdit ? (
+            <Alert tone="err" className="mb-5" onDismiss={() => setError("")}>
+              {error}
+            </Alert>
+          ) : null}
+
+          <section aria-label="Document counts" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatTile label="Total documents" value={summary.totalDocuments ?? 0} icon={<IconFiles size={15} />} to={`/clients/${id}/documents`} />
+            <StatTile label="Processing" value={summary.processingDocuments ?? 0} tone={summary.processingDocuments > 0 ? "accent" : "neutral"} icon={<IconSpark size={15} />} />
+            <StatTile label="Reviewed" value={summary.reviewedDocuments ?? 0} tone={summary.reviewedDocuments > 0 ? "ok" : "neutral"} hint={reviewedCount > 0 ? "Ready to export" : undefined} icon={<IconCheckCircle size={15} />} />
+            <StatTile label="Exported" value={summary.exportedDocuments ?? 0} icon={<IconExport size={15} />} />
           </section>
+
+          <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <div className="grid grid-cols-1 content-start gap-5">
+              <Card>
+                <CardHeader
+                  title="Profile"
+                  description="Contact and tax details used on every voucher."
+                  action={
+                    canAdmin ? (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm"
+                        onClick={() => {
+                          setShowEdit(!showEdit);
+                          setError("");
+                        }}
+                      >
+                        {showEdit ? (
+                          "Cancel"
+                        ) : (
+                          <>
+                            <IconEdit size={13} />
+                            Edit
+                          </>
+                        )}
+                      </button>
+                    ) : null
+                  }
+                />
+                {canAdmin && showEdit ? (
+                  <form className="space-y-4 px-5 py-5" onSubmit={onSaveEdit}>
+                    <FormField label="Client name" htmlFor="edit-name" required>
+                      <input
+                        id="edit-name"
+                        className="field"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))}
+                      />
+                    </FormField>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <FormField label="Email" htmlFor="edit-email">
+                        <input
+                          id="edit-email"
+                          className="field"
+                          type="email"
+                          value={editForm.email}
+                          onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))}
+                        />
+                      </FormField>
+                      <FormField label="Phone" htmlFor="edit-phone">
+                        <input
+                          id="edit-phone"
+                          className="field"
+                          value={editForm.phone}
+                          onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <FormField label="GSTIN" htmlFor="edit-gstin">
+                        <input
+                          id="edit-gstin"
+                          className="field ui-mono uppercase"
+                          value={editForm.gstin}
+                          onChange={(e) => setEditForm((p) => ({ ...p, gstin: e.target.value.toUpperCase() }))}
+                        />
+                        {gstLookup.status !== "idle" && gstLookup.message ? (
+                          <p className={cn("mt-1.5 flex items-center gap-1.5 text-xs font-medium", gstClass)}>
+                            {gstLookup.status === "valid" ? <IconCheck size={13} /> : null}
+                            {gstLookup.status === "valid" ? "Verified: " : ""}
+                            {gstLookup.message}
+                          </p>
+                        ) : null}
+                      </FormField>
+                      <FormField label="Status" htmlFor="edit-status">
+                        <select
+                          id="edit-status"
+                          className="field"
+                          value={editForm.status}
+                          onChange={(e) => setEditForm((p) => ({ ...p, status: e.target.value }))}
+                        >
+                          <option value="active">Active</option>
+                          <option value="pending">Pending</option>
+                          <option value="inactive">Inactive</option>
+                        </select>
+                      </FormField>
+                    </div>
+                    {error ? <Alert tone="err">{error}</Alert> : null}
+                    <div className="flex justify-end gap-2 border-t border-ui-line pt-4">
+                      <button type="button" className="btn-secondary" onClick={() => setShowEdit(false)} disabled={saving}>
+                        Cancel
+                      </button>
+                      <button type="submit" className="btn-primary" disabled={saving}>
+                        {saving ? "Saving…" : "Save changes"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <dl className="grid gap-x-6 gap-y-5 px-5 py-5 sm:grid-cols-2">
+                    {[
+                      ["Email", client.email],
+                      ["Phone", client.phone],
+                      ["GSTIN", client.gstin, true],
+                      ["Last upload", summary.lastUploadedAt ? formatDateTime(summary.lastUploadedAt) : null]
+                    ].map(([label, value, mono]) => (
+                      <div key={label}>
+                        <dt className="text-xs font-medium text-ui-fg-3">{label}</dt>
+                        <dd className={cn("mt-1 text-[0.875rem] text-ui-fg", mono && "ui-mono")}>
+                          {value || <span className="text-ui-fg-4">—</span>}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </Card>
+
+              <Card>
+                <CardHeader
+                  title="Upload link"
+                  description="Anyone with this link can send documents for this client. No login needed."
+                  icon={<IconLink size={14} />}
+                />
+                <div className="px-5 py-4">
+                  {uploadLink ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-ui-line bg-ui-subtle p-1.5 pl-3">
+                      <p className="ui-mono min-w-0 flex-1 truncate text-ui-fg-2" title={uploadLink}>
+                        {uploadLink}
+                      </p>
+                      <button type="button" className="btn-secondary btn-sm shrink-0" onClick={onCopyUploadLink}>
+                        {copyLinkFeedback.startsWith("Link copied") ? <IconCheck size={13} /> : <IconCopy size={13} />}
+                        {copyLinkFeedback.startsWith("Link copied") ? "Copied" : "Copy"}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-[0.8125rem] text-ui-fg-3">No active link. Request documents to issue one.</p>
+                  )}
+                  {copyLinkFeedback && !copyLinkFeedback.startsWith("Link copied") ? (
+                    <p className="mt-2 text-xs text-ui-err">{copyLinkFeedback}</p>
+                  ) : null}
+                </div>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 content-start gap-5">
+              <Card>
+                <CardHeader title="Workflows" />
+                <ul className="divide-y divide-ui-line">
+                  <li className="flex items-center gap-3 px-5 py-4">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-ui-line bg-ui-subtle text-ui-fg-3">
+                      <IconExport size={15} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[0.8125rem] font-medium text-ui-fg">Export to Tally</p>
+                      <p className="text-xs text-ui-fg-3">
+                        {reviewedCount > 0 ? `${reviewedCount} reviewed, ready to go` : "Nothing reviewed yet"}
+                      </p>
+                    </div>
+                    {canAdmin ? (
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm"
+                        disabled={reviewedCount === 0}
+                        onClick={() => {
+                          setBulkExportError("");
+                          setShowBulkExport(true);
+                        }}
+                      >
+                        Export
+                      </button>
+                    ) : null}
+                  </li>
+                  <li className="flex items-center gap-3 px-5 py-4">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-ui-line bg-ui-subtle text-ui-fg-3">
+                      <IconScale size={15} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[0.8125rem] font-medium text-ui-fg">GST reconciliation</p>
+                      <p className="text-xs text-ui-fg-3">
+                        {client.gstin ? "Match purchases against GSTR-2B" : "Add a GSTIN to reconcile"}
+                      </p>
+                    </div>
+                    {client.gstin ? (
+                      <Link className="btn-secondary btn-sm" to={`/clients/${id}/gst-reconciliation`}>
+                        Open
+                      </Link>
+                    ) : null}
+                  </li>
+                </ul>
+              </Card>
+
+              {canAdmin ? (
+                <>
+                  <Card>
+                    <CardHeader
+                      title="Client portal"
+                      icon={<IconLock size={14} />}
+                      action={
+                        <Badge tone={client.portal?.enabled ? "ok" : "neutral"} dot>
+                          {client.portal?.enabled ? "Enabled" : "Off"}
+                        </Badge>
+                      }
+                    />
+                    <div className="px-5 py-4 text-[0.8125rem] text-ui-fg-3">
+                      {client.portal?.enabled ? (
+                        <>
+                          <p className="truncate text-ui-fg-2">{client.portal.email}</p>
+                          <p className="mt-0.5 text-xs">
+                            Last sign-in {client.portal.lastLoginAt ? formatDateTime(client.portal.lastLoginAt) : "never"}
+                          </p>
+                          <button type="button" className="btn-secondary btn-sm mt-3" onClick={openEnablePortalModal}>
+                            Reset password
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <p>Give this client a secure login to track their own documents and GST summary.</p>
+                          <button type="button" className="btn-secondary btn-sm mt-3" onClick={openEnablePortalModal}>
+                            Enable portal
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <CardHeader title="Recurring requests" icon={<IconCalendar size={14} />} />
+                    <div className="px-5 py-4 text-[0.8125rem] text-ui-fg-3">
+                      {schedule ? (
+                        <>
+                          <p className="text-ui-fg-2">
+                            <span className="capitalize">{schedule.frequency}</span> {scheduleDay}
+                          </p>
+                          <p className="mt-0.5 text-xs">{scheduleDocTypes}</p>
+                          <p className="mt-0.5 text-xs">
+                            Last sent {schedule.lastSentAt ? formatDateTime(schedule.lastSentAt) : "never"}
+                          </p>
+                          <div className="mt-3 flex gap-2">
+                            <button type="button" className="btn-secondary btn-sm" onClick={openScheduleForm}>
+                              Edit
+                            </button>
+                            <button type="button" className="btn-danger btn-sm" disabled={deletingSchedule} onClick={onDeleteSchedule}>
+                              {deletingSchedule ? "Removing…" : "Stop"}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p>Email this client an upload link every week or month, automatically.</p>
+                          <button type="button" className="btn-secondary btn-sm mt-3" onClick={openScheduleForm}>
+                            Set up schedule
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </Card>
+
+                  <Card className="border-ui-err/20">
+                    <div className="flex items-center justify-between gap-4 px-5 py-4">
+                      <div>
+                        <p className="text-[0.8125rem] font-medium text-ui-fg">Delete client</p>
+                        <p className="text-xs text-ui-fg-3">Removes the client and all of their documents.</p>
+                      </div>
+                      <button type="button" className="btn-danger btn-sm" disabled={deleting} onClick={() => setShowDeleteConfirm(true)}>
+                        <IconTrash size={13} />
+                        {deleting ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
+                  </Card>
+                </>
+              ) : null}
+            </div>
+          </div>
         </>
       ) : null}
     </AppShell>

@@ -7,9 +7,9 @@ marketing pages (`/features`, `/pricing`, `/about`, `/security`), the legal page
 the 404. It documents the system the homepage was rebuilt in (September 2026) so every other public
 page can be built to the same standard.
 
-The authenticated dashboard is **out of scope** — it keeps its own Manrope / `ink` / `sand` / `mint`
-system. Every public token is namespaced (`vx-*`, `canvas`, `hairline`, `carbon`, `brand`, `sky`,
-`verify`) so the two never collide.
+The signed-in app (firm dashboard and client portal) is built from the same parts and documented in
+§11. Every public token is namespaced (`vx-*`, `canvas`, `hairline`, `carbon`, `brand`, `sky`,
+`verify`); the app's are `ui-*`, so the two never collide.
 
 > History: V1 (light-first, 2026-07) and V2 "The Ledger" (mono labels, ruled-paper Sheets,
 > 2026-08) are superseded. `components/marketing/ledger.jsx` still exports `Tick` and `Caret`, which
@@ -189,3 +189,44 @@ Shared vocabulary in `components/public/motion.jsx`:
   assistive tech or given text equivalents.
 - Headings are in order (one `h1` per page).
 - Motion respects `prefers-reduced-motion`.
+
+---
+
+## 11. The signed-in app (firm dashboard + client portal)
+
+Rebuilt in September 2026 so logged-in screens read as the same product as the landing page — Inter,
+the ivory canvas, carbon ink, one violet accent, teal for "done" — with a light and a dark theme.
+References: Vercel (settings layout, stacked cards with footer strips), Linear (quiet density, hover
+pill), Resend (dark surfaces).
+
+**Theme.** Colours are CSS variables on `.vx-app` (`index.css`), exposed to Tailwind as `ui-*`
+(`ui-canvas`, `ui-surface`, `ui-raised`, `ui-subtle`, `ui-inset`, `ui-line`, `ui-fg` … `ui-fg-4`,
+`ui-accent`, `ui-ok`, `ui-warn`, `ui-err`, `ui-info`, `ui-chart-1/2`). `.vx-app[data-theme="dark"]`
+redefines them. Don't use raw colours on app screens — use a `ui-*` token so both themes work.
+`ThemeProvider` (`contexts/ThemeContext.jsx`) stores `system | light | dark` per browser;
+`AppThemeRoot` applies it and mirrors it onto `<html data-app-theme>`. Tailwind's `dark:` variant
+only fires inside the app.
+
+**Frame.** `AppShell` (firm) and `ClientPortalShell` (portal): a frosted top bar with the logo, the
+landing page's gliding hover pill, a gradient underline on the active item, notifications, theme
+toggle and account menu. Content width is 1200px (`width="wide"` gives 1440px, used by Review).
+
+**Components** (`components/app/`): `PageHeader` (breadcrumbs, kicker, two-tone title),
+`Card`/`CardHeader`/`CardFooter`, `StatTile`, `Badge`/`Dot`, `Alert`, `Segmented`, `Progress`,
+`Avatar`, `FormField`, `Modal`/`ConfirmDialog`, `TableKit` (`Toolbar`, `SearchField`,
+`TableScroll`, `Pagination`), `TrendChart`, `ExportPreviewModal`, and the line icon set in
+`icons.jsx`. Legacy class names still work and are themed: `panel`, `btn-primary`, `btn-secondary`,
+`btn-ghost`, `btn-danger`, `btn-sm`, `btn-icon`, `field`, `label`, `link-action`, `ui-table`,
+`ui-mono`.
+
+**Rules.**
+- Pill buttons; one `btn-primary` per view.
+- Status colours mean status only: teal done, amber needs a person, rose failed, blue in flight,
+  violet waiting on review. Badges always carry a text label.
+- Sentence case everywhere; small section labels are the only uppercase text.
+- Responsive grids start from `grid-cols-1` and use `minmax(0, …)` tracks so wide tables scroll
+  inside their card instead of widening the page. Wrap tables in `TableScroll`.
+- The two chart colours (`ui-chart-1/2`) were validated for colour-blind and normal-vision
+  separation on both surfaces; don't swap them for status colours.
+- The client portal keeps larger type (15–16px body) — its readers are business owners, not
+  accountants.
