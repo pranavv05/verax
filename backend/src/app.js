@@ -37,7 +37,9 @@ app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        frameAncestors: ["'self'", "http://localhost:5174"]
+        // The review page embeds document previews served by this API, so the
+        // frontend's own origin must be allowed to frame them.
+        frameAncestors: ["'self'", new URL(env.FRONTEND_URL).origin]
       }
     }
   })

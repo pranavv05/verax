@@ -89,6 +89,9 @@ router.get("/local-files/:filename(*)", async (req, res, next) => {
   try {
     const filePath = resolveLocalStoragePath(req.params.filename);
     await fs.access(filePath);
+    // Helmet's default same-origin CORP would stop the frontend (a different
+    // origin) from showing image previews. Only these file responses opt out.
+    res.set("Cross-Origin-Resource-Policy", "cross-origin");
     res.sendFile(path.resolve(filePath));
   } catch (error) {
     if (error && error.code === "ENOENT") {
