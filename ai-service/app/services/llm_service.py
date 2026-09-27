@@ -42,6 +42,17 @@ def _retry_delay_seconds(error: Exception, attempt: int) -> float:
     return min(delay, GROQ_MAX_RETRY_WAIT_SECONDS)
 
 
+def _worth_waiting_for(error: Exception | None) -> bool:
+    """Would the same request succeed later? True for rate limits, Groq 5xx
+    and network errors. False for "Request too large": the request alone is
+    over the plan's per-minute token cap, which Groq reports as a 413 or,
+    for some models, as a 429 — waiting never makes it fit."""
+    if error is not None and "request too large" in str(error).lower():
+        return False
+    status_code = getattr(error, "status_code", None)
+    return status_code is None or status_code >= 500 or status_code in GROQ_RETRYABLE_4XX
+
+
 class LLMExtractionError(Exception):
     """The LLM call failed or returned unusable output.
 
@@ -49,10 +60,17 @@ class LLMExtractionError(Exception):
     is indistinguishable downstream from a real "this isn't an invoice"
     answer, so an outage (e.g. the 2026-08 model decommissioning, or sustained
     429s) used to surface as blank review forms with no error and no retry.
-    main.py turns this into a 503, which fails the backend's BullMQ job — so
-    it is retried with backoff, recorded in documents.processing_error, and
-    alerts firm admins if every attempt fails.
+    main.py turns a `retryable` one (rate limit, Groq 5xx, network) into a
+    503, which the backend waits out without spending the document's
+    attempts. Anything else (request too large for the plan's token limit,
+    model not found, invalid JSON) would fail identically on every retry, so
+    it becomes a 422: the job's normal attempts run, the reason is recorded
+    in documents.processing_error, and admins are alerted if all fail.
     """
+
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 # ── Invoice / Bill ────────────────────────────────────────────────────────────
 
@@ -564,12 +582,7 @@ class LLMService:
                 last_error = e
                 # A 4xx like bad-request/auth/model-not-found will fail identically
                 # on retry — only worth retrying once we know it's worth trying at all.
-                status_code = getattr(e, "status_code", None)
-                if (
-                    status_code is not None
-                    and 400 <= status_code < 500
-                    and status_code not in GROQ_RETRYABLE_4XX
-                ):
+                if not _worth_waiting_for(e):
                     break
                 if attempt < GROQ_MAX_ATTEMPTS:
                     logger.warning(
@@ -579,7 +592,9 @@ class LLMService:
 
         if response is None:
             logger.error(f"Groq extraction failed after {GROQ_MAX_ATTEMPTS} attempt(s): {last_error}")
-            raise LLMExtractionError(f"AI extraction failed: {last_error}") from last_error
+            raise LLMExtractionError(
+                f"AI extraction failed: {last_error}", retryable=_worth_waiting_for(last_error)
+            ) from last_error
 
         raw_output = response.choices[0].message.content or ""
         try:

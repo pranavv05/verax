@@ -208,10 +208,12 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
     except HTTPException:
         raise
     except LLMExtractionError as error:
-        # Upstream dependency failure, not a bug here — 503 so the backend
-        # worker records the reason and retries the job.
+        # Upstream dependency failure, not a bug here. 503 only when waiting
+        # can help (the backend then retries without spending an attempt);
+        # 422 when the same request would fail again (see LLMExtractionError).
         logger.error("LLM extraction failed for document_id=%s: %s", request.document_id, error)
-        raise HTTPException(status_code=503, detail=str(error)) from error
+        status_code = 503 if error.retryable else 422
+        raise HTTPException(status_code=status_code, detail=str(error)) from error
     except Exception as error:  # noqa: BLE001
         logger.exception("Failed to process document_id=%s", request.document_id)
         raise HTTPException(status_code=500, detail=str(error)) from error

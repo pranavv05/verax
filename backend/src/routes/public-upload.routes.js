@@ -82,14 +82,15 @@ const mapClientStatus = (status) =>
   }[status] || "Received");
 
 const getUploadStatusByToken = async (db, { token }) => {
+  // Client first, then the firm: under the magic_link auth context the firms
+  // RLS policy only shows the firm once app.current_firm_id is set, so
+  // joining firms here returned no row and every status page 404'd.
   const clientResult = await db.query(
     `
-      SELECT c.id, c.firm_id, c.name AS client_name, f.name AS firm_name
+      SELECT c.id, c.firm_id, c.name AS client_name
       FROM clients c
-      JOIN firms f ON f.id = c.firm_id
       WHERE c.upload_token = $1
         AND c.deleted_at IS NULL
-        AND f.deleted_at IS NULL
       LIMIT 1
     `,
     [token]
@@ -99,8 +100,15 @@ const getUploadStatusByToken = async (db, { token }) => {
     throw ApiError.notFound("Upload link not found");
   }
 
-  const client = clientResult.rows[0];
-  await setLocalConfig(db, "app.current_firm_id", client.firm_id);
+  await setLocalConfig(db, "app.current_firm_id", clientResult.rows[0].firm_id);
+  const firmResult = await db.query("SELECT name FROM firms WHERE id = $1 AND deleted_at IS NULL", [
+    clientResult.rows[0].firm_id
+  ]);
+  if (firmResult.rowCount === 0) {
+    throw ApiError.notFound("Upload link not found");
+  }
+
+  const client = { ...clientResult.rows[0], firm_name: firmResult.rows[0].name };
 
   const documentsResult = await db.query(
     `

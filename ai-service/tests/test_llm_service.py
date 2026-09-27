@@ -204,6 +204,52 @@ class TestExtractStructuredDataDegradesGracefully:
             == llm_service_module.GROQ_MAX_ATTEMPTS
         )
 
+    @pytest.mark.parametrize(
+        "status_code, retryable",
+        [
+            (429, True),  # rate limit: waiting helps
+            (503, True),  # Groq outage
+            (None, True),  # network error
+            (413, False),  # request larger than the plan's tokens-per-minute cap
+            (404, False),  # model retired / not available to this key
+            (400, False),  # json_validate_failed
+        ],
+    )
+    def test_marks_whether_waiting_could_help(self, status_code, retryable):
+        # main.py maps retryable -> 503 (backend waits it out) and the rest ->
+        # 422, so a request that can never succeed isn't retried for ~27 min.
+        service = make_service()
+        error = RuntimeError("groq said no")
+        if status_code is not None:
+            error.status_code = status_code
+        service._client.chat.completions.create.side_effect = error
+        with patch.object(llm_service_module.time, "sleep"):
+            with pytest.raises(LLMExtractionError) as raised:
+                service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
+        assert raised.value.retryable is retryable
+
+    def test_request_too_large_reported_as_429_is_not_retried(self):
+        # Groq reports "over the plan's output-tokens-per-minute cap" for some
+        # models as a 429; waiting can never make the request fit.
+        service = make_service()
+        too_large = RuntimeError(
+            "Error code: 429 - Request too large for model `qwen/qwen3.8-27b` on output tokens per minute (OTPM)"
+        )
+        too_large.status_code = 429
+        service._client.chat.completions.create.side_effect = too_large
+        with patch.object(llm_service_module.time, "sleep"):
+            with pytest.raises(LLMExtractionError) as raised:
+                service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
+        assert raised.value.retryable is False
+        assert service._client.chat.completions.create.call_count == 1
+
+    def test_malformed_json_is_not_retryable(self):
+        service = make_service()
+        service._client.chat.completions.create.return_value = mock_response('{"total_amount": ')
+        with pytest.raises(LLMExtractionError) as raised:
+            service.extract_structured_data(REALISTIC_OCR_TEXT, doc_type="invoice")
+        assert raised.value.retryable is False
+
     def test_not_an_invoice_answer_is_still_a_normal_result(self):
         # A genuine "wrong document type" answer from the model is data, not
         # a failure — it must keep flowing to review_required, not raise.
