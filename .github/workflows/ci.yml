@@ -127,7 +127,8 @@ jobs:
       # so OCR-engine code (app/services/ocr_service.py) only gets the syntax
       # check below. requirements-dev.txt installs just what the pytest suite
       # actually needs (groq/httpx/python-dotenv + opencv-python-headless +
-      # PyMuPDF + numpy + pytest) to test the LLM JSON-parsing/retry/confidence
+      # PyMuPDF + numpy + pytest, plus fastapi/python-multipart for the /tools
+      # endpoint tests) to test the LLM JSON-parsing/retry/confidence
       # logic and the PDF/image preprocessing logic without the full ML install
       # cost. numpy MUST be pinned explicitly here, not left to pip's resolver:
       # opencv-python-headless==4.9.0.80 is compiled against NumPy 1.x's ABI,
@@ -138,6 +139,6 @@ jobs:
         run: python -m compileall -q app
       - name: Install test dependencies (light subset, no ML libs)
         run: |
-          grep -E '^(groq|httpx|python-dotenv|opencv-python-headless|PyMuPDF|numpy)==' requirements.txt > requirements-light.txt
+          grep -E '^(groq|httpx|python-dotenv|opencv-python-headless|PyMuPDF|numpy|fastapi|python-multipart)==' requirements.txt > requirements-light.txt
           pip install -r requirements-dev.txt -r requirements-light.txt
       - run: python -m pytest tests/ -v

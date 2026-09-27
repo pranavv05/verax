@@ -1,9 +1,9 @@
 const express = require("express");
 const Joi = require("joi");
-const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
+const { buildRateLimiter, PUBLIC_UPLOAD_MAX_PER_HOUR } = require("../middlewares/rate-limit.middleware");
 const {
   initiateUploadForFirm,
   confirmUploadForFirm,
@@ -21,17 +21,16 @@ const {
 
 const router = express.Router();
 
-const uploadRateLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 50,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "Upload limit reached. Please try again later.",
-    statusCode: 429
-  }
-});
+// Staff uploads: per user (not per office IP), with separate budgets for
+// initiate and confirm, which used to share one 50-per-hour bucket.
+const staffUploadLimiter = () =>
+  buildRateLimiter({
+    windowMs: 60 * 60 * 1000,
+    max: PUBLIC_UPLOAD_MAX_PER_HOUR,
+    message: "Upload limit reached. Please try again later."
+  });
+const initiateUploadLimiter = staffUploadLimiter();
+const confirmUploadLimiter = staffUploadLimiter();
 
 const uploadRequestSchema = Joi.object({
   client_id: Joi.string().uuid({ version: ["uuidv4", "uuidv5"] }).required(),
@@ -143,7 +142,7 @@ router.delete(
 
 router.post(
   "/upload",
-  uploadRateLimiter,
+  initiateUploadLimiter,
   validate(uploadRequestSchema),
   asyncHandler(async (req, res) => {
     const result = await req.withTenantTransaction((db) =>
@@ -164,7 +163,7 @@ router.post(
 
 router.post(
   "/confirm",
-  uploadRateLimiter,
+  confirmUploadLimiter,
   validate(confirmSchema),
   asyncHandler(async (req, res) => {
     const confirmation = await req.withTenantTransaction((db) =>

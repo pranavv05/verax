@@ -98,6 +98,8 @@ const ClientDetailPage = () => {
   const [confirmingExport, setConfirmingExport] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showResetLinkConfirm, setShowResetLinkConfirm] = useState(false);
+  const [resettingLink, setResettingLink] = useState(false);
   const [showBulkExport, setShowBulkExport] = useState(false);
   const [showExportPreview, setShowExportPreview] = useState(false);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
@@ -222,6 +224,24 @@ const ClientDetailPage = () => {
       setCopyLinkFeedback("Link copied to clipboard.");
     } catch {
       setCopyLinkFeedback("Unable to copy link — copy it manually.");
+    }
+  };
+
+  const onResetUploadLink = async () => {
+    setResettingLink(true);
+    setError("");
+    setToast("");
+    setCopyLinkFeedback("");
+    try {
+      await clientsApi.resetUploadLink(id);
+      setShowResetLinkConfirm(false);
+      setToast("Upload link reset. Links sent earlier no longer work. Share the new one.");
+      await loadClient();
+    } catch (resetError) {
+      setShowResetLinkConfirm(false);
+      setError(parseApiError(resetError, "Unable to reset the upload link"));
+    } finally {
+      setResettingLink(false);
     }
   };
 
@@ -437,6 +457,8 @@ const ClientDetailPage = () => {
     .join(", ");
 
   const uploadLink = uploadLinkFor(client?.uploadToken);
+  const uploadLinkExpiresAt = client?.uploadTokenExpiresAt ? new Date(client.uploadTokenExpiresAt) : null;
+  const uploadLinkExpired = Boolean(uploadLinkExpiresAt && uploadLinkExpiresAt <= new Date());
   const gstClass =
     gstLookup.status === "valid"
       ? "text-ui-ok"
@@ -447,6 +469,18 @@ const ClientDetailPage = () => {
 
   return (
     <AppShell>
+      <ConfirmDialog
+        open={showResetLinkConfirm}
+        onCancel={() => setShowResetLinkConfirm(false)}
+        onConfirm={onResetUploadLink}
+        title="Reset upload link?"
+        description={`Every upload link already sent to ${client?.name || "this client"} will stop working. You'll need to share the new link with them.`}
+        confirmLabel="Reset link"
+        destructive
+        busy={resettingLink}
+        busyLabel="Resetting…"
+      />
+
       <ConfirmDialog
         open={showDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
@@ -926,6 +960,24 @@ const ClientDetailPage = () => {
                   ) : (
                     <p className="text-[0.8125rem] text-ui-fg-3">No active link. Request documents to issue one.</p>
                   )}
+                  {uploadLink && uploadLinkExpiresAt ? (
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className={cn("text-xs", uploadLinkExpired ? "text-ui-err" : "text-ui-fg-3")}>
+                        {uploadLinkExpired
+                          ? `Expired ${formatDateTime(uploadLinkExpiresAt)}. Request documents to reactivate it.`
+                          : `Works for every upload until ${formatDateTime(uploadLinkExpiresAt)}.`}
+                      </p>
+                      {canAdmin ? (
+                        <button
+                          type="button"
+                          className="btn-ghost btn-sm shrink-0"
+                          onClick={() => setShowResetLinkConfirm(true)}
+                        >
+                          Reset link
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {copyLinkFeedback && !copyLinkFeedback.startsWith("Link copied") ? (
                     <p className="mt-2 text-xs text-ui-err">{copyLinkFeedback}</p>
                   ) : null}

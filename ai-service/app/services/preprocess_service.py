@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from dataclasses import dataclass
 from typing import List
 
@@ -10,7 +11,23 @@ import fitz
 import numpy as np
 
 logger = logging.getLogger(__name__)
-MAX_PAGES = 15
+
+# Scanned PDFs are rendered to images and OCR'd page by page: each page costs
+# several seconds of CPU and ~6 MB of memory, so they stay capped. 40 pages
+# covers a typical month of a busy current account.
+MAX_PAGES = int(os.getenv("MAX_OCR_PAGES", "40"))
+
+# Digital PDFs (net-banking downloads) carry their own text, which is read
+# directly: no rendering, no OCR, and far more pages are affordable. The cap
+# is set by the LLM, not the PDF: ~3 pages per Groq call, so 100 pages is
+# ~35 calls (~8 minutes), inside the backend's 15-minute AI_SERVICE_TIMEOUT_MS.
+MAX_TEXT_LAYER_PAGES = int(os.getenv("MAX_TEXT_LAYER_PAGES", "100"))
+
+# A page "has a text layer" when it yields at least this many non-space
+# characters, and the PDF counts as digital when most pages do. Scanned PDFs
+# yield nothing (or a stray header) and fall through to OCR.
+_MIN_TEXT_LAYER_CHARS_PER_PAGE = 40
+_MIN_TEXT_LAYER_PAGE_RATIO = 0.8
 
 
 def is_blank_page(image, threshold: float = 0.98, min_ink_pixels: int = 500) -> bool:
@@ -46,6 +63,13 @@ class PreprocessOutput:
     processed_images: List[np.ndarray]
     source_kind: str
     total_pages: int = 1
+    truncated: bool = False
+
+
+@dataclass
+class TextLayerOutput:
+    page_texts: List[str]
+    total_pages: int
     truncated: bool = False
 
 
@@ -125,6 +149,40 @@ class PreprocessService:
     @staticmethod
     def _is_pdf(file_bytes: bytes) -> bool:
         return file_bytes[:4] == b"%PDF"
+
+    def extract_text_layer(self, file_bytes: bytes) -> TextLayerOutput | None:
+        """The PDF's own text, page by page, when it is a digital PDF.
+
+        Returns None for images, scanned PDFs, and PDFs whose text layer is
+        missing on too many pages to trust; callers then OCR as usual.
+        """
+        if not self._is_pdf(file_bytes):
+            return None
+        try:
+            with fitz.open(stream=io.BytesIO(file_bytes), filetype="pdf") as document:
+                total_pages = document.page_count
+                page_count = min(total_pages, MAX_TEXT_LAYER_PAGES)
+                page_texts = [document.load_page(n).get_text("text") or "" for n in range(page_count)]
+        except Exception as error:  # noqa: BLE001 - a broken text layer just means "use OCR"
+            logger.warning("Could not read PDF text layer, falling back to OCR: %s", error)
+            return None
+
+        if not page_texts:
+            return None
+        pages_with_text = sum(
+            1 for text in page_texts if len("".join(text.split())) >= _MIN_TEXT_LAYER_CHARS_PER_PAGE
+        )
+        if pages_with_text / len(page_texts) < _MIN_TEXT_LAYER_PAGE_RATIO:
+            return None
+
+        truncated = total_pages > MAX_TEXT_LAYER_PAGES
+        if truncated:
+            logger.warning(
+                "PDF has %d pages, only the first %d text-layer pages were read (MAX_TEXT_LAYER_PAGES)",
+                total_pages,
+                MAX_TEXT_LAYER_PAGES,
+            )
+        return TextLayerOutput(page_texts=page_texts, total_pages=total_pages, truncated=truncated)
 
     def preprocess(self, file_bytes: bytes) -> PreprocessOutput:
         raw_images: List[np.ndarray]

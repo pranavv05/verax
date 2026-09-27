@@ -15,13 +15,16 @@ const {
 } = require("../services/auth.service");
 const { getCurrentUser } = require("../services/firms.service");
 const { requireAuth } = require("../middlewares/auth.middleware");
-const { buildAuthLimiters } = require("../middlewares/rate-limit.middleware");
+const { buildAuthLimiters, buildPublicUploadLimiters } = require("../middlewares/rate-limit.middleware");
 const env = require("../config/env");
 
 const router = express.Router();
 
 const authLimiters = buildAuthLimiters();
 const authRateLimiter = authLimiters.attempt;
+// Clients open (and refresh) their upload link far more often than anyone
+// signs up or resets a password, so it gets its own, larger budget.
+const magicLinkOpenLimiter = buildPublicUploadLimiters().open;
 
 const signupSchema = Joi.object({
   name: Joi.string().trim().min(2).max(255).required(),
@@ -174,7 +177,7 @@ router.post(
 
 router.get(
   "/magic/:token",
-  authRateLimiter,
+  magicLinkOpenLimiter,
   validate(magicTokenSchema, "params"),
   asyncHandler(async (req, res) => {
     const result = await validateMagicToken({ token: req.params.token });

@@ -178,6 +178,63 @@ const markDocumentProcessingFailed = async (
   };
 };
 
+// Matches the "all automatic retries used" threshold the review page checks
+// (MAX_PROCESSING_ATTEMPTS in frontend ReviewPage.jsx).
+const PERMANENT_FAILURE_ATTEMPTS = 3;
+
+/**
+ * For a job that ended without the processor's own failure handling running —
+ * the worker process died mid-job (out of memory, redeploy) and BullMQ gave up
+ * on it as stalled. The document would otherwise sit in "processing" forever.
+ *
+ * Only touches a document that is still "processing", so it is a no-op for
+ * one the processor already marked failed, one that succeeded, or one that
+ * has since been re-queued. Marks it permanently failed so the review page
+ * offers Reprocess. Returns true when it changed something.
+ */
+const markInterruptedDocumentFailed = async (db, { firmId, documentId, reason, jobId }) => {
+  const message = `Processing was interrupted and did not finish${reason ? ` (${reason})` : ""}. Reprocess to try again.`.slice(
+    0,
+    1000
+  );
+
+  const updateResult = await db.query(
+    `
+      UPDATE documents
+      SET status = 'uploaded',
+          processing_attempts = GREATEST(processing_attempts, $4),
+          processing_error = $3
+      WHERE id = $1
+        AND firm_id = $2
+        AND status = 'processing'
+        AND deleted_at IS NULL
+      RETURNING client_id, processing_attempts
+    `,
+    [documentId, firmId, message, PERMANENT_FAILURE_ATTEMPTS]
+  );
+
+  if (updateResult.rowCount === 0) {
+    return false;
+  }
+
+  await insertAuditLog(db, {
+    firmId,
+    userId: null,
+    action: "document_processing_failed",
+    entityType: "document",
+    entityId: documentId,
+    metadata: {
+      clientId: updateResult.rows[0].client_id,
+      attempt: Number(updateResult.rows[0].processing_attempts),
+      jobId,
+      interrupted: true,
+      error: message
+    }
+  });
+
+  return true;
+};
+
 const parseAiResponse = (payload) => ({
   structuredData:
     payload && typeof payload.structured_data === "object" && payload.structured_data !== null
@@ -320,6 +377,8 @@ module.exports = {
   markDocumentProcessingStarted,
   markDocumentProcessingSucceeded,
   markDocumentProcessingFailed,
+  markInterruptedDocumentFailed,
+  PERMANENT_FAILURE_ATTEMPTS,
   getDocumentReadyEmailContext,
   recordDocumentReadyEmailAudit,
   recordDocumentFailedEmailAudit

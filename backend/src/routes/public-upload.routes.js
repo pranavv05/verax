@@ -1,6 +1,5 @@
 const express = require("express");
 const Joi = require("joi");
-const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const {
@@ -13,20 +12,12 @@ const { enqueueDocumentProcessingJob } = require("../services/document-queue.ser
 const { withTenantTransaction, setLocalConfig } = require("../db/tenant-context");
 const { createNotification } = require("../services/notifications.service");
 const ApiError = require("../utils/api-error");
+const { buildPublicUploadLimiters } = require("../middlewares/rate-limit.middleware");
 
 const router = express.Router();
 
-const uploadRateLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 50,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "Upload limit reached. Please try again later.",
-    statusCode: 429
-  }
-});
+// Separate budgets for initiate and confirm (one file = one of each).
+const uploadLimiters = buildPublicUploadLimiters();
 
 const tokenParamSchema = Joi.object({
   token: Joi.string().pattern(/^[a-zA-Z0-9]{32,128}$/).required()
@@ -156,7 +147,7 @@ router.get(
 
 router.post(
   "/:token/documents/upload",
-  uploadRateLimiter,
+  uploadLimiters.initiate,
   validate(tokenParamSchema, "params"),
   validate(publicUploadSchema),
   asyncHandler(async (req, res) => {
@@ -174,7 +165,7 @@ router.post(
 
 router.post(
   "/:token/documents/confirm",
-  uploadRateLimiter,
+  uploadLimiters.confirm,
   validate(tokenParamSchema, "params"),
   validate(confirmSchema),
   asyncHandler(async (req, res) => {

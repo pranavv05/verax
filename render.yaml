@@ -109,15 +109,15 @@ services:
       - key: AI_SERVICE_URL
         sync: false
       - key: AI_SERVICE_TIMEOUT_MS
-        value: 120000
+        value: 900000
       - key: AI_SERVICE_API_KEY
         sync: false
       - key: AWS_REGION
         value: ap-south-1
       - key: MAGIC_LINK_SINGLE_USE
-        value: "true"
+        value: "false"
       - key: MAGIC_LINK_EXPIRY_HOURS
-        value: 24
+        value: 720
       - key: UPLOAD_URL_EXPIRY_SECONDS
         value: 900
       - key: TALLY_EXPORT_URL_EXPIRY_SECONDS
@@ -228,15 +228,15 @@ services:
       - key: AI_SERVICE_URL
         sync: false
       - key: AI_SERVICE_TIMEOUT_MS
-        value: 120000
+        value: 900000
       - key: AI_SERVICE_API_KEY
         sync: false
       - key: AWS_REGION
         value: ap-south-1
       - key: MAGIC_LINK_SINGLE_USE
-        value: "true"
+        value: "false"
       - key: MAGIC_LINK_EXPIRY_HOURS
-        value: 24
+        value: 720
       - key: UPLOAD_URL_EXPIRY_SECONDS
         value: 900
       - key: TALLY_EXPORT_URL_EXPIRY_SECONDS

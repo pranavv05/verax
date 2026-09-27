@@ -9,7 +9,7 @@ if (process.env.SENTRY_DSN) {
 }
 
 const IORedis = require("ioredis");
-const { Worker } = require("bullmq");
+const { Queue, Worker } = require("bullmq");
 const env = require("../config/env");
 
 // An uncaught exception or unhandled rejection previously crashed this
@@ -29,30 +29,9 @@ const crashWithReport = (label) => (errorOrReason) => {
 process.on("uncaughtException", crashWithReport("Uncaught exception"));
 process.on("unhandledRejection", crashWithReport("Unhandled rejection"));
 const { DOCUMENT_PROCESSING_QUEUE } = require("../constants/queues");
-const { withTenantTransaction } = require("../db/tenant-context");
 const { assertRuntimeRoleIsNotSuperuser } = require("../db/assert-safe-role");
-const { processDocumentWithAiService } = require("../services/ai.service");
-const { sendEmail } = require("../services/email.service");
-const { createNotification } = require("../services/notifications.service");
-const {
-  parseAiResponse,
-  detectDocTypeMismatch,
-  markDocumentProcessingStarted,
-  markDocumentProcessingSucceeded,
-  markDocumentProcessingFailed,
-  getDocumentReadyEmailContext,
-  recordDocumentReadyEmailAudit,
-  recordDocumentFailedEmailAudit
-} = require("../services/document-processing.service");
-const {
-  documentReadySubject,
-  documentReadyTemplate
-} = require("../templates/documentReady.template");
-const {
-  documentFailedSubject,
-  documentFailedTemplate
-} = require("../templates/documentFailed.template");
 const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.job");
+const { createDocumentJobProcessor, createStuckDocumentRecovery } = require("./document-job.processor");
 
 const redisConnection = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null
@@ -67,237 +46,34 @@ const redisConnection = new IORedis(env.REDIS_URL, {
 const scheduledRequestsWorker = env.SCHEDULED_REQUESTS_EMBEDDED
   ? createScheduledRequestsWorker()
   : null;
-const CONFIDENCE_THRESHOLD = env.REVIEW_CONFIDENCE_THRESHOLD;
 
-const validateJobPayload = (data) => {
-  const documentId = data && typeof data.document_id === "string" ? data.document_id : null;
-  const s3Key = data && typeof data.s3_key === "string" ? data.s3_key : null;
-  const docType = data && typeof data.doc_type === "string" ? data.doc_type : null;
-  const firmId = data && typeof data.firm_id === "string" ? data.firm_id : null;
-  const clientId = data && typeof data.client_id === "string" ? data.client_id : null;
+// The job itself lives in document-job.processor.js (testable without Redis).
+const worker = new Worker(DOCUMENT_PROCESSING_QUEUE, createDocumentJobProcessor(), {
+  connection: redisConnection,
+  concurrency: env.DOCUMENT_WORKER_CONCURRENCY,
+  // Held off until assertRuntimeRoleIsNotSuperuser() passes, below — see
+  // that check's comment for why a worker running as a superuser would
+  // silently defeat Row Level Security for every job it processes.
+  autorun: false
+});
 
-  if (!documentId || !s3Key || !docType || !firmId || !clientId) {
-    throw new Error("Invalid document-processing job payload");
-  }
+// Finds documents whose job died mid-run (worker crash, OOM, redeploy) and
+// would otherwise show "processing" forever.
+const queue = new Queue(DOCUMENT_PROCESSING_QUEUE, { connection: redisConnection });
+const stuckDocuments = createStuckDocumentRecovery({ queue });
+const STUCK_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let stuckSweepTimer = null;
 
-  return {
-    documentId,
-    s3Key,
-    docType,
-    firmId,
-    clientId
-  };
-};
-
-const worker = new Worker(
-  DOCUMENT_PROCESSING_QUEUE,
-  async (job) => {
-    const payload = validateJobPayload(job.data);
-
-    await withTenantTransaction({ firmId: payload.firmId }, (db) =>
-      markDocumentProcessingStarted(db, {
-        firmId: payload.firmId,
-        documentId: payload.documentId
-      })
-    );
-
-    try {
-      const aiRawResponse = await processDocumentWithAiService({
-        documentId: payload.documentId,
-        s3Key: payload.s3Key,
-        docType: payload.docType,
-        firmId: payload.firmId
-      });
-      const aiParsed = parseAiResponse(aiRawResponse);
-      const confidence = aiParsed.confidenceScore ?? 0;
-      const documentTypeDetected = aiParsed.documentTypeDetected;
-      // Independent of the LLM's own self-reported documentTypeDetected
-      // (which the bank-statement path never even populates) — a structural
-      // check of the extracted field shapes against what the uploader
-      // claimed this document was. See detectDocTypeMismatch's comment.
-      const docTypeMismatchWarning = detectDocTypeMismatch(payload.docType, aiParsed.structuredData);
-      if (docTypeMismatchWarning) {
-        aiParsed.structuredData._doc_type_mismatch_warning = docTypeMismatchWarning;
-      }
-      const requiresReview =
-        confidence < CONFIDENCE_THRESHOLD ||
-        documentTypeDetected === "unknown" ||
-        Boolean(docTypeMismatchWarning);
-      const status = requiresReview ? "review_required" : "extracted";
-      const logMessage = docTypeMismatchWarning
-        ? `Document type mismatch detected — flagged for review`
-        : requiresReview
-        ? `Low confidence (${confidence}) or wrong document type — flagged for review`
-        : `Extracted with confidence ${confidence}`;
-
-      await withTenantTransaction({ firmId: payload.firmId }, (db) =>
-        markDocumentProcessingSucceeded(db, {
-          firmId: payload.firmId,
-          documentId: payload.documentId,
-          structuredData: aiParsed.structuredData,
-          rawText: aiParsed.rawText,
-          confidenceScore: aiParsed.confidenceScore,
-          status,
-          logMessage,
-          auditMetadata: {
-            confidence,
-            documentTypeDetected
-          }
-        })
-      );
-
-      const emailContext = await withTenantTransaction({ firmId: payload.firmId }, (db) =>
-        getDocumentReadyEmailContext(db, {
-          firmId: payload.firmId,
-          documentId: payload.documentId
-        })
-      );
-
-      if (emailContext && emailContext.admins.length > 0) {
-        const reviewUrl = `${env.FRONTEND_URL}/review/${payload.documentId}`;
-        for (const admin of emailContext.admins) {
-          const emailResult = await sendEmail({
-            to: admin.email,
-            subject: documentReadySubject({
-              documentName: emailContext.document.file_name
-            }),
-            html: documentReadyTemplate({
-              firmName: emailContext.document.firm_name,
-              clientName: emailContext.document.client_name,
-              documentName: emailContext.document.file_name,
-              reviewUrl
-            })
-          });
-
-          await withTenantTransaction({ firmId: payload.firmId }, (db) =>
-            recordDocumentReadyEmailAudit(db, {
-              firmId: payload.firmId,
-              userId: admin.id,
-              documentId: payload.documentId,
-              email: admin.email,
-              emailResult
-            })
-          );
-        }
-      }
-
-      if (emailContext && emailContext.admins.length > 0) {
-        for (const admin of emailContext.admins) {
-          try {
-            await createNotification({
-              firmId: payload.firmId,
-              userId: admin.id,
-              type: "document_ready",
-              title: "Document ready for review",
-              message: `${emailContext.document.file_name} from ${emailContext.document.client_name} has been processed and is ready to review.`,
-              entityType: "document",
-              entityId: payload.documentId
-            });
-          } catch (notificationError) {
-            process.stderr.write(
-              `Notification failed for document ${payload.documentId}: ${String(notificationError.message || notificationError)}\n`
-            );
-          }
-        }
-      }
-
-      return {
-        document_id: payload.documentId,
-        status
-      };
-    } catch (error) {
-      const normalizedError = String(error && error.message ? error.message : error);
-      const failure = await withTenantTransaction({ firmId: payload.firmId }, (db) =>
-        markDocumentProcessingFailed(db, {
-          firmId: payload.firmId,
-          documentId: payload.documentId,
-          errorMessage: normalizedError,
-          jobId: job.id
-        })
-      );
-
-      if (failure.alertTriggered) {
-        process.stderr.write(
-          `[ALERT] Document ${payload.documentId} for firm ${payload.firmId} failed ${failure.attempt} times.\n`
-        );
-
-        try {
-          const failureContext = await withTenantTransaction({ firmId: payload.firmId }, (db) =>
-            getDocumentReadyEmailContext(db, {
-              firmId: payload.firmId,
-              documentId: payload.documentId
-            })
-          );
-
-          if (failureContext && failureContext.admins.length > 0) {
-            const auditLogUrl = `${env.FRONTEND_URL}/audit-logs`;
-
-            for (const admin of failureContext.admins) {
-              try {
-                await createNotification({
-                  firmId: payload.firmId,
-                  userId: admin.id,
-                  type: "document_failed",
-                  title: "Document processing failed",
-                  message:
-                    "A document failed to process after 3 attempts and needs manual review.",
-                  entityType: "document",
-                  entityId: payload.documentId
-                });
-              } catch (notificationError) {
-                process.stderr.write(
-                  `Failure notification failed for document ${payload.documentId}: ${String(notificationError.message || notificationError)}\n`
-                );
-              }
-
-              try {
-                const emailResult = await sendEmail({
-                  to: admin.email,
-                  subject: documentFailedSubject(),
-                  html: documentFailedTemplate({
-                    firmName: failureContext.document.firm_name,
-                    clientName: failureContext.document.client_name,
-                    documentName: failureContext.document.file_name,
-                    failureReason: normalizedError,
-                    auditLogUrl
-                  })
-                });
-
-                await withTenantTransaction({ firmId: payload.firmId }, (db) =>
-                  recordDocumentFailedEmailAudit(db, {
-                    firmId: payload.firmId,
-                    userId: admin.id,
-                    documentId: payload.documentId,
-                    email: admin.email,
-                    emailResult
-                  })
-                );
-              } catch (emailError) {
-                process.stderr.write(
-                  `Failure email failed for document ${payload.documentId}: ${String(emailError.message || emailError)}\n`
-                );
-              }
-            }
-          }
-        } catch (alertPipelineError) {
-          process.stderr.write(
-            `Permanent-failure alert pipeline failed for document ${payload.documentId}: ${String(alertPipelineError.message || alertPipelineError)}\n`
-          );
-        }
-      }
-
-      throw error;
+const sweepStuckDocuments = async () => {
+  try {
+    const recovered = await stuckDocuments.sweep();
+    if (recovered > 0) {
+      process.stderr.write(`Marked ${recovered} interrupted document(s) as failed\n`);
     }
-  },
-  {
-    connection: redisConnection,
-    concurrency: env.DOCUMENT_WORKER_CONCURRENCY,
-    // Held off until assertRuntimeRoleIsNotSuperuser() passes, below — see
-    // that check's comment for why a worker running as a superuser would
-    // silently defeat Row Level Security for every job it processes.
-    autorun: false
+  } catch (error) {
+    process.stderr.write(`Stuck-document sweep failed: ${String(error.message || error)}\n`);
   }
-);
+};
 
 worker.on("ready", () => {
   process.stdout.write(
@@ -313,8 +89,19 @@ worker.on("failed", (job, error) => {
   const jobId = job ? job.id : "unknown";
   const documentId = job && job.data ? job.data.document_id : "unknown";
   process.stderr.write(
-    `Job ${jobId} failed for document ${documentId}: ${String(error.message || error)}\n`
+    `Job ${jobId} failed for document ${documentId}: ${String((error && error.message) || error)}\n`
   );
+
+  // Out of attempts: make sure the document isn't left in "processing"
+  // (a no-op when the processor already recorded the failure).
+  const finalAttempt = job && job.attemptsMade >= ((job.opts && job.opts.attempts) || 1);
+  if (finalAttempt) {
+    stuckDocuments.recoverJob(job).catch((recoverError) => {
+      process.stderr.write(
+        `Could not recover document ${documentId} after job failure: ${String(recoverError.message || recoverError)}\n`
+      );
+    });
+  }
 });
 
 worker.on("error", (error) => {
@@ -323,7 +110,9 @@ worker.on("error", (error) => {
 
 const shutdown = async () => {
   process.stdout.write("Shutting down document worker...\n");
+  if (stuckSweepTimer) clearInterval(stuckSweepTimer);
   await worker.close();
+  await queue.close();
   if (scheduledRequestsWorker) {
     await scheduledRequestsWorker.worker.close();
     await scheduledRequestsWorker.connection.quit();
@@ -349,6 +138,8 @@ process.on("SIGTERM", () => {
 (async () => {
   try {
     await assertRuntimeRoleIsNotSuperuser();
+    await sweepStuckDocuments();
+    stuckSweepTimer = setInterval(sweepStuckDocuments, STUCK_SWEEP_INTERVAL_MS);
     const runs = [worker.run()];
     if (scheduledRequestsWorker) {
       runs.push(scheduledRequestsWorker.worker.run());

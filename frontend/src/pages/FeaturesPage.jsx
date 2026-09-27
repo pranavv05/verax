@@ -115,7 +115,7 @@ const ClientsScreen = () => (
         <Check />
         Upload link copied
       </p>
-      <p className="mt-1 pl-6 text-[11px] text-carbon-400">Kumar &amp; Sons · expires in 24 hours</p>
+      <p className="mt-1 pl-6 text-[11px] text-carbon-400">Kumar &amp; Sons · valid for 30 days</p>
     </div>
   </div>
 );
@@ -372,7 +372,7 @@ const MODULES = [
     body: "Keep a roster of your clients with their GSTINs and contact details, send each one a secure upload link, and see where every document stands.",
     points: [
       "GSTIN stored and validated on each client profile",
-      "One-click upload links that expire after 24 hours and rotate after each use",
+      "One-click upload links that work for every batch for 30 days, and can be reset at any time",
       "Per-client counts: total, pending, reviewed and exported",
       "Search across name, email, phone and GSTIN",
       "Client status: active, pending or inactive"

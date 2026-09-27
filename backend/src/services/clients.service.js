@@ -25,6 +25,34 @@ const toClientResponse = (row) => ({
 
 const createUploadToken = () => crypto.randomBytes(32).toString("hex");
 
+// Replaces a client's upload token (killing every link sent so far) with a
+// fresh one valid for MAGIC_LINK_EXPIRY_HOURS. Retries on the rare collision.
+const issueNewUploadToken = async (db, { firmId, clientId }) => {
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await db.query(
+        `
+          UPDATE clients
+          SET upload_token = $1,
+              upload_token_expires_at = NOW() + make_interval(hours => $2::integer)
+          WHERE id = $3
+            AND firm_id = $4
+            AND deleted_at IS NULL
+          RETURNING upload_token, upload_token_expires_at
+        `,
+        [createUploadToken(), env.MAGIC_LINK_EXPIRY_HOURS, clientId, firmId]
+      );
+    } catch (error) {
+      if (error.code === "23505" && attempt < maxAttempts) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return null;
+};
+
 const DEFAULT_REQUESTED_DOCUMENT_TYPES = [
   "Invoices",
   "Bills",
@@ -375,34 +403,13 @@ const requestClientDocuments = async (db, { firmId, clientId, actorUserId, docum
     throw ApiError.badRequest("Cannot request documents for an inactive client");
   }
 
-  const shouldRotateToken = env.MAGIC_LINK_SINGLE_USE;
   let requestResult = null;
 
-  if (shouldRotateToken) {
-    const maxAttempts = 5;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        requestResult = await db.query(
-          `
-            UPDATE clients
-            SET upload_token = $1,
-                upload_token_expires_at = NOW() + make_interval(hours => $2::integer)
-            WHERE id = $3
-              AND firm_id = $4
-              AND deleted_at IS NULL
-            RETURNING upload_token, upload_token_expires_at
-          `,
-          [createUploadToken(), env.MAGIC_LINK_EXPIRY_HOURS, clientId, firmId]
-        );
-        break;
-      } catch (error) {
-        if (error.code === "23505" && attempt < maxAttempts) {
-          continue;
-        }
-        throw error;
-      }
-    }
+  if (env.MAGIC_LINK_SINGLE_USE) {
+    requestResult = await issueNewUploadToken(db, { firmId, clientId });
   } else {
+    // Reusable links: keep the token the client already has and push its
+    // expiry out, so every link the firm has sent them keeps working.
     requestResult = await db.query(
       `
         UPDATE clients
@@ -444,7 +451,8 @@ const requestClientDocuments = async (db, { firmId, clientId, actorUserId, docum
         firmName: client.firm_name,
         clientName: client.name,
         documentTypes: toRequestedDocumentLabels(documentTypes),
-        expiryDate: uploadTokenExpiresAt
+        expiryDate: uploadTokenExpiresAt,
+        singleUse: env.MAGIC_LINK_SINGLE_USE
       })
     });
 
@@ -471,11 +479,39 @@ const requestClientDocuments = async (db, { firmId, clientId, actorUserId, docum
   };
 };
 
+/**
+ * Upload links are reusable until they expire, so a link forwarded to the
+ * wrong person stays live. This replaces the token: every link sent so far
+ * stops working, and the firm gets a new one to send.
+ */
+const resetClientUploadLink = async (db, { firmId, clientId, actorUserId }) => {
+  const result = await issueNewUploadToken(db, { firmId, clientId });
+  if (!result || result.rowCount === 0) {
+    throw ApiError.notFound("Client not found");
+  }
+
+  await insertAuditLog(db, {
+    firmId,
+    userId: actorUserId,
+    action: "client_upload_link_reset",
+    entityType: "client",
+    entityId: clientId,
+    metadata: {}
+  });
+
+  return {
+    clientId,
+    uploadToken: result.rows[0].upload_token,
+    uploadTokenExpiresAt: result.rows[0].upload_token_expires_at
+  };
+};
+
 module.exports = {
   listClients,
   createClient,
   getClientById,
   updateClient,
   deleteClient,
-  requestClientDocuments
+  requestClientDocuments,
+  resetClientUploadLink
 };

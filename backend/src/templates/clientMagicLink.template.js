@@ -28,7 +28,8 @@ const clientMagicLinkTemplate = ({
   firmName,
   clientName,
   documentTypes = [],
-  expiryDate
+  expiryDate,
+  singleUse = false
 }) => {
   const types = documentTypes.length > 0 ? documentTypes : ["documents"];
   return `
@@ -50,7 +51,11 @@ const clientMagicLinkTemplate = ({
             This link expires on ${formatExpiryDate(expiryDate)}.
           </p>
           <p style="margin:0;font-size:13px;line-height:1.6;color:#64748b;">
-            This link can only be used once.
+            ${
+              singleUse
+                ? "This link can only be used once."
+                : "You can use this link as many times as you need until then. Keep it for your next batch."
+            }
           </p>
         </div>
       </div>

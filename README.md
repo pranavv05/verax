@@ -251,7 +251,7 @@ Failures: if OCR, the AI service, or the LLM call fails (including Groq rate lim
 - PaddleOCR is the primary OCR engine (CPU-only, lazy-loaded on first use — no model download at service startup).
 - Tesseract is the fallback when PaddleOCR fails or returns too little text.
 - Docker installs English and Hindi Tesseract language packs, plus `libgomp1` for PaddlePaddle.
-- PDF fallback rendering supports up to 15 pages and skips blank pages.
+- Scanned PDFs are OCR'd up to 40 pages (`MAX_OCR_PAGES`), skipping blank pages. Digital bank statements are read from their own text layer up to 100 pages (`MAX_TEXT_LAYER_PAGES`) and extracted a few pages per LLM call. Longer documents are flagged on the Review page.
 - LLM extraction uses Groq (`llama-3.3-70b-versatile` by default, overridable with `GROQ_MODEL`) with a prompt tuned for Indian invoices, bills, GST, TDS, HSN, OCR corrections, and wrong-document detection.
 - Groq calls are retried in-service on timeouts, rate limits (`408`/`429`), and `5xx`; any other `4xx` (bad request, auth, decommissioned model) fails immediately. A failed or malformed LLM response makes `/process` return `503`, so the backend queue retries the document instead of storing an empty extraction.
 - Server-side confidence adjustment caps confidence for missing critical fields, invalid GSTIN, and tax math mismatch.
