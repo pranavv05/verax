@@ -203,9 +203,12 @@ const reprocessDocument = async (db, { firmId, documentId, userId }) => {
     createdBy: userId
   });
 
+  // processing_attempts restarts with the new job: the permanent-failure
+  // alert fires at attempt >= 3, so carrying the old count over would email
+  // admins on every retry of the fresh job instead of once after the last.
   await db.query(
     `UPDATE documents
-     SET status = 'uploaded', processing_error = NULL, updated_at = NOW()
+     SET status = 'uploaded', processing_error = NULL, processing_attempts = 0, updated_at = NOW()
      WHERE id = $1 AND firm_id = $2 AND deleted_at IS NULL`,
     [documentId, firmId]
   );

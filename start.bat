@@ -1,7 +1,9 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
+cd /d "%~dp0"
 
-set "PG_CONTAINER=pg"
+REM Container names come from docker-compose.yml (container_name:).
+set "PG_CONTAINER=ca-postgres"
 set "REDIS_CONTAINER=ca-redis"
 set "DOCKER_TIMEOUT=60"
 set "PG_TIMEOUT=60"
@@ -50,25 +52,16 @@ echo.
 
 REM --- Step 2: Start postgres and redis containers ---
 echo [2/5] Starting containers...
-docker start %PG_CONTAINER% >nul 2>&1
+REM "docker compose up" creates the containers on first run and just starts
+REM them afterwards, so this also works on a fresh machine.
+docker compose up -d postgres redis
 if %errorlevel% neq 0 (
     echo.
-    echo ERROR: Could not start container "%PG_CONTAINER%".
-    echo Check that it exists with: docker ps -a
+    echo ERROR: Could not start the postgres/redis containers.
+    echo Check the output above, and "docker ps -a" for port conflicts on 5432/6379.
     pause
     exit /b 1
 )
-echo       Started %PG_CONTAINER%.
-
-docker start %REDIS_CONTAINER% >nul 2>&1
-if %errorlevel% neq 0 (
-    echo.
-    echo ERROR: Could not start container "%REDIS_CONTAINER%".
-    echo Check that it exists with: docker ps -a
-    pause
-    exit /b 1
-)
-echo       Started %REDIS_CONTAINER%.
 echo.
 
 echo       Running containers:
@@ -95,10 +88,59 @@ set /a PG_ELAPSED+=2
 goto wait_pg
 
 :pg_ready
-if /i "%PG_CONTAINER%"=="pg" (
-    echo       Postgres container is "pg" -^> reachable at localhost:5432
-) else (
-    echo       Postgres container "%PG_CONTAINER%" is ready.
+echo       PostgreSQL is ready at localhost:5432.
+echo.
+
+REM The repo-root .env uses docker-network hostnames (postgres, redis,
+REM ai-service) for the compose setup. The services below run on this machine,
+REM so point them at localhost instead. dotenv never overrides a variable that
+REM is already set, so these win over .env without editing it.
+set "POSTGRES_USER=ca_user"
+set "POSTGRES_PASSWORD=ca_password"
+set "POSTGRES_DB=ca_saas"
+REM Same dev default the ca_app migration falls back to.
+set "APP_DB_PASSWORD=ca_app_dev_password_change_me"
+if exist ".env" (
+    for /f "usebackq eol=# tokens=1,* delims==" %%A in (".env") do (
+        if /i "%%A"=="POSTGRES_USER" set "POSTGRES_USER=%%B"
+        if /i "%%A"=="POSTGRES_PASSWORD" set "POSTGRES_PASSWORD=%%B"
+        if /i "%%A"=="POSTGRES_DB" set "POSTGRES_DB=%%B"
+        if /i "%%A"=="APP_DB_PASSWORD" set "APP_DB_PASSWORD=%%B"
+    )
+)
+REM DATABASE_URL is the superuser, used only for migrations. The backend and
+REM worker refuse to run queries as a superuser (RLS would be bypassed), so
+REM they connect as the least-privilege ca_app role via APP_DATABASE_URL.
+set "DATABASE_URL=postgresql://%POSTGRES_USER%:%POSTGRES_PASSWORD%@localhost:5432/%POSTGRES_DB%"
+set "APP_DATABASE_URL=postgresql://ca_app:%APP_DB_PASSWORD%@localhost:5432/%POSTGRES_DB%"
+set "REDIS_URL=redis://localhost:6379"
+set "AI_SERVICE_URL=http://localhost:8000"
+set "AI_SERVICE_PORT=8000"
+REM The backend always writes uploads to backend\local-storage; the AI service
+REM must read from the same folder.
+set "LOCAL_STORAGE_PATH=%CD%\backend\local-storage"
+
+if not exist "ai-service\venv\Scripts\uvicorn.exe" (
+    echo ERROR: AI service virtualenv not found. Create it once with:
+    echo   cd ai-service
+    echo   py -3.12 -m venv venv
+    echo   venv\Scripts\pip install -r requirements.txt
+    pause
+    exit /b 1
+)
+
+REM Apply any pending migrations (a no-op when up to date). The ca_app role
+REM the backend connects as is itself created by a migration.
+echo       Applying database migrations...
+pushd backend
+call npm run migrate:latest
+set "MIGRATE_RESULT=%errorlevel%"
+popd
+if not "%MIGRATE_RESULT%"=="0" (
+    echo.
+    echo ERROR: Database migrations failed. See the output above.
+    pause
+    exit /b 1
 )
 echo.
 

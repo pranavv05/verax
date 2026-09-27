@@ -78,11 +78,33 @@ const assertUploadedFileContent = ({ mimetype, fileName, buffer }) => {
   }
 };
 
+// Validates a file that was uploaded straight to storage via a presigned URL,
+// using the stored object's real size and leading bytes (see
+// s3.service.js inspectStoredObject). The presigned PUT does not bind the
+// size or content the client declared in assertAllowedFile, so without this
+// a client — including anyone holding a magic upload link — could store an
+// arbitrarily large or non-document file and have it queued for OCR.
+const assertStoredUploadIsValid = ({ fileName, size, head }) => {
+  const maxBytes = env.MAX_UPLOAD_MB * 1024 * 1024;
+  if (!Number.isFinite(size) || size <= 0) {
+    throw ApiError.badRequest("Uploaded file is empty");
+  }
+  if (size > maxBytes) {
+    throw ApiError.badRequest(`File size must be between 1 byte and ${env.MAX_UPLOAD_MB}MB`);
+  }
+
+  const extension = path.extname(fileName || "").toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(extension) || !matchesExpectedSignature(head, extension)) {
+    throw ApiError.invalidFileType(UNSUPPORTED_FILE_MESSAGE);
+  }
+};
+
 module.exports = {
   ALLOWED_MIME_TYPES,
   ALLOWED_EXTENSIONS,
   UNSUPPORTED_FILE_MESSAGE,
   sanitizeFileName,
   assertAllowedFile,
-  assertUploadedFileContent
+  assertUploadedFileContent,
+  assertStoredUploadIsValid
 };

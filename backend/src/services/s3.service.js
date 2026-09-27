@@ -133,33 +133,69 @@ const downloadFileAsBuffer = async ({ key }) => {
   return Buffer.concat(chunks);
 };
 
-const assertObjectExists = async ({ key }) => {
+// Enough leading bytes to identify every supported type's signature
+// (utils/file-signature.js needs at most 12).
+const STORED_OBJECT_HEAD_BYTES = 64;
+
+const objectNotFound = (where) =>
+  ApiError.badRequest(`Uploaded file was not found in ${where}`);
+
+// Returns the stored object's real size and its first bytes. The browser
+// uploads straight to storage via a presigned URL, so the backend never sees
+// the bytes during upload — this is how confirm verifies what actually
+// arrived, rather than trusting the size/type the client declared up front.
+const inspectStoredObject = async ({ key }) => {
   if (env.LOCAL_STORAGE) {
+    let handle;
     try {
-      await fs.access(resolveLocalStoragePath(key));
-      return;
+      handle = await fs.open(resolveLocalStoragePath(key), "r");
+      const { size } = await handle.stat();
+      const head = Buffer.alloc(Math.min(size, STORED_OBJECT_HEAD_BYTES));
+      if (head.length > 0) {
+        await handle.read(head, 0, head.length, 0);
+      }
+      return { size, head };
     } catch (error) {
       if (error && error.code === "ENOENT") {
-        throw ApiError.badRequest("Uploaded file was not found in local storage");
+        throw objectNotFound("local storage");
       }
       throw error;
+    } finally {
+      await handle?.close();
     }
   }
 
+  let size;
   try {
-    await s3Client.send(
+    const headResult = await s3Client.send(
       new HeadObjectCommand({
         Bucket: env.AWS_S3_BUCKET,
         Key: key
       })
     );
+    size = Number(headResult.ContentLength || 0);
   } catch (error) {
     const code = error?.$metadata?.httpStatusCode;
     if (code === 404 || error?.name === "NotFound" || error?.name === "NoSuchKey") {
-      throw ApiError.badRequest("Uploaded file was not found in object storage");
+      throw objectNotFound("object storage");
     }
     throw error;
   }
+
+  if (size === 0) {
+    return { size, head: Buffer.alloc(0) };
+  }
+
+  const rangeEnd = Math.min(size, STORED_OBJECT_HEAD_BYTES) - 1;
+  const response = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: env.AWS_S3_BUCKET,
+      Key: key,
+      Range: `bytes=0-${rangeEnd}`
+    })
+  );
+  const bytes = await response.Body.transformToByteArray();
+  return { size, head: Buffer.from(bytes) };
 };
 
 const deleteObject = async ({ key }) => {
@@ -190,6 +226,6 @@ module.exports = {
   createDownloadUrl,
   uploadTextObject,
   downloadFileAsBuffer,
-  assertObjectExists,
+  inspectStoredObject,
   deleteObject
 };

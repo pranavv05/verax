@@ -1,6 +1,5 @@
 const express = require("express");
 const Joi = require("joi");
-const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const {
@@ -16,21 +15,13 @@ const {
 } = require("../services/auth.service");
 const { getCurrentUser } = require("../services/firms.service");
 const { requireAuth } = require("../middlewares/auth.middleware");
+const { buildAuthLimiters } = require("../middlewares/rate-limit.middleware");
 const env = require("../config/env");
 
 const router = express.Router();
 
-const authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "Too many requests. Please try again later.",
-    statusCode: 429
-  }
-});
+const authLimiters = buildAuthLimiters();
+const authRateLimiter = authLimiters.attempt;
 
 const signupSchema = Joi.object({
   name: Joi.string().trim().min(2).max(255).required(),
@@ -92,7 +83,8 @@ router.post(
 
 router.post(
   "/login",
-  authRateLimiter,
+  authLimiters.loginPerIp,
+  authLimiters.loginPerAccount,
   validate(loginSchema),
   asyncHandler(async (req, res) => {
     const result = await loginUser({
@@ -113,7 +105,7 @@ router.post(
 
 router.post(
   "/refresh",
-  authRateLimiter,
+  authLimiters.session,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies[env.REFRESH_COOKIE_NAME];
     const result = await refreshAccessToken({
@@ -132,7 +124,7 @@ router.post(
 
 router.post(
   "/logout",
-  authRateLimiter,
+  authLimiters.session,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies[env.REFRESH_COOKIE_NAME];
     await logoutSession({ refreshToken });

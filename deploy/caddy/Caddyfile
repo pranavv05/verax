@@ -1,0 +1,22 @@
+# TLS-terminating reverse proxy for docker-compose.prod.yml. Caddy obtains and
+# renews Let's Encrypt certificates for both domains automatically — point
+# their DNS A/AAAA records at this host and open ports 80 and 443.
+#
+# APP_DOMAIN and API_DOMAIN must be subdomains of one registrable domain
+# (e.g. app.yourdomain.in + api.yourdomain.in): the refresh-token cookie is
+# SameSite=Strict, so browsers only send it to the API when both are same-site.
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy frontend:80
+}
+
+{$API_DOMAIN} {
+	# Caddy discards any client-supplied X-Forwarded-For and sets it to the
+	# real peer address, so the backend's TRUST_PROXY=1 (exactly this one
+	# hop) yields an unspoofable client IP for rate limiting and audit logs.
+	reverse_proxy backend:3000
+}

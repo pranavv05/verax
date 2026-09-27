@@ -5,11 +5,32 @@
 # (this file). The frontend is a static Vite build and is deployed separately
 # on Vercel — see frontend/README or the repo root README for that step.
 #
-# The ai-service (verax-ai-service) MUST run on a paid, always-on instance
-# type, not Render's free tier. Free-tier services spin down on idle, and the
-# resulting cold start (reloading PaddleOCR models) means the first request
-# after any idle period fails or times out — unacceptable for a tool CA firms
-# depend on. Set `plan:` for verax-ai-service accordingly before going live.
+# Instance plans below are sized for real client data, not the free tier:
+#   - verax-ai-service: 1c-2g (2 GB, always on). PaddleOCR needs ~2 GB, and a
+#     free instance (512 MB, spins down on idle) either runs out of memory or
+#     fails the first request after every idle period while models reload.
+#     Runs a single uvicorn worker: extra processes on one CPU add no
+#     throughput but multiply PaddleOCR's memory.
+#   - verax-backend / verax-worker: 0.5c-512mb, so the API never spins down
+#     mid-session and queued documents are always being processed.
+#   - verax-redis: 256mb with maxmemoryPolicy noeviction. Render's default
+#     policy (allkeys-lru) may silently evict BullMQ job keys under memory
+#     pressure, losing queued documents; BullMQ requires noeviction.
+#
+# DOMAINS — frontend and API MUST share one registrable domain, e.g.
+# app.yourdomain.in (Vercel) + api.yourdomain.in (verax-backend custom
+# domain). The refresh-token cookie is SameSite=Strict and the access token
+# lives only in memory, so every page load re-authenticates via that cookie.
+# *.vercel.app and *.onrender.com are separate sites to browsers, which never
+# send a SameSite cookie between them — on the default domains, every reload
+# logs the user out. (The backend logs a warning at boot if FRONTEND_URL is
+# on such a platform domain.)
+#
+# S3 bucket CORS — the browser uploads to and downloads from S3 directly, so
+# the bucket needs a CORS rule for the frontend origin:
+#   [{"AllowedOrigins": ["https://app.yourdomain.in"],
+#     "AllowedMethods": ["PUT", "GET"], "AllowedHeaders": ["*"],
+#     "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3000}]
 #
 # verax-postgres MUST run on a paid plan, not `free`, before any real client
 # data is stored. Render's free Postgres tier is explicitly ephemeral: it is
@@ -29,16 +50,18 @@
 #   - AWS_ACCESS_KEY_ID
 #   - AWS_SECRET_ACCESS_KEY
 #   - GROQ_API_KEY
-#   - FRONTEND_URL         (your Vercel URL, e.g. https://your-app.vercel.app)
+#   - FRONTEND_URL         (your frontend's custom domain, e.g. https://app.yourdomain.in —
+#                            see DOMAINS above; not the *.vercel.app URL)
 #   - AI_SERVICE_URL       (https://verax-ai-service.onrender.com — set after AI service deploys)
 #   - AI_SERVICE_API_KEY   (same random 32+ char value on backend, AI service, and worker)
 #   - SMTP_HOST / SMTP_USER / SMTP_PASS  (required for magic-link, password-reset and
 #                            document-ready notification emails to actually send —
 #                            without these, EMAIL_PROVIDER defaults to "smtp" with no
 #                            host configured and email sending silently fails)
+#   - SENTRY_DSN           (optional, backend + worker — error reporting; unset = disabled)
 #
 # Then in Vercel, set:
-#   - VITE_API_BASE_URL = the URL of verax-backend shown in Render dashboard
+#   - VITE_API_BASE_URL = verax-backend's custom domain, e.g. https://api.yourdomain.in
 
 databases:
   - name: verax-postgres
@@ -51,7 +74,10 @@ databases:
 services:
   - type: redis
     name: verax-redis
-    plan: free
+    # Paid plan: the free Key Value tier has no persistence and 25 MB.
+    plan: 256mb
+    # BullMQ requires noeviction — see the header note.
+    maxmemoryPolicy: noeviction
     ipAllowList: []
 
   - type: web
@@ -60,11 +86,16 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: npm run migrate:latest && npm start
-    plan: free
+    plan: 0.5c-512mb
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
+      # Render's edge is exactly one proxy hop in front of the app — without
+      # this, req.ip is the proxy's address and every user shares one
+      # rate-limit bucket. See TRUST_PROXY in backend/src/config/env.js.
+      - key: TRUST_PROXY
+        value: "1"
       - key: DATABASE_URL
         fromDatabase:
           name: verax-postgres
@@ -132,14 +163,16 @@ services:
         sync: false
       - key: EMAIL_FROM_ADDRESS
         sync: false
+      - key: SENTRY_DSN
+        sync: false
 
   - type: web
     name: verax-ai-service
     runtime: docker
     rootDir: ai-service
     dockerfilePath: ./Dockerfile.prod
-    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
-    plan: free
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 1
+    plan: 1c-2g
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
@@ -178,7 +211,7 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: npm run worker:documents
-    plan: free
+    plan: 0.5c-512mb
     envVars:
       - key: NODE_ENV
         value: production
@@ -248,4 +281,6 @@ services:
       - key: SMTP_PASS
         sync: false
       - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: SENTRY_DSN
         sync: false

@@ -57,6 +57,17 @@ const envSchema = Joi.object({
     .default("15m"),
   CLIENT_REFRESH_TOKEN_EXPIRY_DAYS: Joi.number().integer().min(1).default(30),
   FRONTEND_URL: Joi.string().uri().required(),
+  // Express "trust proxy" setting — how many reverse-proxy hops sit in front
+  // of this process. Rate limiting and audit logs key on req.ip; behind a
+  // proxy (Render's edge, or the Caddy service in docker-compose.prod.yml)
+  // req.ip is otherwise the proxy's own address, which collapses every user
+  // into one shared rate-limit bucket. Set to the exact hop count (Render: 1).
+  // Leave false when the process is exposed directly — trusting a proxy that
+  // isn't there lets any client spoof its IP via X-Forwarded-For.
+  TRUST_PROXY: Joi.alternatives()
+    .try(Joi.boolean().truthy("true").falsy("false"), Joi.number().integer().min(0), Joi.string().trim().min(1))
+    .empty("")
+    .default(false),
   EMAIL_PROVIDER: Joi.string().valid("smtp", "resend").default("smtp"),
   RESEND_API_KEY: Joi.string().allow("").optional(),
   SMTP_HOST: Joi.string().allow("").optional(),
@@ -130,6 +141,7 @@ module.exports = Object.freeze({
   CLIENT_REFRESH_TOKEN_EXPIRY_DAYS: value.CLIENT_REFRESH_TOKEN_EXPIRY_DAYS,
   CLIENT_REFRESH_TOKEN_TTL_SECONDS: value.CLIENT_REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60,
   FRONTEND_URL: value.FRONTEND_URL,
+  TRUST_PROXY: value.TRUST_PROXY,
   EMAIL_PROVIDER: value.EMAIL_PROVIDER,
   RESEND_API_KEY: value.RESEND_API_KEY,
   SMTP_HOST: value.SMTP_HOST,
