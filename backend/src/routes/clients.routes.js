@@ -11,7 +11,8 @@ const {
   getClientById,
   updateClient,
   deleteClient,
-  requestClientDocuments
+  requestClientDocuments,
+  resetClientUploadLink
 } = require("../services/clients.service");
 const { enableClientPortal } = require("../services/client-auth.service");
 const {
@@ -235,6 +236,23 @@ router.post(
         clientId: req.params.id,
         actorUserId: req.user.userId,
         documentTypes: req.body.documentTypes
+      })
+    );
+    res.status(200).json(result);
+  })
+);
+
+// Kills every upload link already sent to this client and issues a new one.
+router.post(
+  "/:id/reset-upload-link",
+  requireAdmin,
+  validate(clientIdParamSchema, "params"),
+  asyncHandler(async (req, res) => {
+    const result = await req.withTenantTransaction((db) =>
+      resetClientUploadLink(db, {
+        firmId: req.user.firmId,
+        clientId: req.params.id,
+        actorUserId: req.user.userId
       })
     );
     res.status(200).json(result);

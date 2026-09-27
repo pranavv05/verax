@@ -28,7 +28,7 @@ if (!DATABASE_URL) {
 }
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-const MAGIC_LINK_EXPIRY_HOURS = Number(process.env.MAGIC_LINK_EXPIRY_HOURS || 24);
+const MAGIC_LINK_EXPIRY_HOURS = Number(process.env.MAGIC_LINK_EXPIRY_HOURS || 720);
 const BCRYPT_COST = 12;
 
 const FIRM_NAME = "Prakash & Associates Demo";

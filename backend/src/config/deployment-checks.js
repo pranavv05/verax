@@ -43,4 +43,44 @@ const getFrontendDomainWarning = (frontendUrl) => {
   );
 };
 
-module.exports = { getFrontendDomainWarning };
+/**
+ * Settings that let a production backend start but then fail silently for
+ * real clients. Returns a list of problems; env.js refuses to boot on any.
+ *
+ * - No working email provider: invites, portal passwords, password resets and
+ *   document alerts are "sent" into a log line nobody reads.
+ * - LOCAL_STORAGE on a platform with an ephemeral disk (Render, most PaaS):
+ *   every client document is lost on the next deploy. Self-hosted servers with
+ *   a persistent volume can opt in with ALLOW_LOCAL_STORAGE_IN_PRODUCTION.
+ */
+const getProductionConfigErrors = (config) => {
+  const errors = [];
+  const provider = config.EMAIL_PROVIDER || "smtp";
+
+  if (provider === "resend") {
+    if (!config.RESEND_API_KEY) {
+      errors.push("EMAIL_PROVIDER is \"resend\" but RESEND_API_KEY is not set.");
+    }
+  } else {
+    const missing = ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"].filter((key) => !config[key]);
+    if (missing.length > 0) {
+      errors.push(
+        `No email provider configured (missing ${missing.join(", ")}). Set SMTP_HOST/SMTP_USER/SMTP_PASS, ` +
+          "or EMAIL_PROVIDER=resend with RESEND_API_KEY — without one, client invites, portal passwords " +
+          "and password resets are never delivered."
+      );
+    }
+  }
+
+  if (config.LOCAL_STORAGE && !config.ALLOW_LOCAL_STORAGE_IN_PRODUCTION) {
+    errors.push(
+      "LOCAL_STORAGE=true stores client documents on this server's disk, which most hosts wipe on every " +
+        "deploy. Use S3 (AWS_S3_BUCKET) in production, or set ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true only " +
+        "on a self-hosted server whose storage is a persistent, backed-up volume."
+    );
+  }
+
+  return errors;
+};
+
+module.exports = { getFrontendDomainWarning, getProductionConfigErrors };

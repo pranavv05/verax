@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -24,6 +25,34 @@ GROQ_RETRY_BACKOFF_SECONDS = 2
 GROQ_RETRYABLE_4XX = {408, 429}
 
 
+# Chunked statements make several calls in a row and can hit Groq's
+# tokens-per-minute limit; a 429 says how long to wait, so honour it.
+GROQ_MAX_RETRY_WAIT_SECONDS = 60
+
+
+def _retry_delay_seconds(error: Exception, attempt: int) -> float:
+    delay = float(GROQ_RETRY_BACKOFF_SECONDS * attempt)
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if getattr(error, "status_code", None) == 429 and headers is not None:
+        try:
+            delay = max(delay, float(headers.get("retry-after")))
+        except (TypeError, ValueError):
+            pass
+    return min(delay, GROQ_MAX_RETRY_WAIT_SECONDS)
+
+
+def _worth_waiting_for(error: Exception | None) -> bool:
+    """Would the same request succeed later? True for rate limits, Groq 5xx
+    and network errors. False for "Request too large": the request alone is
+    over the plan's per-minute token cap, which Groq reports as a 413 or,
+    for some models, as a 429 — waiting never makes it fit."""
+    if error is not None and "request too large" in str(error).lower():
+        return False
+    status_code = getattr(error, "status_code", None)
+    return status_code is None or status_code >= 500 or status_code in GROQ_RETRYABLE_4XX
+
+
 class LLMExtractionError(Exception):
     """The LLM call failed or returned unusable output.
 
@@ -31,10 +60,17 @@ class LLMExtractionError(Exception):
     is indistinguishable downstream from a real "this isn't an invoice"
     answer, so an outage (e.g. the 2026-08 model decommissioning, or sustained
     429s) used to surface as blank review forms with no error and no retry.
-    main.py turns this into a 503, which fails the backend's BullMQ job — so
-    it is retried with backoff, recorded in documents.processing_error, and
-    alerts firm admins if every attempt fails.
+    main.py turns a `retryable` one (rate limit, Groq 5xx, network) into a
+    503, which the backend waits out without spending the document's
+    attempts. Anything else (request too large for the plan's token limit,
+    model not found, invalid JSON) would fail identically on every retry, so
+    it becomes a 422: the job's normal attempts run, the reason is recorded
+    in documents.processing_error, and admins are alerted if all fail.
     """
+
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 # ── Invoice / Bill ────────────────────────────────────────────────────────────
 
@@ -221,6 +257,71 @@ BANK_STATEMENT_PROMPT = (
     "reference (string or null)}).\n"
     "If a field is not found, return null. Return only valid JSON."
 )
+
+# Long statements are extracted a few pages at a time. One call returns at
+# most BANK_MAX_OUTPUT_TOKENS of JSON (~150 transactions); asking for a whole
+# statement at once overflowed the old 2,000-token cap at ~40 transactions and
+# failed the document as malformed JSON. A statement page is ~2-4k characters.
+BANK_CHUNK_MAX_CHARS = 8000
+BANK_MAX_OUTPUT_TOKENS = 8000
+INVOICE_MAX_OUTPUT_TOKENS = 2000
+
+BANK_TRANSACTIONS_PROMPT = (
+    "These are continuation pages of an Indian bank statement. Extract as JSON:\n"
+    "transactions (array of {date (ISO date), narration (string), "
+    "debit (number or null), credit (number or null), balance (number or null), "
+    "reference (string or null)}) for every transaction row on these pages, in order; "
+    "closing_balance (number or null) and statement_period_to (ISO date string or null), "
+    "only if they appear on these pages.\n"
+    "Do not invent rows. Return only valid JSON."
+)
+
+_PAGE_MARKER = re.compile(r"^\s*--- PAGE \d+ ---\s*$", re.MULTILINE)
+
+
+def split_into_pages(text: str) -> list[str]:
+    """Undo OCRService._join_pages: page texts from '--- PAGE n ---' markers."""
+    pages = [page.strip() for page in _PAGE_MARKER.split(text or "")]
+    return [page for page in pages if page] or [text or ""]
+
+
+def chunk_pages(page_texts: list[str], max_chars: int = BANK_CHUNK_MAX_CHARS) -> list[str]:
+    """Consecutive pages grouped into chunks of at most ~max_chars.
+
+    A single page longer than max_chars is split on line boundaries, so no
+    chunk asks the model for more rows than one response can hold.
+    """
+    pieces: list[str] = []
+    for page in page_texts:
+        page = page.strip()
+        if not page:
+            continue
+        if len(page) <= max_chars:
+            pieces.append(page)
+            continue
+        current: list[str] = []
+        size = 0
+        for line in page.splitlines():
+            if current and size + len(line) + 1 > max_chars:
+                pieces.append("\n".join(current))
+                current, size = [], 0
+            current.append(line)
+            size += len(line) + 1
+        if current:
+            pieces.append("\n".join(current))
+
+    chunks: list[str] = []
+    current_chunk = ""
+    for piece in pieces:
+        if current_chunk and len(current_chunk) + len(piece) + 2 > max_chars:
+            chunks.append(current_chunk)
+            current_chunk = piece
+        else:
+            current_chunk = f"{current_chunk}\n\n{piece}" if current_chunk else piece
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks
+
 
 BANK_STATEMENT_KEYS = [
     "account_holder",
@@ -449,22 +550,8 @@ class LLMService:
 
     # ── extraction ─────────────────────────────────────────────────────────────
 
-    def extract_structured_data(
-        self, ocr_text: str, doc_type: str = "invoice"
-    ) -> dict[str, Any]:
-        if doc_type != "bank_statement" and is_ocr_garbage(ocr_text):
-            return {
-                "document_type_detected": "unknown",
-                "confidence": 0.0,
-                "_ocr_note": "OCR produced insufficient text for extraction",
-            }
-
-        if doc_type == "bank_statement":
-            prompt = BANK_STATEMENT_PROMPT
-        else:
-            # invoice, bill, other all use the invoice prompt
-            prompt = INVOICE_PROMPT
-
+    def _complete_json(self, prompt: str, text: str, max_tokens: int) -> dict[str, Any]:
+        """One Groq call, retried on transient errors, parsed as a JSON object."""
         response = None
         last_error: Exception | None = None
         for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
@@ -482,11 +569,11 @@ class LLMService:
                         },
                         {
                             "role": "user",
-                            "content": f"{prompt}\n\nOCR_TEXT:\n{ocr_text[:120000]}",
+                            "content": f"{prompt}\n\nOCR_TEXT:\n{text[:120000]}",
                         },
                     ],
                     temperature=0.1,
-                    max_tokens=2000,
+                    max_tokens=max_tokens,
                     timeout=settings.llm_timeout_seconds,
                     response_format={"type": "json_object"},
                 )
@@ -495,26 +582,23 @@ class LLMService:
                 last_error = e
                 # A 4xx like bad-request/auth/model-not-found will fail identically
                 # on retry — only worth retrying once we know it's worth trying at all.
-                status_code = getattr(e, "status_code", None)
-                if (
-                    status_code is not None
-                    and 400 <= status_code < 500
-                    and status_code not in GROQ_RETRYABLE_4XX
-                ):
+                if not _worth_waiting_for(e):
                     break
                 if attempt < GROQ_MAX_ATTEMPTS:
                     logger.warning(
                         f"Groq extraction attempt {attempt}/{GROQ_MAX_ATTEMPTS} failed, retrying: {e}"
                     )
-                    time.sleep(GROQ_RETRY_BACKOFF_SECONDS * attempt)
+                    time.sleep(_retry_delay_seconds(e, attempt))
 
         if response is None:
             logger.error(f"Groq extraction failed after {GROQ_MAX_ATTEMPTS} attempt(s): {last_error}")
-            raise LLMExtractionError(f"AI extraction failed: {last_error}") from last_error
+            raise LLMExtractionError(
+                f"AI extraction failed: {last_error}", retryable=_worth_waiting_for(last_error)
+            ) from last_error
 
         raw_output = response.choices[0].message.content or ""
         try:
-            parsed = parse_json_object(raw_output)
+            return parse_json_object(raw_output)
         except (ValueError, TypeError) as e:
             # A truncated or malformed Groq response (e.g. hit max_tokens
             # mid-object) is treated like an API failure: retried by the
@@ -522,7 +606,41 @@ class LLMService:
             logger.error(f"Failed to parse LLM JSON response: {e}")
             raise LLMExtractionError(f"AI returned malformed JSON: {e}") from e
 
+    def _extract_bank_statement(self, page_texts: list[str]) -> dict[str, Any]:
+        chunks = chunk_pages(page_texts) or [""]
+        logger.info("Bank statement extraction: %d page(s) in %d chunk(s)", len(page_texts), len(chunks))
+
+        # The first chunk carries the account details and opening balance.
+        result = self._normalize_bank_payload(
+            self._complete_json(BANK_STATEMENT_PROMPT, chunks[0], BANK_MAX_OUTPUT_TOKENS)
+        )
+        transactions = list(result.get("transactions") or [])
+
+        for chunk in chunks[1:]:
+            parsed = self._complete_json(BANK_TRANSACTIONS_PROMPT, chunk, BANK_MAX_OUTPUT_TOKENS)
+            transactions.extend(self._normalize_transactions(parsed.get("transactions")) or [])
+            # The closing balance and period end are usually on the last page.
+            for key in ("closing_balance", "statement_period_to"):
+                if parsed.get(key) not in (None, ""):
+                    result[key] = parsed[key]
+
+        result["transactions"] = transactions
+        return result
+
+    def extract_structured_data(
+        self, ocr_text: str, doc_type: str = "invoice", page_texts: list[str] | None = None
+    ) -> dict[str, Any]:
+        if doc_type != "bank_statement" and is_ocr_garbage(ocr_text):
+            return {
+                "document_type_detected": "unknown",
+                "confidence": 0.0,
+                "_ocr_note": "OCR produced insufficient text for extraction",
+            }
+
         if doc_type == "bank_statement":
-            return self._normalize_bank_payload(parsed)
+            return self._extract_bank_statement(page_texts or split_into_pages(ocr_text))
+
+        # invoice, bill, other all use the invoice prompt
+        parsed = self._complete_json(INVOICE_PROMPT, ocr_text, INVOICE_MAX_OUTPUT_TOKENS)
         normalized = self._normalize_invoice_payload(parsed)
         return validate_and_adjust_confidence(normalized)

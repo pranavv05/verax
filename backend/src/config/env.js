@@ -1,6 +1,7 @@
 const path = require("path");
 const dotenv = require("dotenv");
 const Joi = require("joi");
+const { getProductionConfigErrors } = require("./deployment-checks");
 
 // Load backend/.env FIRST so it takes precedence: dotenv never overwrites a var
 // that is already set, so whichever file is loaded first wins. The repo-root .env
@@ -25,6 +26,9 @@ const envSchema = Joi.object({
   APP_DATABASE_URL: Joi.string().uri().allow("").optional(),
   REDIS_URL: Joi.string().uri().required(),
   LOCAL_STORAGE: Joi.boolean().truthy("true").falsy("false").default(false),
+  // Production refuses LOCAL_STORAGE unless this is set — only for a
+  // self-hosted server whose storage is a persistent, backed-up volume.
+  ALLOW_LOCAL_STORAGE_IN_PRODUCTION: Joi.boolean().truthy("true").falsy("false").default(false),
   AWS_REGION: Joi.string().default("ap-south-1"),
   AWS_S3_BUCKET: Joi.when("LOCAL_STORAGE", {
     is: true,
@@ -41,7 +45,7 @@ const envSchema = Joi.object({
     then: Joi.string().min(32).required(),
     otherwise: Joi.string().allow("").optional()
   }),
-  AI_SERVICE_TIMEOUT_MS: Joi.number().integer().min(1000).default(120000),
+  AI_SERVICE_TIMEOUT_MS: Joi.number().integer().min(1000).default(900000),
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
   // Client portal is a separate auth world — its own signing key, never JWT_SECRET.
@@ -84,8 +88,11 @@ const envSchema = Joi.object({
   ACCESS_TOKEN_TTL_MINUTES: Joi.number().integer().min(1).default(15),
   REFRESH_TOKEN_TTL_DAYS: Joi.number().integer().min(1).default(7),
   REFRESH_COOKIE_NAME: Joi.string().default("ca_refresh_token"),
-  MAGIC_LINK_SINGLE_USE: Joi.boolean().truthy("true").falsy("false").default(true),
-  MAGIC_LINK_EXPIRY_HOURS: Joi.number().integer().min(1).default(24),
+  // Client upload links are reusable until they expire (30 days by default),
+  // so the link in the client's email or WhatsApp keeps working across
+  // batches. A firm can kill a leaked link with "Reset upload link".
+  MAGIC_LINK_SINGLE_USE: Joi.boolean().truthy("true").falsy("false").default(false),
+  MAGIC_LINK_EXPIRY_HOURS: Joi.number().integer().min(1).default(720),
   UPLOAD_URL_EXPIRY_SECONDS: Joi.number().integer().min(60).max(3600).default(900),
   TALLY_EXPORT_URL_EXPIRY_SECONDS: Joi.number().integer().min(60).max(86400).default(900),
   MAX_UPLOAD_MB: Joi.number().integer().min(1).max(100).default(50),
@@ -99,6 +106,10 @@ const envSchema = Joi.object({
   // (BullMQ delivers each job to exactly one consumer), not double-processing.
   SCHEDULED_REQUESTS_EMBEDDED: Joi.boolean().truthy("true").falsy("false").default(true),
   REVIEW_CONFIDENCE_THRESHOLD: Joi.number().min(0).max(1).default(0.4),
+  // How admins hear about processed documents by email. "digest": one email
+  // per admin each morning (08:00 IST). "instant": one email per document.
+  // "off": in-app notifications only. Failure alerts are always sent at once.
+  DOCUMENT_READY_EMAILS: Joi.string().valid("digest", "instant", "off").default("digest"),
   // Postgres pool/statement guards. Without these, a hung query or a leaked
   // client holds a connection forever with no automatic recovery — on a
   // managed Postgres plan with a hard connection cap, that eventually starves
@@ -120,6 +131,13 @@ if (error) {
   throw new Error(`Environment validation error: ${error.message}`);
 }
 
+if (value.NODE_ENV === "production") {
+  const productionErrors = getProductionConfigErrors(value);
+  if (productionErrors.length > 0) {
+    throw new Error(`Production configuration error:\n- ${productionErrors.join("\n- ")}`);
+  }
+}
+
 module.exports = Object.freeze({
   NODE_ENV: value.NODE_ENV,
   PORT: value.PORT,
@@ -127,6 +145,7 @@ module.exports = Object.freeze({
   APP_DATABASE_URL: value.APP_DATABASE_URL,
   REDIS_URL: value.REDIS_URL,
   LOCAL_STORAGE: value.LOCAL_STORAGE,
+  ALLOW_LOCAL_STORAGE_IN_PRODUCTION: value.ALLOW_LOCAL_STORAGE_IN_PRODUCTION,
   AWS_REGION: value.AWS_REGION,
   AWS_S3_BUCKET: value.AWS_S3_BUCKET,
   AWS_ACCESS_KEY_ID: value.AWS_ACCESS_KEY_ID,
@@ -168,6 +187,7 @@ module.exports = Object.freeze({
   DOCUMENT_WORKER_CONCURRENCY: value.DOCUMENT_WORKER_CONCURRENCY,
   SCHEDULED_REQUESTS_EMBEDDED: value.SCHEDULED_REQUESTS_EMBEDDED,
   REVIEW_CONFIDENCE_THRESHOLD: value.REVIEW_CONFIDENCE_THRESHOLD,
+  DOCUMENT_READY_EMAILS: value.DOCUMENT_READY_EMAILS,
   DB_POOL_MAX: value.DB_POOL_MAX,
   DB_POOL_IDLE_TIMEOUT_MS: value.DB_POOL_IDLE_TIMEOUT_MS,
   DB_POOL_CONNECTION_TIMEOUT_MS: value.DB_POOL_CONNECTION_TIMEOUT_MS,

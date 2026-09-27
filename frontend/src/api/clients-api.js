@@ -42,6 +42,11 @@ export const clientsApi = {
       body: payload
     });
   },
+  resetUploadLink(id) {
+    return request(`/api/clients/${id}/reset-upload-link`, {
+      method: "POST"
+    });
+  },
   enablePortal(id, payload) {
     return request(`/api/clients/${id}/enable-portal`, {
       method: "POST",

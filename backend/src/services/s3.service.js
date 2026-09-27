@@ -30,13 +30,44 @@ const LOCAL_BASE_URL = `http://localhost:${env.PORT}`;
 
 const normalizeLocalStorageKey = (key) => String(key || "").replace(/\\/g, "/").replace(/^\/+/, "");
 
+// A plain startsWith(LOCAL_STORAGE_ROOT) check let a sibling directory such as
+// "../local-storage-backup/x" through, since that path also starts with the
+// root's name. path.relative catches it and any "..", absolute or drive path.
 const resolveLocalStoragePath = (key) => {
   const normalizedKey = normalizeLocalStorageKey(key);
   const resolvedPath = path.resolve(LOCAL_STORAGE_ROOT, normalizedKey);
-  if (!resolvedPath.startsWith(LOCAL_STORAGE_ROOT)) {
+  const relative = path.relative(LOCAL_STORAGE_ROOT, resolvedPath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || normalizedKey.includes("\0")) {
     throw ApiError.badRequest("Invalid local storage path");
   }
   return resolvedPath;
+};
+
+// Local-storage URLs are signed and expire, like S3 presigned URLs, so a file
+// can only be read or written through a link the API issued. The browser
+// loads them as <img>/<iframe> sources and can't send an auth header, so the
+// signature rides in the query string. Keyed off JWT_SECRET with a fixed
+// label, so the key is never usable as a JWT key.
+const localUrlSigningKey = crypto.createHmac("sha256", env.JWT_SECRET).update("verax-local-storage-urls").digest();
+
+const signLocalStorageRequest = (action, key, expiresAt) =>
+  crypto
+    .createHmac("sha256", localUrlSigningKey)
+    .update(`${action}\n${normalizeLocalStorageKey(key)}\n${expiresAt}`)
+    .digest("hex");
+
+const buildSignedLocalUrl = (routePrefix, action, key, expiresIn) => {
+  const expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+  const signature = signLocalStorageRequest(action, key, expiresAt);
+  return `${LOCAL_BASE_URL}/api/${routePrefix}/${encodeURIComponent(normalizeLocalStorageKey(key))}?expires=${expiresAt}&signature=${signature}`;
+};
+
+const verifyLocalStorageSignature = ({ action, key, expires, signature, now = Date.now() }) => {
+  const expiresAt = Number(expires);
+  if (!Number.isInteger(expiresAt) || expiresAt * 1000 < now) return false;
+  if (typeof signature !== "string" || !/^[0-9a-f]{64}$/.test(signature)) return false;
+  const expected = Buffer.from(signLocalStorageRequest(action, key, expiresAt), "hex");
+  return crypto.timingSafeEqual(expected, Buffer.from(signature, "hex"));
 };
 
 const ensureLocalDirectory = async (filePath) => {
@@ -46,7 +77,7 @@ const ensureLocalDirectory = async (filePath) => {
 const createUploadUrl = async ({ key, contentType }) => {
   if (env.LOCAL_STORAGE) {
     return {
-      url: `${LOCAL_BASE_URL}/api/local-upload/${encodeURIComponent(normalizeLocalStorageKey(key))}`,
+      url: buildSignedLocalUrl("local-upload", "upload", key, env.UPLOAD_URL_EXPIRY_SECONDS),
       expiresIn: env.UPLOAD_URL_EXPIRY_SECONDS
     };
   }
@@ -70,7 +101,7 @@ const createUploadUrl = async ({ key, contentType }) => {
 const createDownloadUrl = async ({ key, expiresIn = env.TALLY_EXPORT_URL_EXPIRY_SECONDS }) => {
   if (env.LOCAL_STORAGE) {
     return {
-      url: `${LOCAL_BASE_URL}/api/local-files/${encodeURIComponent(normalizeLocalStorageKey(key))}`,
+      url: buildSignedLocalUrl("local-files", "download", key, expiresIn),
       expiresIn
     };
   }
@@ -221,6 +252,7 @@ const deleteObject = async ({ key }) => {
 module.exports = {
   LOCAL_STORAGE_ROOT,
   resolveLocalStoragePath,
+  verifyLocalStorageSignature,
   ensureLocalDirectory,
   createUploadUrl,
   createDownloadUrl,

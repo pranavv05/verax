@@ -7,9 +7,13 @@ const {
   getDueSchedules,
   markSent
 } = require("../services/scheduled-requests.service");
+const { processDocumentDigests } = require("../services/document-digest.service");
 
 const SCHEDULED_REQUESTS_QUEUE = "scheduled-requests";
 const JOB_NAME = "send-scheduled-requests";
+// Shares this queue and worker so it runs wherever scheduled requests run
+// (see SCHEDULED_REQUESTS_EMBEDDED).
+const DOCUMENT_DIGEST_JOB_NAME = "send-document-digests";
 
 let queueInstance;
 let queueConnection;
@@ -49,6 +53,35 @@ const addScheduledRequestsJob = async () => {
     }
   );
 };
+
+// 08:00 IST, before the office opens. When DOCUMENT_READY_EMAILS isn't
+// "digest" the job still fires but sends nothing.
+const addDocumentDigestJob = async () => {
+  const queue = getScheduledRequestsQueue();
+  await queue.add(
+    DOCUMENT_DIGEST_JOB_NAME,
+    {},
+    {
+      jobId: DOCUMENT_DIGEST_JOB_NAME,
+      repeat: { pattern: "0 8 * * *", tz: "Asia/Kolkata" },
+      removeOnComplete: true,
+      removeOnFail: false
+    }
+  );
+};
+
+const runDocumentDigests = async () => {
+  const result = await processDocumentDigests();
+  if (!result.skipped) {
+    process.stdout.write(
+      `Document digests: ${result.emailsSent} email(s) sent across ${result.firms} firm(s); failures: ${result.failures}\n`
+    );
+  }
+  return result;
+};
+
+const processScheduledJob = (job) =>
+  job && job.name === DOCUMENT_DIGEST_JOB_NAME ? runDocumentDigests() : processScheduledRequests();
 
 const processScheduledRequests = async () => {
   const schedules = await getDueSchedules();
@@ -103,7 +136,7 @@ const createScheduledRequestsWorker = () => {
   const connection = new IORedis(env.REDIS_URL, {
     maxRetriesPerRequest: null
   });
-  const worker = new Worker(SCHEDULED_REQUESTS_QUEUE, processScheduledRequests, {
+  const worker = new Worker(SCHEDULED_REQUESTS_QUEUE, processScheduledJob, {
     connection,
     // Held off until the caller has verified the runtime DB role is not a
     // superuser — see document-processing.worker.js's startup gate.
@@ -125,6 +158,8 @@ const createScheduledRequestsWorker = () => {
 module.exports = {
   SCHEDULED_REQUESTS_QUEUE,
   addScheduledRequestsJob,
+  addDocumentDigestJob,
+  processScheduledJob,
   processScheduledRequests,
   createScheduledRequestsWorker
 };

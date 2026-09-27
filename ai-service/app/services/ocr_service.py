@@ -209,12 +209,19 @@ class OCRService:
                 all_text.append(text)
         return OCRService._join_pages(all_text)
 
+    @staticmethod
+    def _timeout_for(page_count: int) -> int:
+        # OCR_TIMEOUT_SECONDS alone was sized for a one-page bill; a 40-page
+        # scanned statement needs time in proportion to its length.
+        return max(settings.ocr_timeout_seconds, settings.ocr_seconds_per_page * page_count)
+
     def extract_text(self, processed_images: list[np.ndarray]) -> tuple[str, str]:
         logger.info("OCR starting: %d preprocessed page(s), trying PaddleOCR first", len(processed_images))
+        timeout_seconds = self._timeout_for(len(processed_images))
         paddle_text = _run_with_timeout(
             self._ocr_with_paddle,
             processed_images,
-            timeout_seconds=settings.ocr_timeout_seconds,
+            timeout_seconds=timeout_seconds,
             label="PaddleOCR",
         )
         if len(paddle_text) >= 50:
@@ -227,7 +234,7 @@ class OCRService:
         fallback_text = _run_with_timeout(
             self._ocr_with_tesseract,
             processed_images,
-            timeout_seconds=settings.ocr_timeout_seconds,
+            timeout_seconds=timeout_seconds,
             label="Tesseract",
         )
         if fallback_text:

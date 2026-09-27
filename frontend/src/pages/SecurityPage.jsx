@@ -10,7 +10,7 @@ import { Reveal, RevealGroup, RevealItem } from "../components/public/motion";
  * /security — every statement here is checked against the code
  * (DESIGN_SYSTEM.md §9): bcrypt cost 12 (auth.service.js), SHA-256 refresh
  * token hashes with family revocation on reuse (token-utils.js,
- * auth.service.js), 24-hour single-use upload links (env.js defaults), Helmet
+ * auth.service.js), 30-day resettable upload links (env.js defaults), Helmet
  * + CORS to FRONTEND_URL + per-route rate limits (app.js, routes/), per-firm
  * S3 key prefixes (documents.service.js, exports.service.js), extractions
  * locked once approved (extractions.service.js) and the RLS policy quoted
@@ -45,7 +45,7 @@ const PILLARS = [
   {
     title: "Secure upload links",
     badge: "64-character token",
-    body: "Client upload links carry 64-character random tokens. They expire after 24 hours and rotate after each successful use, so a forwarded old link stops working.",
+    body: "Client upload links carry 64-character random tokens and expire after 30 days. Your firm can reset a link at any time, and every copy sent earlier stops working immediately.",
     glyph: (
       <>
         <path d="M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-.9.9" />

@@ -29,6 +29,7 @@ class Settings:
         self.tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip() or None
         self.llm_timeout_seconds = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
         self.ocr_timeout_seconds = int(os.getenv("OCR_TIMEOUT_SECONDS", "120"))
+        self.ocr_seconds_per_page = int(os.getenv("OCR_SECONDS_PER_PAGE", "10"))
         self.max_pdf_pages_for_fallback = int(os.getenv("MAX_PDF_PAGES_FOR_FALLBACK", "3"))
         self.max_tool_upload_mb = int(os.getenv("MAX_TOOL_UPLOAD_MB", "25"))
 

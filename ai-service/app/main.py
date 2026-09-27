@@ -11,6 +11,7 @@ from fastapi import File
 from fastapi import Header
 from fastapi import HTTPException
 from fastapi import UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from app.config import settings
@@ -118,18 +119,46 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
 
     try:
         file_bytes = s3_service.download_file_bytes(request.s3_key)
-        preprocessed = preprocess_service.preprocess(file_bytes)
-        logger.info(
-            "document_id=%s source_kind=%s pages=%d",
-            request.document_id,
-            preprocessed.source_kind,
-            len(preprocessed.processed_images),
+
+        # Bank statements downloaded from net banking are digital PDFs: their
+        # own text is exact and costs no OCR, so a long statement is read in
+        # full (up to MAX_TEXT_LAYER_PAGES) instead of stopping at the OCR cap.
+        text_layer = (
+            preprocess_service.extract_text_layer(file_bytes)
+            if request.doc_type == "bank_statement"
+            else None
         )
-        raw_text, ocr_engine = ocr_service.extract_text(preprocessed.processed_images)
-        structured_data = llm_service.extract_structured_data(raw_text, doc_type=request.doc_type)
+        page_texts: list[str] | None = None
+        if text_layer is not None:
+            page_texts = text_layer.page_texts
+            raw_text = OCRService._normalize_whitespace(OCRService._join_pages(page_texts))
+            ocr_engine = "pdf_text"
+            source_kind = "pdf"
+            pages_read = len(page_texts)
+            total_pages = text_layer.total_pages
+            truncated = text_layer.truncated
+        else:
+            preprocessed = preprocess_service.preprocess(file_bytes)
+            raw_text, ocr_engine = ocr_service.extract_text(preprocessed.processed_images)
+            source_kind = preprocessed.source_kind
+            pages_read = len(preprocessed.processed_images)
+            total_pages = preprocessed.total_pages
+            truncated = preprocessed.truncated
+        logger.info(
+            "document_id=%s source_kind=%s ocr_engine=%s pages=%d/%d",
+            request.document_id,
+            source_kind,
+            ocr_engine,
+            pages_read,
+            total_pages,
+        )
+
+        structured_data = llm_service.extract_structured_data(
+            raw_text, doc_type=request.doc_type, page_texts=page_texts
+        )
         confidence_score = llm_service.calculate_confidence(structured_data, doc_type=request.doc_type)
 
-        if preprocessed.truncated:
+        if truncated:
             # MAX_PAGES previously truncated a long PDF (e.g. a full month's
             # bank statement) with no signal anywhere that pages were
             # dropped — the CA had no way to know 185 pages of transactions
@@ -138,17 +167,16 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
             # on the Review page (ReviewPage.jsx renders _page_truncation_warning
             # the same way it already renders _tax_math_warning).
             structured_data["_page_truncation_warning"] = (
-                f"Only the first {len(preprocessed.processed_images)} of "
-                f"{preprocessed.total_pages} pages in this document were processed. "
-                "The remaining pages were not read — reprocess in smaller batches "
-                "or contact support if this document needs full-page coverage."
+                f"Only the first {pages_read} of {total_pages} pages in this document "
+                "were processed. The remaining pages were not read. Split the PDF "
+                "and upload the rest as a separate document."
             )
             confidence_score = min(confidence_score, 0.3)
 
         logger.info(
             "document_id=%s source_kind=%s ocr_engine=%s raw_text_chars=%d confidence=%.3f document_type_detected=%s",
             request.document_id,
-            preprocessed.source_kind,
+            source_kind,
             ocr_engine,
             len(raw_text),
             confidence_score,
@@ -180,10 +208,12 @@ def process_document(request: ProcessRequest) -> ProcessResponse:
     except HTTPException:
         raise
     except LLMExtractionError as error:
-        # Upstream dependency failure, not a bug here — 503 so the backend
-        # worker records the reason and retries the job.
+        # Upstream dependency failure, not a bug here. 503 only when waiting
+        # can help (the backend then retries without spending an attempt);
+        # 422 when the same request would fail again (see LLMExtractionError).
         logger.error("LLM extraction failed for document_id=%s: %s", request.document_id, error)
-        raise HTTPException(status_code=503, detail=str(error)) from error
+        status_code = 503 if error.retryable else 422
+        raise HTTPException(status_code=status_code, detail=str(error)) from error
     except Exception as error:  # noqa: BLE001
         logger.exception("Failed to process document_id=%s", request.document_id)
         raise HTTPException(status_code=500, detail=str(error)) from error
@@ -196,7 +226,9 @@ async def register_clean(file: UploadFile = File(...)) -> Response:
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are accepted")
     try:
         raw_bytes = await read_upload_file_limited(file)
-        cleaned_bytes = clean_register_bytes(raw_bytes)
+        # CPU-bound pandas/openpyxl work: run it on the thread pool so it can't
+        # stall the event loop (and with it /health and every /process call).
+        cleaned_bytes = await run_in_threadpool(clean_register_bytes, raw_bytes)
         safe_name = file.filename.rsplit(".", 1)[0] + "_cleaned.xlsx"
         return Response(
             content=cleaned_bytes,
@@ -222,7 +254,11 @@ async def bank_statement_xml(
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
     try:
         raw_bytes = await read_upload_file_limited(file)
-        return bank_statement_to_xml(
+        # pdfplumber/OCR plus a Groq call per narration can take minutes. Inside
+        # an async handler that blocked the single uvicorn worker's event loop,
+        # freezing document processing and failing the platform health check.
+        return await run_in_threadpool(
+            bank_statement_to_xml,
             raw_bytes,
             company_name=company_name,
             bank_ledger=bank_ledger,
@@ -241,7 +277,8 @@ async def bank_statement_xml_export(
 ) -> dict:
     """Build the final Tally XML once the CA has confirmed a ledger per transaction."""
     try:
-        xml, voucher_count = generate_xml_with_ledgers(
+        xml, voucher_count = await run_in_threadpool(
+            generate_xml_with_ledgers,
             [txn.model_dump() for txn in payload.transactions],
             company_name=payload.company_name,
             bank_ledger=payload.bank_ledger,

@@ -1,6 +1,5 @@
 const express = require("express");
 const Joi = require("joi");
-const rateLimit = require("express-rate-limit");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const {
@@ -13,20 +12,12 @@ const { enqueueDocumentProcessingJob } = require("../services/document-queue.ser
 const { withTenantTransaction, setLocalConfig } = require("../db/tenant-context");
 const { createNotification } = require("../services/notifications.service");
 const ApiError = require("../utils/api-error");
+const { buildPublicUploadLimiters } = require("../middlewares/rate-limit.middleware");
 
 const router = express.Router();
 
-const uploadRateLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 50,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "Upload limit reached. Please try again later.",
-    statusCode: 429
-  }
-});
+// Separate budgets for initiate and confirm (one file = one of each).
+const uploadLimiters = buildPublicUploadLimiters();
 
 const tokenParamSchema = Joi.object({
   token: Joi.string().pattern(/^[a-zA-Z0-9]{32,128}$/).required()
@@ -91,14 +82,15 @@ const mapClientStatus = (status) =>
   }[status] || "Received");
 
 const getUploadStatusByToken = async (db, { token }) => {
+  // Client first, then the firm: under the magic_link auth context the firms
+  // RLS policy only shows the firm once app.current_firm_id is set, so
+  // joining firms here returned no row and every status page 404'd.
   const clientResult = await db.query(
     `
-      SELECT c.id, c.firm_id, c.name AS client_name, f.name AS firm_name
+      SELECT c.id, c.firm_id, c.name AS client_name
       FROM clients c
-      JOIN firms f ON f.id = c.firm_id
       WHERE c.upload_token = $1
         AND c.deleted_at IS NULL
-        AND f.deleted_at IS NULL
       LIMIT 1
     `,
     [token]
@@ -108,8 +100,15 @@ const getUploadStatusByToken = async (db, { token }) => {
     throw ApiError.notFound("Upload link not found");
   }
 
-  const client = clientResult.rows[0];
-  await setLocalConfig(db, "app.current_firm_id", client.firm_id);
+  await setLocalConfig(db, "app.current_firm_id", clientResult.rows[0].firm_id);
+  const firmResult = await db.query("SELECT name FROM firms WHERE id = $1 AND deleted_at IS NULL", [
+    clientResult.rows[0].firm_id
+  ]);
+  if (firmResult.rowCount === 0) {
+    throw ApiError.notFound("Upload link not found");
+  }
+
+  const client = { ...clientResult.rows[0], firm_name: firmResult.rows[0].name };
 
   const documentsResult = await db.query(
     `
@@ -156,7 +155,7 @@ router.get(
 
 router.post(
   "/:token/documents/upload",
-  uploadRateLimiter,
+  uploadLimiters.initiate,
   validate(tokenParamSchema, "params"),
   validate(publicUploadSchema),
   asyncHandler(async (req, res) => {
@@ -174,7 +173,7 @@ router.post(
 
 router.post(
   "/:token/documents/confirm",
-  uploadRateLimiter,
+  uploadLimiters.confirm,
   validate(tokenParamSchema, "params"),
   validate(confirmSchema),
   asyncHandler(async (req, res) => {

@@ -5,9 +5,30 @@ const path = require("path");
 const env = require("../config/env");
 const ApiError = require("../utils/api-error");
 const { assertUploadedFileContent } = require("../utils/upload-validation");
-const { ensureLocalDirectory, resolveLocalStoragePath } = require("../services/s3.service");
+const {
+  ensureLocalDirectory,
+  resolveLocalStoragePath,
+  verifyLocalStorageSignature
+} = require("../services/s3.service");
 
 const router = express.Router();
+
+// Only local-storage mode mounts these routes (never production, see
+// deployment-checks.js). Every request must carry the signature from a URL
+// the API issued (s3.service.js createUploadUrl/createDownloadUrl).
+const requireSignedUrl = (action) => (req, res, next) => {
+  const valid = verifyLocalStorageSignature({
+    action,
+    key: req.params.filename,
+    expires: req.query.expires,
+    signature: req.query.signature
+  });
+  if (!valid) {
+    next(ApiError.forbidden("This file link is invalid or has expired"));
+    return;
+  }
+  next();
+};
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -38,6 +59,7 @@ const handleMulterUpload = (req, res, next) => {
 
 router.post(
   "/local-upload/:filename(*)",
+  requireSignedUrl("upload"),
   handleMulterUpload,
   async (req, res, next) => {
     try {
@@ -61,6 +83,7 @@ router.post(
 
 router.put(
   "/local-upload/:filename(*)",
+  requireSignedUrl("upload"),
   express.raw({
     type: () => true,
     limit: `${env.MAX_UPLOAD_MB}mb`
@@ -85,7 +108,7 @@ router.put(
   }
 );
 
-router.get("/local-files/:filename(*)", async (req, res, next) => {
+router.get("/local-files/:filename(*)", requireSignedUrl("download"), async (req, res, next) => {
   try {
     const filePath = resolveLocalStoragePath(req.params.filename);
     await fs.access(filePath);
