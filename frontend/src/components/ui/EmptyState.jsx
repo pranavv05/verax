@@ -1,13 +1,33 @@
-const EmptyState = ({ title, description, action }) => (
-  <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-[#d9c9a8] bg-sand-50/40 p-8 text-center">
-    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-ink-900/5 to-ink-900/10 text-ink-500">
-      <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
-      </svg>
+import { IconFiles } from "../app/icons";
+
+/**
+ * Empty state: an icon on a faint dot grid (the landing page's inset well),
+ * a one-line title, a sentence, and at most one action.
+ */
+const EmptyState = ({ title, description, action, icon, compact = false }) => (
+  <div
+    className={`relative flex flex-col items-center overflow-hidden rounded-xl border border-dashed border-ui-line-strong/80 bg-ui-subtle text-center ${
+      compact ? "gap-2 px-6 py-8" : "gap-3 px-6 py-12"
+    }`}
+  >
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 opacity-70"
+      style={{
+        backgroundImage: "radial-gradient(rgb(var(--ui-fg) / 0.08) 1px, transparent 1px)",
+        backgroundSize: "16px 16px",
+        maskImage: "radial-gradient(50% 60% at 50% 40%, black, transparent 80%)",
+        WebkitMaskImage: "radial-gradient(50% 60% at 50% 40%, black, transparent 80%)"
+      }}
+    />
+    <div className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-ui-line bg-ui-surface text-ui-fg-3 shadow-ui-card">
+      {icon || <IconFiles size={18} />}
     </div>
-    <h3 className="text-lg font-bold text-ink-900">{title}</h3>
-    <p className="max-w-sm text-sm text-ink-500">{description}</p>
-    {action || null}
+    <h3 className="relative text-[0.9375rem] font-semibold tracking-[-0.01em] text-ui-fg">{title}</h3>
+    {description ? (
+      <p className="relative max-w-sm text-[0.8125rem] leading-relaxed text-ui-fg-3">{description}</p>
+    ) : null}
+    {action ? <div className="relative mt-1">{action}</div> : null}
   </div>
 );
 

@@ -3,9 +3,13 @@ import { z } from "zod";
 import AppShell from "../components/layout/AppShell";
 import { TableRowsSkeleton } from "../components/ui/skeletons";
 import EmptyState from "../components/ui/EmptyState";
+import Modal, { ConfirmDialog } from "../components/app/Modal";
+import { TableScroll } from "../components/app/TableKit";
+import { Alert, Avatar, Badge, Card, FormField, PageHeader } from "../components/app/primitives";
+import { IconPlus, IconTrash } from "../components/app/icons";
 import { usersApi } from "../api/users-api";
 import { useAuth } from "../contexts/AuthContext";
-import { formatDateTime, parseApiError } from "../lib/utils";
+import { cn, formatDate, parseApiError } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 const inviteSchema = z.object({
@@ -14,22 +18,6 @@ const inviteSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters"),
   role: z.enum(["admin", "staff"], { errorMap: () => ({ message: "Select a valid role" }) })
 });
-
-const RoleBadge = ({ role }) => {
-  const normalized = String(role || "staff").toLowerCase();
-  if (normalized === "admin") {
-    return (
-      <span className="inline-flex rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-        Admin
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex rounded-full border border-ink-700/30 bg-ink-900/10 px-2.5 py-1 text-xs font-semibold text-ink-700">
-      Staff
-    </span>
-  );
-};
 
 const TeamPage = () => {
   const { user: currentUser } = useAuth();
@@ -81,7 +69,7 @@ const TeamPage = () => {
       await usersApi.invite(validation.data);
       setForm({ name: "", email: "", password: "", role: "staff" });
       setShowInviteForm(false);
-      setToast("Team member invited successfully.");
+      setToast("Invite sent.");
       await loadUsers();
     } catch (submitError) {
       setFormError(parseApiError(submitError, "Unable to invite team member"));
@@ -112,230 +100,184 @@ const TeamPage = () => {
     setFormError("");
   };
 
+  const confirmingMember = rows.find((member) => member.id === confirmDeleteId);
+  const admins = rows.filter((member) => String(member.role).toLowerCase() === "admin").length;
+
   return (
-    <AppShell title="Team" subtitle="Manage team members and their access roles.">
-      <div className="space-y-5">
-        {error ? (
-          <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-            {error}
+    <AppShell>
+      <ConfirmDialog
+        open={Boolean(confirmDeleteId)}
+        onCancel={() => setConfirmDeleteId(null)}
+        onConfirm={() => onDeleteConfirm(confirmDeleteId)}
+        title={`Remove ${confirmingMember?.name || "team member"}?`}
+        description="They lose access to the firm immediately. Their past reviews and exports stay in the audit log."
+        confirmLabel="Remove member"
+        busyLabel="Removing…"
+        busy={Boolean(deletingId)}
+        destructive
+      />
+
+      <Modal
+        open={canAdmin && showInviteForm}
+        onClose={onCancelInvite}
+        busy={saving}
+        title="Invite a team member"
+        description="They sign in with this email and the temporary password you set."
+        footer={
+          <>
+            <button type="button" className="btn-secondary" disabled={saving} onClick={onCancelInvite}>
+              Cancel
+            </button>
+            <button type="submit" form="invite-form" className="btn-primary" disabled={saving}>
+              {saving ? "Inviting…" : "Send invite"}
+            </button>
+          </>
+        }
+      >
+        <form id="invite-form" className="space-y-4" onSubmit={onInvite}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Full name" htmlFor="invite-name">
+              <input
+                id="invite-name"
+                className="field"
+                value={form.name}
+                placeholder="Jane Doe"
+                autoFocus
+                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              />
+            </FormField>
+            <FormField label="Email" htmlFor="invite-email">
+              <input
+                id="invite-email"
+                className="field"
+                type="email"
+                value={form.email}
+                placeholder="jane@yourfirm.in"
+                onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+              />
+            </FormField>
           </div>
-        ) : null}
-
-        {toast ? (
-          <div className="mb-4 rounded-lg border border-mint-300 bg-mint-500/10 px-4 py-3 text-sm font-semibold text-mint-700">
-            {toast}
-          </div>
-        ) : null}
-
-        {/* Team member list */}
-        <article className="panel p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-ink-900">Team members</h2>
-              <p className="mt-0.5 text-sm text-ink-500">
-                {rows.length} member{rows.length !== 1 ? "s" : ""} in your firm
-              </p>
-            </div>
-            {canAdmin && (
-              <button
-                type="button"
-                className="btn-primary text-sm"
-                onClick={() => {
-                  setShowInviteForm((prev) => !prev);
-                  setFormError("");
-                }}
-              >
-                {showInviteForm ? "Cancel" : "Invite team member"}
-              </button>
-            )}
-          </div>
-
-          {/* Inline invite form */}
-          {canAdmin && showInviteForm && (
-            <div className="mb-5 rounded-xl border border-[#e7dcc8] bg-sand-50/60 p-5">
-              <h3 className="mb-4 text-sm font-bold text-ink-900">Invite a new team member</h3>
-              <form className="space-y-3" onSubmit={onInvite}>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="label">Full name</label>
-                    <input
-                      className="field"
-                      value={form.name}
-                      placeholder="Jane Doe"
-                      onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label className="label">Email address</label>
-                    <input
-                      className="field"
-                      type="email"
-                      value={form.email}
-                      placeholder="jane@yourfirm.com"
-                      onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="label">Password</label>
-                    <input
-                      className="field"
-                      type="password"
-                      value={form.password}
-                      placeholder="Min. 8 characters"
-                      onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label className="label">Role</label>
-                    <select
-                      className="field"
-                      value={form.role}
-                      onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))}
-                    >
-                      <option value="staff">Staff</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  </div>
-                </div>
-
-                {formError ? (
-                  <div className="rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-                    {formError}
-                  </div>
-                ) : null}
-
-                <div className="flex gap-2 pt-1">
-                  <button type="submit" className="btn-primary text-sm" disabled={saving}>
-                    {saving ? "Inviting..." : "Send invite"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary text-sm"
-                    disabled={saving}
-                    onClick={onCancelInvite}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-separate border-spacing-0">
-                <thead>
-                  <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
-                    <th className="rounded-l-lg px-3 py-3">Name</th>
-                    <th className="px-3 py-3">Email</th>
-                    <th className="px-3 py-3">Role</th>
-                    <th className="px-3 py-3">Joined</th>
-                    <th className="rounded-r-lg px-3 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <TableRowsSkeleton rows={4} cols={5} />
-                </tbody>
-              </table>
-            </div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              title="No team members yet"
-              description="Invite your first team member to collaborate on document processing."
+          <FormField label="Temporary password" htmlFor="invite-password" hint="At least 8 characters. Ask them to change it after signing in.">
+            <input
+              id="invite-password"
+              className="field"
+              type="password"
+              autoComplete="new-password"
+              value={form.password}
+              onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
             />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-separate border-spacing-0">
-                <thead>
-                  <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
-                    <th className="rounded-l-lg px-3 py-3">Name</th>
-                    <th className="px-3 py-3">Email</th>
-                    <th className="px-3 py-3">Role</th>
-                    <th className="px-3 py-3">Joined</th>
-                    <th className="rounded-r-lg px-3 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((member) => {
-                    const isCurrentUser = currentUser?.id === member.id;
-                    const isConfirming = confirmDeleteId === member.id;
-                    const isDeleting = deletingId === member.id;
-
-                    return (
-                      <tr key={member.id} className="border-t border-[#eadfcf]">
-                        <td className="px-3 py-3">
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ink-900/10 to-ink-900/20 text-xs font-bold text-ink-700">
-                              {(member.name || "U")
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")
-                                .toUpperCase()
-                                .slice(0, 2)}
-                            </div>
-                            <div>
-                              <p className="text-sm font-semibold text-ink-900">
-                                {member.name}
-                                {isCurrentUser && (
-                                  <span className="ml-2 text-xs font-normal text-ink-500">(you)</span>
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-sm text-ink-500">{member.email}</td>
-                        <td className="px-3 py-3">
-                          <RoleBadge role={member.role} />
-                        </td>
-                        <td className="px-3 py-3 text-xs text-[#6e7f96]">
-                          {formatDateTime(member.createdAt || member.created_at)}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          {!canAdmin ? (
-                            <span className="text-xs text-ink-400">View only</span>
-                          ) : isCurrentUser ? (
-                            <span className="text-xs text-ink-400">Cannot remove yourself</span>
-                          ) : isConfirming ? (
-                            <div className="flex items-center justify-end gap-2">
-                              <span className="text-xs text-ink-700">Are you sure?</span>
-                              <button
-                                type="button"
-                                className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
-                                disabled={isDeleting}
-                                onClick={() => onDeleteConfirm(member.id)}
-                              >
-                                {isDeleting ? "Removing..." : "Yes, remove"}
-                              </button>
-                              <button
-                                type="button"
-                                className="btn-secondary px-2.5 py-1 text-xs"
-                                disabled={isDeleting}
-                                onClick={() => setConfirmDeleteId(null)}
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 hover:border-rose-300"
-                              onClick={() => setConfirmDeleteId(member.id)}
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          </FormField>
+          <div>
+            <p className="label">Role</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                ["staff", "Staff", "Reviews documents and runs reconciliation."],
+                ["admin", "Admin", "Everything, plus clients, exports, team and settings."]
+              ].map(([value, label, help]) => (
+                <label
+                  key={value}
+                  className={cn(
+                    "flex cursor-pointer gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+                    form.role === value ? "border-ui-accent/40 bg-ui-accent/[0.06]" : "border-ui-line hover:border-ui-line-strong"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="invite-role"
+                    className="mt-0.5 h-4 w-4 accent-[rgb(var(--ui-accent))]"
+                    checked={form.role === value}
+                    onChange={() => setForm((prev) => ({ ...prev, role: value }))}
+                  />
+                  <span>
+                    <span className="block text-[0.8125rem] font-medium text-ui-fg">{label}</span>
+                    <span className="block text-xs text-ui-fg-3">{help}</span>
+                  </span>
+                </label>
+              ))}
             </div>
-          )}
-        </article>
-      </div>
+          </div>
+          {formError ? <Alert tone="err">{formError}</Alert> : null}
+        </form>
+      </Modal>
+
+      <PageHeader
+        title="Team."
+        tint="The people doing the work."
+        description={`${rows.length} member${rows.length === 1 ? "" : "s"} · ${admins} admin${admins === 1 ? "" : "s"}`}
+        actions={
+          canAdmin ? (
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                setShowInviteForm(true);
+                setFormError("");
+              }}
+            >
+              <IconPlus size={14} />
+              Invite member
+            </button>
+          ) : null
+        }
+      />
+
+      {error ? (
+        <Alert tone="err" className="mb-5" onDismiss={() => setError("")}>
+          {error}
+        </Alert>
+      ) : null}
+      {toast ? (
+        <Alert tone="ok" className="mb-5" onDismiss={() => setToast("")}>
+          {toast}
+        </Alert>
+      ) : null}
+
+      <Card className="overflow-hidden">
+        {loading ? (
+          <TableScroll>
+            <table className="ui-table">
+              <tbody>
+                <TableRowsSkeleton rows={4} cols={4} />
+              </tbody>
+            </table>
+          </TableScroll>
+        ) : rows.length === 0 ? (
+          <div className="p-4">
+            <EmptyState title="No team members yet" description="Invite your first colleague to share the review load." />
+          </div>
+        ) : (
+          <ul className="divide-y divide-ui-line">
+            {rows.map((member) => {
+              const isCurrentUser = currentUser?.id === member.id;
+              const isAdminRole = String(member.role).toLowerCase() === "admin";
+              return (
+                <li key={member.id} className="flex flex-wrap items-center gap-4 px-5 py-4">
+                  <Avatar name={member.name} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-2 text-[0.875rem] font-medium text-ui-fg">
+                      <span className="truncate">{member.name}</span>
+                      {isCurrentUser ? <span className="text-xs font-normal text-ui-fg-4">You</span> : null}
+                    </p>
+                    <p className="truncate text-[0.8125rem] text-ui-fg-3">{member.email}</p>
+                  </div>
+                  <div className="hidden text-right text-xs text-ui-fg-3 sm:block">
+                    Joined {formatDate(member.createdAt || member.created_at)}
+                  </div>
+                  <Badge tone={isAdminRole ? "accent" : "neutral"}>{isAdminRole ? "Admin" : "Staff"}</Badge>
+                  <div className="w-24 text-right">
+                    {canAdmin && !isCurrentUser ? (
+                      <button type="button" className="btn-ghost btn-sm hover:text-ui-err" onClick={() => setConfirmDeleteId(member.id)}>
+                        <IconTrash size={13} />
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
     </AppShell>
   );
 };

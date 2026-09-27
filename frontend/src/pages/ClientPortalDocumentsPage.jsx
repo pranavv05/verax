@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 import ClientPortalShell from "../components/layout/ClientPortalShell";
 import ClientStatusBadge, { CLIENT_STATUS_HELP } from "../components/ui/ClientStatusBadge";
+import EmptyState from "../components/ui/EmptyState";
+import LoadingState from "../components/ui/LoadingState";
+import { Alert, Card, Segmented } from "../components/app/primitives";
+import { IconExport, IconFile } from "../components/app/icons";
 import { clientPortalApi } from "../api/client-portal-api";
 import { formatDate, parseApiError, triggerFileDownload } from "../lib/utils";
 
 const filters = [
-  ["", "All"],
-  ["processing", "Processing"],
-  ["under_review", "Under Review"],
-  ["complete", "Complete"]
+  { value: "", label: "All" },
+  { value: "processing", label: "Processing" },
+  { value: "under_review", label: "Under review" },
+  { value: "complete", label: "Complete" }
 ];
 
 const docTypeLabels = {
@@ -67,77 +71,66 @@ const ClientPortalDocumentsPage = () => {
   };
 
   return (
-    <ClientPortalShell
-      title="Your documents"
-      subtitle="Everything your accountant holds for you, and where each one has got to."
-    >
-      <div className="flex flex-wrap gap-2">
-        {filters.map(([value, label]) => (
-          <button
-            key={label}
-            type="button"
-            className={`rounded-full border px-4 py-2 text-base font-semibold transition ${
-              statusFilter === value
-                ? "border-ink-900 bg-ink-900 text-white"
-                : "border-[#e7dcc8] bg-white text-ink-700 hover:bg-sand-50"
-            }`}
-            onClick={() => setStatusFilter(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <ClientPortalShell title="Your documents." subtitle="Everything your accountant holds for you, and where each one has got to.">
+      <Segmented
+        ariaLabel="Filter by status"
+        layoutId="portal-doc-filter"
+        value={statusFilter}
+        onChange={setStatusFilter}
+        options={filters}
+      />
 
       {error ? (
-        <div className="mt-6 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-base font-medium text-rose-700">
+        <Alert tone="err" className="mt-6">
           {error}
-        </div>
+        </Alert>
       ) : null}
 
       {loading ? (
-        <p className="mt-6 text-base text-[#607086]">Loading your documents...</p>
+        <div className="flex justify-center py-16">
+          <LoadingState message="Loading your documents…" />
+        </div>
       ) : documents.length === 0 ? (
-        <div className="mt-6 rounded-2xl border border-[#e7dcc8] bg-sand-50 px-4 py-8 text-center">
-          <p className="text-lg font-semibold text-ink-900">Nothing to show here</p>
-          <p className="mt-1 text-base text-[#607086]">
-            {statusFilter
-              ? "No documents are at this stage right now."
-              : "Documents will appear as soon as they're sent in."}
-          </p>
+        <div className="mt-6">
+          <EmptyState
+            title="Nothing to show here"
+            description={statusFilter ? "No documents are at this stage right now." : "Documents will appear as soon as they're sent in."}
+          />
         </div>
       ) : (
-        <ul className="mt-6 space-y-4">
-          {documents.map((document) => (
-            <li key={document.id} className="rounded-2xl border border-[#e7dcc8] bg-white p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="break-words text-lg font-semibold text-ink-900">
-                    {document.originalFilename}
+        <Card className="mt-6 overflow-hidden">
+          <ul className="divide-y divide-ui-line">
+            {documents.map((document) => (
+              <li key={document.id} className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center">
+                <span className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ui-line bg-ui-subtle text-ui-fg-3 sm:flex">
+                  <IconFile size={17} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <p className="break-words text-base font-semibold text-ui-fg">{document.originalFilename}</p>
+                    <ClientStatusBadge status={document.status} />
+                  </div>
+                  <p className="mt-1 text-sm text-ui-fg-3">
+                    {docTypeLabels[document.documentType] || "Document"} · {formatDate(document.createdAt)}
+                    {document.source ? ` · ${document.source}` : ""}
                   </p>
-                  <p className="mt-1 text-base text-[#607086]">
-                    {docTypeLabels[document.documentType] || "Document"} ·{" "}
-                    {formatDate(document.createdAt)}
-                  </p>
-                  <p className="mt-1 text-sm text-[#7f8a99]">{document.source}</p>
+                  {CLIENT_STATUS_HELP[document.status] ? (
+                    <p className="mt-1.5 text-[0.9375rem] text-ui-fg-2">{CLIENT_STATUS_HELP[document.status]}</p>
+                  ) : null}
                 </div>
-                <ClientStatusBadge status={document.status} />
-              </div>
-
-              <p className="mt-3 text-base text-[#607086]">
-                {CLIENT_STATUS_HELP[document.status]}
-              </p>
-
-              <button
-                type="button"
-                className="btn-secondary mt-4 w-full py-2.5 text-base sm:w-auto"
-                disabled={downloadingId === document.id}
-                onClick={() => onDownload(document)}
-              >
-                {downloadingId === document.id ? "Preparing..." : "Download original"}
-              </button>
-            </li>
-          ))}
-        </ul>
+                <button
+                  type="button"
+                  className="btn-secondary w-full py-2.5 text-[0.875rem] sm:w-auto"
+                  disabled={downloadingId === document.id}
+                  onClick={() => onDownload(document)}
+                >
+                  <IconExport size={15} />
+                  {downloadingId === document.id ? "Preparing…" : "Download original"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
     </ClientPortalShell>
   );

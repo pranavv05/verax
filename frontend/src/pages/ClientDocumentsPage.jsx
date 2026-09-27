@@ -1,27 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
 import { ClientDocumentsSkeleton } from "../components/ui/skeletons";
 import StatusBadge from "../components/ui/StatusBadge";
+import { TableScroll } from "../components/app/TableKit";
+import { Alert, Badge, Breadcrumbs, Card, CardHeader, Progress, Segmented } from "../components/app/primitives";
+import { IconChevronRight, IconClose, IconFile, IconUpload, IconUser } from "../components/app/icons";
 import { documentsApi } from "../api/documents-api";
 import { clientsApi } from "../api/clients-api";
 import { uploadApi } from "../api/upload-api";
-import { formatDateTime, parseApiError } from "../lib/utils";
+import { cn, formatDateTime, parseApiError } from "../lib/utils";
 
-const DOC_TYPE_META = {
-  invoice:       { label: "Invoice",      cls: "bg-indigo-100 text-indigo-700" },
-  bank_statement:{ label: "Bank Stmt",    cls: "bg-sky-100 text-sky-700" },
-  bill:          { label: "Bill",         cls: "bg-amber-100 text-amber-700" },
-  other:         { label: "Other",        cls: "bg-gray-100 text-gray-600" }
+const DOC_TYPE_LABEL = {
+  invoice: "Invoice",
+  bank_statement: "Bank statement",
+  bill: "Bill",
+  other: "Other"
 };
 
-const DocTypeBadge = ({ docType }) => {
-  const meta = DOC_TYPE_META[docType] || DOC_TYPE_META.other;
-  return (
-    <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${meta.cls}`}>{meta.label}</span>
-  );
-};
+const INBOX_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "review", label: "To review", statuses: ["extracted", "review_required"] },
+  { value: "processing", label: "Processing", statuses: ["uploaded", "processing"] },
+  { value: "done", label: "Done", statuses: ["reviewed", "exported"] }
+];
+
+const QUEUE_TONE = { success: "ok", error: "err", invalid: "err", pending: "neutral" };
 
 const allowedExtensions = ["pdf", "jpg", "jpeg", "png", "xlsx"];
 const maxFileSizeMb = 50;
@@ -38,6 +43,9 @@ const ClientDocumentsPage = () => {
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const [inboxFilter, setInboxFilter] = useState("all");
+  const fileInputRef = useRef(null);
 
   const loadDocuments = async () => {
     setLoading(true);
@@ -131,7 +139,7 @@ const ClientDocumentsPage = () => {
 
     for (const item of uploadable) {
       try {
-        updateItem(item.id, { status: "preparing", message: "Requesting upload URL...", progress: 0 });
+        updateItem(item.id, { status: "preparing", message: "Requesting upload URL…", progress: 0 });
 
         const uploadInit = await documentsApi.requestUpload({
           client_id: id,
@@ -141,13 +149,13 @@ const ClientDocumentsPage = () => {
           doc_type: docType
         });
 
-        updateItem(item.id, { status: "uploading", message: "Uploading to secure storage..." });
+        updateItem(item.id, { status: "uploading", message: "Uploading to secure storage…" });
 
         await uploadApi.uploadFileToSignedUrl(uploadInit.upload_url, item.file, (progress) => {
           updateItem(item.id, { progress });
         });
 
-        updateItem(item.id, { status: "confirming", message: "Confirming and queueing OCR...", progress: 100 });
+        updateItem(item.id, { status: "confirming", message: "Confirming and queueing for reading…", progress: 100 });
 
         await documentsApi.confirmUpload(uploadInit.document_id);
 
@@ -173,168 +181,232 @@ const ClientDocumentsPage = () => {
 
   const rows = useMemo(() => docs || [], [docs]);
 
+  const counts = useMemo(() => {
+    const result = { all: rows.length };
+    INBOX_FILTERS.slice(1).forEach((filter) => {
+      result[filter.value] = rows.filter((doc) => filter.statuses.includes(doc.status)).length;
+    });
+    return result;
+  }, [rows]);
+
+  const visibleRows = useMemo(() => {
+    const filter = INBOX_FILTERS.find((item) => item.value === inboxFilter);
+    return filter?.statuses ? rows.filter((doc) => filter.statuses.includes(doc.status)) : rows;
+  }, [rows, inboxFilter]);
+
+  const onDrop = (event) => {
+    event.preventDefault();
+    setDragActive(false);
+    addFiles(event.dataTransfer.files);
+  };
+
   return (
-    <AppShell title={clientName} subtitle="Track every document for this client, from upload to export.">
-      <section className="mb-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        <article className="panel p-4">
-          <h2 className="text-lg font-bold text-ink-900">Upload new documents</h2>
-          <p className="mt-1 text-sm text-[#6b7c92]">
-            Direct browser-to-S3 upload with queue confirmation. PDF, JPG, PNG, XLSX up to {maxFileSizeMb}MB each.
-          </p>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_220px]">
-            <input
-              className="field"
-              type="file"
-              multiple
-              onChange={onFileInputChange}
-              accept=".pdf,.jpg,.jpeg,.png,.xlsx"
-            />
-            <select className="field" value={docType} onChange={(event) => setDocType(event.target.value)}>
-              <option value="invoice">Invoice</option>
-              <option value="bank_statement">Bank statement</option>
-              <option value="bill">Bill</option>
-              <option value="other">Other</option>
-            </select>
+    <AppShell>
+      <header className="mb-7 sm:mb-8">
+        <Breadcrumbs
+          items={[
+            { label: "Clients", to: "/clients" },
+            { label: clientName, to: `/clients/${id}` },
+            { label: "Documents" }
+          ]}
+          className="mb-3"
+        />
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-[1.625rem] font-semibold leading-[1.15] tracking-[-0.03em] text-ui-fg sm:text-[1.875rem]">
+              Documents. <span className="font-normal text-ui-fg-3">From upload to Tally.</span>
+            </h1>
+            <p className="mt-2 text-[0.9375rem] text-ui-fg-3">Everything {clientName} has sent, and where it is now.</p>
           </div>
+          <Link className="btn-secondary self-start md:self-auto" to={`/clients/${id}`}>
+            <IconUser size={14} />
+            Client profile
+          </Link>
+        </div>
+      </header>
 
-          {error ? (
-            <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {error}
+      {error ? (
+        <Alert tone="err" className="mb-5" onDismiss={() => setError("")}>
+          {error}
+        </Alert>
+      ) : null}
+      {toast ? (
+        <Alert tone="ok" className="mb-5" onDismiss={() => setToast("")}>
+          {toast}
+        </Alert>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
+        <Card className="self-start">
+          <CardHeader title="Upload" description={`PDF, JPG, PNG or XLSX, up to ${maxFileSizeMb} MB each.`} icon={<IconUpload size={14} />} />
+          <div className="space-y-4 px-5 py-5">
+            <div>
+              <p className="label">Document type</p>
+              <Segmented
+                ariaLabel="Document type"
+                layoutId="upload-doc-type"
+                size="sm"
+                value={docType}
+                onChange={setDocType}
+                options={[
+                  { value: "invoice", label: "Invoice" },
+                  { value: "bill", label: "Bill" },
+                  { value: "bank_statement", label: "Statement" },
+                  { value: "other", label: "Other" }
+                ]}
+              />
             </div>
-          ) : null}
 
-          {toast ? (
-            <div className="mt-3 rounded-lg border border-mint-300 bg-mint-500/10 px-3 py-2 text-sm text-mint-700">
-              {toast}
-            </div>
-          ) : null}
+            <label
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={onDrop}
+              className={cn(
+                "relative flex cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border border-dashed px-4 py-9 text-center transition-colors",
+                dragActive ? "border-ui-accent bg-ui-accent/[0.06]" : "border-ui-line-strong bg-ui-subtle hover:border-ui-accent/50"
+              )}
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-full border border-ui-line bg-ui-surface text-ui-fg-3 shadow-ui-card">
+                <IconUpload size={17} />
+              </span>
+              <span className="text-[0.8125rem] font-medium text-ui-fg">Drop files here, or click to browse</span>
+              <span className="text-xs text-ui-fg-3">They go straight to secure storage, then Verax reads them.</span>
+              <input
+                ref={fileInputRef}
+                className="sr-only"
+                type="file"
+                multiple
+                onChange={onFileInputChange}
+                accept=".pdf,.jpg,.jpeg,.png,.xlsx"
+              />
+            </label>
 
-          {items.length > 0 && (
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-[#6c7d93]">
-                  Queue — {successCount} successful / {items.length} total
+            {items.length > 0 ? (
+              <div>
+                <p className="mb-2 text-xs text-ui-fg-3">
+                  <span className="font-medium text-ui-fg-2">{successCount}</span> of {items.length} uploaded
                 </p>
-              </div>
-              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                {items.map((item) => (
-                  <div key={item.id} className="rounded-xl border border-[#e4d8c5] bg-sand-50 p-3">
-                    <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-ink-900">{item.file.name}</p>
+                <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                  {items.map((item) => (
+                    <li key={item.id} className="rounded-lg border border-ui-line bg-ui-surface px-3 py-2.5">
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
-                            item.status === "success"
-                              ? "bg-mint-500/15 text-mint-700"
-                              : item.status === "error" || item.status === "invalid"
-                                ? "bg-rose-500/15 text-rose-700"
-                                : "bg-ink-900/10 text-ink-700"
-                          }`}
-                        >
+                        <IconFile size={14} className="text-ui-fg-4" />
+                        <p className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium text-ui-fg">{item.file.name}</p>
+                        <Badge tone={QUEUE_TONE[item.status] || "info"} className="capitalize">
                           {item.status}
-                        </span>
-                        {(item.status === "pending" || item.status === "invalid") && (
+                        </Badge>
+                        {item.status === "pending" || item.status === "invalid" ? (
                           <button
                             type="button"
-                            className="text-xs font-semibold text-[#8b7757] underline"
+                            className="btn-icon h-6 w-6"
+                            aria-label={`Remove ${item.file.name}`}
                             onClick={() => removeItem(item.id)}
                           >
-                            Remove
+                            <IconClose size={12} />
                           </button>
-                        )}
+                        ) : null}
                       </div>
-                    </div>
-                    <p
-                      className={`text-xs ${
-                        item.status === "invalid" || item.status === "error" ? "text-rose-600" : "text-[#6c7d93]"
-                      }`}
-                    >
-                      {item.message}
-                    </p>
-                    {item.status !== "invalid" && (
-                      <div className="mt-2 h-2 rounded-full bg-[#eadfcf]">
-                        <div
-                          className="h-2 rounded-full bg-ink-800 transition-all"
-                          style={{ width: `${item.progress}%` }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      <p className={cn("mt-1 text-xs", item.status === "invalid" || item.status === "error" ? "text-ui-err" : "text-ui-fg-3")}>
+                        {item.message}
+                      </p>
+                      {item.status !== "invalid" && item.status !== "pending" ? (
+                        <Progress value={item.progress} className="mt-2 h-1" tone={item.status === "success" ? "ok" : "brand"} />
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
               </div>
+            ) : null}
+
+            <button type="button" className="btn-primary w-full" disabled={uploading || uploadableCount === 0} onClick={processUploadQueue}>
+              <IconUpload size={14} />
+              {uploading
+                ? "Uploading…"
+                : uploadableCount > 0
+                  ? `Upload ${uploadableCount} file${uploadableCount === 1 ? "" : "s"}`
+                  : "Upload files"}
+            </button>
+          </div>
+        </Card>
+
+        <Card className="overflow-hidden">
+          <div className="flex flex-col gap-3 border-b border-ui-line px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
+            <div>
+              <h2 className="text-[0.9375rem] font-semibold tracking-[-0.01em] text-ui-fg">Inbox</h2>
+              <p className="mt-0.5 text-[0.8125rem] text-ui-fg-3">Open a document to check and approve what Verax read.</p>
             </div>
-          )}
-
-          <button
-            type="button"
-            className="btn-primary mt-4 w-full"
-            disabled={uploading || uploadableCount === 0}
-            onClick={processUploadQueue}
-          >
-            {uploading ? "Uploading files..." : `Upload ${uploadableCount > 0 ? uploadableCount : ""} file${uploadableCount === 1 ? "" : "s"}`}
-          </button>
-        </article>
-
-        <article className="panel p-4">
-          <h2 className="text-lg font-bold text-ink-900">Navigation</h2>
-          <div className="mt-4 space-y-2">
-            <Link className="btn-secondary block text-center" to={`/clients/${id}`}>
-              Open client profile
-            </Link>
-            <Link className="btn-secondary block text-center" to="/clients">
-              Back to clients
-            </Link>
-          </div>
-        </article>
-      </section>
-
-      <section className="panel overflow-hidden p-4">
-        <h2 className="text-lg font-bold text-ink-900">Document inbox</h2>
-        {loading ? (
-          <div className="mt-4">
-            <ClientDocumentsSkeleton rows={5} />
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="mt-4">
-            <EmptyState
-              title="No documents yet"
-              description="After uploads are confirmed, documents will appear here with processing status."
+            <Segmented
+              ariaLabel="Filter documents"
+              layoutId="inbox-filter"
+              size="sm"
+              value={inboxFilter}
+              onChange={setInboxFilter}
+              options={INBOX_FILTERS.map((filter) => ({ ...filter, count: counts[filter.value] }))}
             />
           </div>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full border-separate border-spacing-0">
-              <thead>
-                <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6c7d93]">
-                  <th className="rounded-l-lg px-3 py-3">File</th>
-                  <th className="px-3 py-3">Type</th>
-                  <th className="px-3 py-3">Status</th>
-                  <th className="px-3 py-3">Uploaded</th>
-                  <th className="rounded-r-lg px-3 py-3 text-right">Review</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((doc) => (
-                  <tr key={doc.id} className="border-t border-[#eadfcf]">
-                    <td className="px-3 py-3 text-sm font-semibold text-ink-900">{doc.fileName || doc.file_name}</td>
-                    <td className="px-3 py-3"><DocTypeBadge docType={doc.docType || doc.doc_type} /></td>
-                    <td className="px-3 py-3 text-sm">
-                      <StatusBadge status={doc.status} />
-                    </td>
-                    <td className="px-3 py-3 text-xs text-[#697a90]">{formatDateTime(doc.uploadedAt || doc.uploaded_at)}</td>
-                    <td className="px-3 py-3 text-right text-sm">
-                      <Link className="btn-secondary px-2.5 py-1.5 text-xs" to={`/review/${doc.id}`}>
-                        Open review
-                      </Link>
-                    </td>
+
+          {loading ? (
+            <div className="p-2">
+              <ClientDocumentsSkeleton rows={5} />
+            </div>
+          ) : visibleRows.length === 0 ? (
+            <div className="p-4">
+              <EmptyState
+                compact
+                title={rows.length === 0 ? "No documents yet" : "Nothing in this view"}
+                description={
+                  rows.length === 0
+                    ? "Upload files here, or send the client their upload link from their profile."
+                    : "Try another filter."
+                }
+              />
+            </div>
+          ) : (
+            <TableScroll>
+              <table className="ui-table">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Uploaded</th>
+                    <th className="w-10">
+                      <span className="sr-only">Open</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                </thead>
+                <tbody>
+                  {visibleRows.map((doc) => (
+                    <tr key={doc.id} className="group">
+                      <td className="max-w-[18rem]">
+                        <Link to={`/review/${doc.id}`} className="flex items-center gap-2.5 font-medium text-ui-fg hover:text-ui-accent-text">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-ui-line bg-ui-subtle text-ui-fg-3">
+                            <IconFile size={13} />
+                          </span>
+                          <span className="truncate">{doc.fileName || doc.file_name}</span>
+                        </Link>
+                      </td>
+                      <td className="whitespace-nowrap text-ui-fg-3">{DOC_TYPE_LABEL[doc.docType || doc.doc_type] || "Other"}</td>
+                      <td>
+                        <StatusBadge status={doc.status} />
+                      </td>
+                      <td className="whitespace-nowrap text-xs text-ui-fg-3">{formatDateTime(doc.uploadedAt || doc.uploaded_at)}</td>
+                      <td className="text-right">
+                        <Link to={`/review/${doc.id}`} className="btn-icon" aria-label={`Open ${doc.fileName || doc.file_name}`}>
+                          <IconChevronRight size={15} className="transition-transform group-hover:translate-x-0.5" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableScroll>
+          )}
+        </Card>
+      </div>
     </AppShell>
   );
 };

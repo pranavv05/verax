@@ -1,8 +1,10 @@
+import { Badge } from "../app/primitives";
+
 // The client portal only ever shows three statuses, in plain English.
 const TONES = {
-  Processing: "border-blue-200 bg-blue-50 text-blue-700",
-  "Under Review": "border-amber-200 bg-amber-50 text-amber-800",
-  Complete: "border-mint-300 bg-mint-500/10 text-mint-700"
+  Processing: { tone: "info", pulse: true },
+  "Under Review": { tone: "warn" },
+  Complete: { tone: "ok" }
 };
 
 export const CLIENT_STATUS_HELP = {
@@ -11,14 +13,13 @@ export const CLIENT_STATUS_HELP = {
   Complete: "Done — this one is filed into your accounts."
 };
 
-const ClientStatusBadge = ({ status }) => (
-  <span
-    className={`inline-block whitespace-nowrap rounded-full border px-3 py-1 text-sm font-bold ${
-      TONES[status] || "border-[#e7dcc8] bg-sand-50 text-[#607086]"
-    }`}
-  >
-    {status}
-  </span>
-);
+const ClientStatusBadge = ({ status }) => {
+  const config = TONES[status] || { tone: "neutral" };
+  return (
+    <Badge tone={config.tone} dot pulse={config.pulse} className="text-[0.8125rem]">
+      {status}
+    </Badge>
+  );
+};
 
 export default ClientStatusBadge;

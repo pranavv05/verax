@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import ClientPortalShell from "../components/layout/ClientPortalShell";
+import LoadingState from "../components/ui/LoadingState";
+import { Alert, Card, FormField, StatTile } from "../components/app/primitives";
+import { IconTable } from "../components/app/icons";
 import { clientPortalApi } from "../api/client-portal-api";
 import { parseApiError } from "../lib/utils";
 
@@ -30,21 +33,6 @@ const formatCurrency = (value) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
-
-const SummaryTile = ({ label, value, hint, tone = "neutral" }) => {
-  const tones = {
-    neutral: "border-[#e7dcc8] bg-white",
-    good: "border-mint-300 bg-mint-500/5",
-    warn: "border-amber-200 bg-amber-50"
-  };
-  return (
-    <div className={`rounded-2xl border p-4 ${tones[tone]}`}>
-      <p className="text-3xl font-extrabold text-ink-900">{value}</p>
-      <p className="mt-1 text-base font-semibold text-ink-800">{label}</p>
-      {hint ? <p className="mt-1 text-sm text-[#607086]">{hint}</p> : null}
-    </div>
-  );
-};
 
 const ClientPortalReconciliationPage = () => {
   const initialPeriod = getDefaultPeriod();
@@ -108,105 +96,85 @@ const ClientPortalReconciliationPage = () => {
 
   return (
     <ClientPortalShell
-      title="GST summary"
+      title="GST summary."
       subtitle="How the invoices we hold compare against what your suppliers filed with the GST portal."
     >
-      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-        <div>
-          <label className="label" htmlFor="period-month">
-            Month
-          </label>
-          <select
-            id="period-month"
-            className="field py-3 text-base"
-            value={month}
-            onChange={(event) => setMonth(Number(event.target.value))}
+      <Card>
+        <div className="grid gap-3 px-5 py-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <FormField label="Month" htmlFor="period-month">
+            <select id="period-month" className="field py-2.5 text-[0.9375rem]" value={month} onChange={(event) => setMonth(Number(event.target.value))}>
+              {months.map((name, index) => (
+                <option key={name} value={index + 1}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Year" htmlFor="period-year">
+            <select id="period-year" className="field py-2.5 text-[0.9375rem]" value={year} onChange={(event) => setYear(Number(event.target.value))}>
+              {years.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <button
+            type="button"
+            className="btn-secondary py-2.5 text-[0.875rem]"
+            disabled={exporting || loading || unavailable}
+            onClick={onExport}
           >
-            {months.map((name, index) => (
-              <option key={name} value={index + 1}>
-                {name}
-              </option>
-            ))}
-          </select>
+            <IconTable size={15} />
+            {exporting ? "Preparing…" : "Download Excel"}
+          </button>
         </div>
-        <div>
-          <label className="label" htmlFor="period-year">
-            Year
-          </label>
-          <select
-            id="period-year"
-            className="field py-3 text-base"
-            value={year}
-            onChange={(event) => setYear(Number(event.target.value))}
-          >
-            {years.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button
-          type="button"
-          className="btn-secondary py-3 text-base"
-          disabled={exporting || loading || unavailable}
-          onClick={onExport}
-        >
-          {exporting ? "Preparing..." : "Download Excel"}
-        </button>
-      </div>
+      </Card>
 
       {error ? (
-        <div className="mt-6 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-base font-medium text-rose-700">
+        <Alert tone="err" className="mt-6">
           {error}
-        </div>
+        </Alert>
       ) : null}
 
       {loading ? (
-        <p className="mt-6 text-base text-[#607086]">Checking your invoices...</p>
-      ) : unavailable ? (
-        <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-6 text-base text-amber-900">
-          {result.message}
+        <div className="flex justify-center py-16">
+          <LoadingState message="Checking your invoices…" />
         </div>
+      ) : unavailable ? (
+        <Alert tone="warn" className="mt-6">
+          {result.message}
+        </Alert>
       ) : summary ? (
-        <>
-          <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <SummaryTile
-              label="Invoices checked"
-              value={summary.totalDocuments}
-              hint={`For ${months[month - 1]} ${year}`}
+        <div className="mt-6 space-y-6">
+          <Card className="relative overflow-hidden">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0"
+              style={{
+                background:
+                  "radial-gradient(55% 90% at 100% 0%, rgb(20 184 166 / 0.10), transparent 70%), radial-gradient(45% 80% at 0% 100%, rgb(102 87 217 / 0.07), transparent 70%)"
+              }}
             />
-            <SummaryTile
-              label="Matched"
-              value={summary.matched}
-              tone="good"
-              hint="Found and agreeing"
-            />
-            <SummaryTile
-              label="Don't agree"
-              value={summary.mismatched}
-              tone="warn"
-              hint="Amounts differ"
-            />
-            <SummaryTile
-              label="Not found"
-              value={summary.notFound}
-              tone="warn"
-              hint="Supplier hasn't filed"
-            />
-          </section>
+            <div className="relative px-6 py-6">
+              <p className="text-[0.9375rem] font-medium text-ui-fg-2">GST you can claim back</p>
+              <p className="mt-2 text-[2.5rem] font-semibold leading-none tracking-[-0.04em] text-ui-fg">
+                {formatCurrency(summary.totalITC)}
+              </p>
+              <p className="mt-4 max-w-xl text-[0.9375rem] leading-relaxed text-ui-fg-3">
+                The total GST on the invoices below for {months[month - 1]} {year}. Anything not matched may need your supplier
+                to file before you can claim it — your accountant will follow up.
+              </p>
+            </div>
+          </Card>
 
-          <section className="mt-6 rounded-2xl border border-[#e7dcc8] bg-white p-5">
-            <p className="text-base font-semibold text-ink-800">GST you can claim back</p>
-            <p className="mt-1 text-3xl font-extrabold text-ink-900">
-              {formatCurrency(summary.totalITC)}
-            </p>
-            <p className="mt-3 text-base text-[#607086]">
-              This is the total GST on the invoices above. Anything not matched may need your
-              supplier to file before you can claim it — your accountant will follow up.
-            </p>
+          <section aria-label="Invoice checks" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label="Invoices checked" value={summary.totalDocuments} hint={`${months[month - 1]} ${year}`} />
+            <StatTile label="Matched" value={summary.matched} tone="ok" hint="Found and agreeing" />
+            <StatTile label="Don't agree" value={summary.mismatched} tone={summary.mismatched > 0 ? "warn" : "neutral"} hint="Amounts differ" />
+            <StatTile label="Not found" value={summary.notFound} tone={summary.notFound > 0 ? "warn" : "neutral"} hint="Supplier hasn't filed yet" />
           </section>
-        </>
+        </div>
       ) : null}
     </ClientPortalShell>
   );

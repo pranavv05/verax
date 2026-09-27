@@ -8,51 +8,51 @@ import Skeleton from "react-loading-skeleton";
 // Dashboard
 // ---------------------------------------------------------------------------
 export const DashboardSkeleton = () => (
-  <>
+  <div className="space-y-5">
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="rounded-2xl border border-[#e7dcc8] bg-white p-5">
-          <Skeleton width="55%" height={11} borderRadius={6} />
-          <Skeleton width="38%" height={34} borderRadius={8} className="mt-3" />
-          <Skeleton width="75%" height={10} borderRadius={6} className="mt-2" />
+        <div key={i} className="panel p-5">
+          <Skeleton width="45%" height={12} borderRadius={6} />
+          <Skeleton width="30%" height={30} borderRadius={8} className="mt-3" />
+          <Skeleton width="70%" height={10} borderRadius={6} className="mt-3" />
         </div>
       ))}
     </section>
 
-    <section className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-      {/* Recent activity */}
-      <div className="panel p-5">
-        <div className="mb-4 flex items-center justify-between">
-          <Skeleton width={180} height={18} borderRadius={6} />
-          <Skeleton width={100} height={14} borderRadius={6} />
+    <section className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+      <div className="panel">
+        <div className="border-b border-ui-line px-5 py-4">
+          <Skeleton width={120} height={14} borderRadius={6} />
+          <Skeleton width="60%" height={11} borderRadius={6} className="mt-2" />
         </div>
-        <div className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="flex items-center justify-between rounded-xl border border-[#eadfcf] px-4 py-3">
-              <div>
-                <Skeleton width={130} height={12} borderRadius={6} />
-                <Skeleton width={90} height={10} borderRadius={6} className="mt-1.5" />
-              </div>
-              <Skeleton width={64} height={22} borderRadius={20} />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-4 border-b border-ui-line px-5 py-3.5 last:border-b-0">
+            <Skeleton circle width={8} height={8} />
+            <div className="flex-1">
+              <Skeleton width="35%" height={12} borderRadius={6} />
+              <Skeleton width="50%" height={10} borderRadius={6} className="mt-1.5" />
             </div>
-          ))}
-        </div>
+            <Skeleton width={90} height={12} borderRadius={6} />
+          </div>
+        ))}
       </div>
-
-      {/* Quick actions */}
-      <div className="panel p-5">
-        <Skeleton width={120} height={18} borderRadius={6} />
-        <div className="mt-4 space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-xl border border-[#dccdb0] px-4 py-3.5">
-              <Skeleton circle width={32} height={32} />
-              <Skeleton width="65%" height={14} borderRadius={6} />
-            </div>
-          ))}
+      <div className="grid gap-5">
+        <div className="panel p-5">
+          <Skeleton width={90} height={14} borderRadius={6} />
+          <Skeleton height={8} borderRadius={8} className="mt-6" />
+          <div className="mt-5 grid grid-cols-5 gap-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} height={34} borderRadius={6} />
+            ))}
+          </div>
+        </div>
+        <div className="panel p-5">
+          <Skeleton width={110} height={14} borderRadius={6} />
+          <Skeleton height={130} borderRadius={8} className="mt-5" />
         </div>
       </div>
     </section>
-  </>
+  </div>
 );
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ export const DashboardSkeleton = () => (
 export const TableRowsSkeleton = ({ rows = 6, cols = 5 }) => (
   <>
     {Array.from({ length: rows }).map((_, i) => (
-      <tr key={i} className="border-t border-[#eadfcf]">
+      <tr key={i} className="border-t border-ui-line">
         {Array.from({ length: cols }).map((_, j) => (
           <td key={j} className="px-3 py-3.5">
             <Skeleton
@@ -83,7 +83,7 @@ export const ClientDetailSkeleton = () => (
   <>
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="rounded-2xl border border-[#e7dcc8] bg-white p-5">
+        <div key={i} className="rounded-2xl border border-ui-line bg-ui-surface p-5">
           <Skeleton width="55%" height={11} borderRadius={6} />
           <Skeleton width="38%" height={34} borderRadius={8} className="mt-3" />
         </div>
@@ -130,7 +130,7 @@ export const ClientDocumentsSkeleton = ({ rows = 5 }) => (
     <table className="min-w-full border-separate border-spacing-0">
       <tbody>
         {Array.from({ length: rows }).map((_, i) => (
-          <tr key={i} className="border-t border-[#eadfcf]">
+          <tr key={i} className="border-t border-ui-line">
             <td className="px-3 py-3.5"><Skeleton width="80%" height={14} borderRadius={6} /></td>
             <td className="px-3 py-3.5"><Skeleton width={64} height={22} borderRadius={20} /></td>
             <td className="px-3 py-3.5"><Skeleton width={72} height={22} borderRadius={20} /></td>
@@ -147,7 +147,7 @@ export const ClientDocumentsSkeleton = ({ rows = 5 }) => (
 // Settings — 2-column form layout
 // ---------------------------------------------------------------------------
 export const SettingsSkeleton = () => (
-  <div className="grid gap-6 lg:grid-cols-2">
+  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
     {/* Firm settings */}
     <div className="panel p-6">
       <div className="mb-5 flex items-start justify-between">
@@ -189,7 +189,7 @@ export const SettingsSkeleton = () => (
 // ---------------------------------------------------------------------------
 export const ExportSkeleton = () => (
   <>
-    <section className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+    <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.15fr_0.85fr]">
       <div className="panel p-5">
         <Skeleton width={140} height={20} borderRadius={6} />
         <div className="mt-4 space-y-3">
@@ -221,7 +221,7 @@ export const ExportSkeleton = () => (
         <table className="min-w-full border-separate border-spacing-0">
           <tbody>
             {Array.from({ length: 5 }).map((_, i) => (
-              <tr key={i} className="border-t border-[#eadfcf]">
+              <tr key={i} className="border-t border-ui-line">
                 {[100, 80, 40, 70, 90, 60].map((w, j) => (
                   <td key={j} className="px-3 py-3.5">
                     <Skeleton width={w} height={14} borderRadius={6} />
@@ -240,7 +240,7 @@ export const ExportSkeleton = () => (
 // Review page — document viewer + extraction form
 // ---------------------------------------------------------------------------
 export const ReviewSkeleton = () => (
-  <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
+  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.1fr]">
     <div className="panel p-5">
       <Skeleton width={160} height={20} borderRadius={6} className="mb-4" />
       <Skeleton height={480} borderRadius={12} />

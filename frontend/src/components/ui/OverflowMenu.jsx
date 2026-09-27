@@ -71,7 +71,7 @@ const OverflowMenu = ({ items, align = "right", label = "Row actions" }) => {
         aria-label={label}
         onClick={() => setOpen((prev) => !prev)}
         onKeyDown={onTriggerKeyDown}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-500 transition-colors hover:bg-sand-100 hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-700/30"
+        className="btn-icon"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="5" cy="12" r="1.75" />
@@ -84,13 +84,13 @@ const OverflowMenu = ({ items, align = "right", label = "Row actions" }) => {
         <div
           role="menu"
           onKeyDown={onMenuKeyDown}
-          className={`absolute z-30 mt-1.5 w-52 overflow-hidden rounded-xl border border-[#e7dcc8] bg-white py-1.5 shadow-elevated ${
+          className={`absolute z-30 mt-1.5 w-52 overflow-hidden rounded-xl border border-ui-line bg-ui-raised p-1 shadow-ui-pop ${
             align === "right" ? "right-0" : "left-0"
           }`}
         >
           {visibleItems.map((item, index) =>
             item === "divider" ? (
-              <div key={`divider-${index}`} className="my-1.5 border-t border-[#eee3cf]" />
+              <div key={`divider-${index}`} className="my-1 border-t border-ui-line" />
             ) : (
               <button
                 key={item.label}
@@ -104,10 +104,10 @@ const OverflowMenu = ({ items, align = "right", label = "Row actions" }) => {
                   setOpen(false);
                   item.onSelect();
                 }}
-                className={`flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[0.8125rem] font-medium outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   item.destructive
-                    ? "text-rose-600 hover:bg-rose-50"
-                    : "text-ink-800 hover:bg-sand-100"
+                    ? "text-ui-err hover:bg-ui-err/[0.08] focus:bg-ui-err/[0.08]"
+                    : "text-ui-fg-2 hover:bg-ui-inset hover:text-ui-fg focus:bg-ui-inset focus:text-ui-fg"
                 }`}
               >
                 {item.icon}

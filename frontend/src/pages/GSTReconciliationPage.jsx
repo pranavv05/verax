@@ -2,9 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
+import LoadingState from "../components/ui/LoadingState";
+import { TableScroll, Toolbar } from "../components/app/TableKit";
+import { Alert, Badge, Card, FormField, PageHeader, Segmented } from "../components/app/primitives";
+import { IconRefresh, IconTable } from "../components/app/icons";
 import { complianceApi } from "../api/compliance-api";
 import { useAuth } from "../contexts/AuthContext";
-import { parseApiError } from "../lib/utils";
+import { cn, parseApiError } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
 
 const MONTHS = [
@@ -22,20 +26,12 @@ const MONTHS = [
   ["12", "Dec"]
 ];
 
-const statusStyles = {
-  matched: "bg-mint-500/10 text-mint-700",
-  partial: "bg-amber-100 text-amber-700",
-  mismatch: "bg-rose-100 text-rose-700",
-  not_found: "bg-orange-100 text-orange-700",
-  unavailable: "bg-slate-100 text-slate-600"
-};
-
-const statusLabels = {
-  matched: "Matched",
-  partial: "Partial",
-  mismatch: "Mismatch",
-  not_found: "Not Found",
-  unavailable: "Unavailable"
+const STATUS = {
+  matched: { tone: "ok", label: "Matched" },
+  partial: { tone: "warn", label: "Partial" },
+  mismatch: { tone: "err", label: "Mismatch" },
+  not_found: { tone: "warn", label: "Not in 2B" },
+  unavailable: { tone: "neutral", label: "Unavailable" }
 };
 
 const getDefaultPeriod = () => {
@@ -58,7 +54,7 @@ const formatFieldName = (field) =>
     taxableAmount: "Taxable",
     gstAmount: "GST",
     supplierGSTIN: "Supplier GSTIN",
-    invoiceDate: "Invoice Date"
+    invoiceDate: "Invoice date"
   }[field] || field);
 
 const mismatchText = (row, field) => {
@@ -137,162 +133,196 @@ const GSTReconciliationPage = () => {
   };
 
   const unavailableOnly = result?.rows?.length > 0 && result.rows.every((row) => row.matchStatus === "unavailable");
+  const total = Number(summary.total || 0);
+  const breakdown = [
+    { key: "matched", label: "Matched", value: Number(summary.matched || 0), bar: "bg-ui-ok" },
+    { key: "mismatches", label: "Mismatch", value: mismatchCount, bar: "bg-ui-err" },
+    { key: "not_found", label: "Not in GSTR-2B", value: Number(summary.notFound || 0), bar: "bg-ui-warn" }
+  ];
 
   return (
-    <AppShell title="GST Reconciliation" subtitle="Match client purchase invoices against GSTR-2B.">
-      <div className="mb-4 text-sm font-semibold text-[#607086]">
-        <Link to="/clients" className="text-indigo-600 hover:text-indigo-800">Clients</Link>
-        <span className="mx-2">/</span>
-        {result?.client ? (
-          <Link to={`/clients/${result.client.id}`} className="text-indigo-600 hover:text-indigo-800">
-            {result.client.name}
-          </Link>
-        ) : (
-          <span>Client</span>
-        )}
-        <span className="mx-2">/</span>
-        <span>GST Reconciliation</span>
-      </div>
-
-      <section className="panel p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="label">Month</label>
-              <select className="field" value={month} onChange={(event) => setMonth(event.target.value)}>
-                {MONTHS.map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">Year</label>
-              <select className="field" value={year} onChange={(event) => setYear(event.target.value)}>
-                {years.map((value) => (
-                  <option key={value} value={value}>{value}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <button type="button" className="btn-primary" disabled={loading} onClick={runReconciliation}>
-              {loading ? "Running..." : "Run Reconciliation"}
+    <AppShell>
+      <PageHeader
+        breadcrumbs={[
+          { label: "Clients", to: "/clients" },
+          result?.client ? { label: result.client.name, to: `/clients/${result.client.id}` } : { label: "Client" },
+          { label: "GST reconciliation" }
+        ]}
+        title="GST reconciliation."
+        tint="Purchases against GSTR-2B."
+        description="Every purchase invoice Verax read, matched line by line with what suppliers filed."
+        actions={
+          canAdmin ? (
+            <button type="button" className="btn-secondary" disabled={!result || exporting} onClick={onExport}>
+              <IconTable size={14} />
+              {exporting ? "Exporting…" : "Export to Excel"}
             </button>
-            {canAdmin && (
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={!result || exporting}
-                onClick={onExport}
-              >
-                {exporting ? "Exporting..." : "Export to Excel"}
-              </button>
-            )}
-          </div>
-        </div>
+          ) : null
+        }
+      />
 
+      <Card className="mb-5">
+        <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-end">
+          <FormField label="Return period" htmlFor="gst-month" className="sm:w-40">
+            <select id="gst-month" className="field" value={month} onChange={(event) => setMonth(event.target.value)}>
+              {MONTHS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Year" htmlFor="gst-year" className="sm:w-32">
+            <select id="gst-year" className="field" value={year} onChange={(event) => setYear(event.target.value)}>
+              {years.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <button type="button" className="btn-primary sm:mb-px" disabled={loading} onClick={runReconciliation}>
+            <IconRefresh size={14} className={loading ? "animate-spin" : ""} />
+            {loading ? "Running…" : "Run reconciliation"}
+          </button>
+        </div>
         {error ? (
-          <div className="mt-4 rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-            {error}
+          <div className="border-t border-ui-line px-5 py-4">
+            <Alert tone="err">{error}</Alert>
           </div>
         ) : null}
-      </section>
+      </Card>
 
       {result ? (
         <>
-          {unavailableOnly && (
-            <div className="mt-4 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-              GST portal is currently unreachable. Showing local data only. Match status unavailable.
-            </div>
-          )}
+          {unavailableOnly ? (
+            <Alert tone="info" className="mb-5" title="GST portal unreachable">
+              Showing local data only — match status is unavailable until the portal responds.
+            </Alert>
+          ) : null}
 
-          <section className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {[
-              ["Total Invoices", summary.total || 0, "100%", "border-indigo-200 bg-indigo-50 text-indigo-700"],
-              ["Matched", summary.matched || 0, percent(summary.matched || 0, summary.total || 0), "border-mint-300 bg-mint-500/10 text-mint-700"],
-              ["Not Found in GSTR-2B", summary.notFound || 0, percent(summary.notFound || 0, summary.total || 0), "border-orange-200 bg-orange-50 text-orange-700"],
-              ["Mismatches", mismatchCount, percent(mismatchCount, summary.total || 0), "border-rose-200 bg-rose-50 text-rose-700"]
-            ].map(([label, value, pct, className]) => (
-              <article key={label} className={`rounded-xl border p-4 ${className}`}>
-                <p className="text-xs font-bold uppercase tracking-wide">{label}</p>
-                <p className="mt-2 text-2xl font-extrabold">{value}</p>
-                <p className="text-xs font-semibold">{pct} of total</p>
-              </article>
-            ))}
-          </section>
-
-          <section className="panel mt-4 p-4">
-            <div className="mb-4 flex flex-wrap gap-2">
-              {[
-                ["all", `All (${summary.total || 0})`],
-                ["matched", `Matched (${summary.matched || 0})`],
-                ["not_found", `Not Found (${summary.notFound || 0})`],
-                ["mismatches", `Mismatches (${mismatchCount})`]
-              ].map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                    filter === value ? "bg-ink-900 text-white" : "bg-sand-100 text-ink-700 hover:bg-sand-200"
-                  }`}
-                  onClick={() => setFilter(value)}
-                >
-                  {label}
-                </button>
-              ))}
+          <Card className="mb-5">
+            <div className="grid grid-cols-1 gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:items-center">
+              <div>
+                <p className="text-[0.8125rem] font-medium text-ui-fg-3">Invoices this period</p>
+                <p className="mt-1 text-[2.25rem] font-semibold leading-none tracking-[-0.04em] text-ui-fg">{total}</p>
+                <p className="mt-2 text-xs text-ui-fg-3">
+                  {total > 0 ? `${percent(summary.matched || 0, total)} matched cleanly` : "Nothing to reconcile yet"}
+                </p>
+              </div>
+              <div>
+                <div className="flex h-2.5 w-full gap-[2px] overflow-hidden rounded-full bg-ui-inset" aria-hidden="true">
+                  {breakdown.map((item) =>
+                    item.value > 0 ? <span key={item.key} className={cn("h-full", item.bar)} style={{ flexGrow: item.value }} /> : null
+                  )}
+                </div>
+                <ul className="mt-4 grid grid-cols-3 gap-3">
+                  {breakdown.map((item) => (
+                    <li key={item.key}>
+                      <button
+                        type="button"
+                        onClick={() => setFilter(item.key)}
+                        className="w-full rounded-lg px-1 py-1 text-left outline-none transition-colors hover:bg-ui-subtle focus-visible:ring-2 focus-visible:ring-ui-accent"
+                      >
+                        <span className="flex items-center gap-1.5 text-xs text-ui-fg-3">
+                          <span aria-hidden="true" className={cn("h-2 w-2 rounded-[3px]", item.bar)} />
+                          {item.label}
+                        </span>
+                        <span className="mt-1 block text-xl font-semibold tracking-[-0.03em] text-ui-fg">
+                          {item.value}
+                          <span className="ml-1.5 text-xs font-normal text-ui-fg-4">{percent(item.value, total)}</span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
+          </Card>
+
+          <Card className="overflow-hidden">
+            <Toolbar>
+              <Segmented
+                ariaLabel="Filter invoices"
+                layoutId="gst-filter"
+                size="sm"
+                value={filter}
+                onChange={setFilter}
+                options={[
+                  { value: "all", label: "All", count: total },
+                  { value: "matched", label: "Matched", count: summary.matched || 0 },
+                  { value: "not_found", label: "Not in 2B", count: summary.notFound || 0 },
+                  { value: "mismatches", label: "Mismatches", count: mismatchCount }
+                ]}
+              />
+            </Toolbar>
 
             {filteredRows.length === 0 ? (
-              <EmptyState title="No invoices found for this period." description="Try another month or year." />
+              <div className="p-4">
+                <EmptyState compact title="No invoices for this period" description="Try another month or year." />
+              </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full border-separate border-spacing-0">
+              <TableScroll>
+                <table className="ui-table">
                   <thead>
-                    <tr className="bg-sand-100 text-left text-xs uppercase tracking-wide text-[#6d7e95]">
-                      <th className="rounded-l-lg px-3 py-3">Invoice No.</th>
-                      <th className="px-3 py-3">Supplier</th>
-                      <th className="px-3 py-3">Invoice Date</th>
-                      <th className="px-3 py-3 text-right">Taxable Amt</th>
-                      <th className="px-3 py-3 text-right">GST Amt</th>
-                      <th className="px-3 py-3">Match Status</th>
-                      <th className="rounded-r-lg px-3 py-3">Mismatch Details</th>
+                    <tr>
+                      <th>Invoice</th>
+                      <th>Supplier</th>
+                      <th>Date</th>
+                      <th className="text-right">Taxable</th>
+                      <th className="text-right">GST</th>
+                      <th>Status</th>
+                      <th>Difference</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRows.map((row) => (
-                      <tr key={row.documentId} className="border-t border-[#eadfcf] align-top">
-                        <td className="px-3 py-3 text-sm font-semibold text-ink-900">{row.invoiceNumber}</td>
-                        <td className="px-3 py-3 text-sm text-[#5f6f84]">
-                          <div className="font-semibold text-ink-800">{row.supplierName || "-"}</div>
-                          <div className="font-mono text-xs">{row.supplierGSTIN}</div>
-                        </td>
-                        <td className="px-3 py-3 text-sm text-[#5f6f84]">{row.invoiceDate}</td>
-                        <td className="px-3 py-3 text-right text-sm text-[#5f6f84]">{formatCurrency(row.taxableAmount)}</td>
-                        <td className="px-3 py-3 text-right text-sm text-[#5f6f84]">{formatCurrency(row.gstAmount)}</td>
-                        <td className="px-3 py-3">
-                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[row.matchStatus] || statusStyles.unavailable}`}>
-                            {statusLabels[row.matchStatus] || "Unavailable"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-xs text-[#607086]">
-                          {row.mismatchFields.length > 0 ? (
-                            <div className="space-y-1">
-                              {row.mismatchFields.map((field) => (
-                                <p key={field}>{mismatchText(row, field)}</p>
-                              ))}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredRows.map((row) => {
+                      const status = STATUS[row.matchStatus] || STATUS.unavailable;
+                      return (
+                        <tr key={row.documentId} className="align-top">
+                          <td>
+                            <Link to={`/review/${row.documentId}`} className="ui-mono font-medium text-ui-fg hover:text-ui-accent-text">
+                              {row.invoiceNumber}
+                            </Link>
+                          </td>
+                          <td>
+                            <div className="font-medium text-ui-fg">{row.supplierName || "—"}</div>
+                            <div className="ui-mono text-[0.72rem] text-ui-fg-3">{row.supplierGSTIN}</div>
+                          </td>
+                          <td className="whitespace-nowrap tabular-nums">{row.invoiceDate}</td>
+                          <td className="whitespace-nowrap text-right tabular-nums">{formatCurrency(row.taxableAmount)}</td>
+                          <td className="whitespace-nowrap text-right tabular-nums">{formatCurrency(row.gstAmount)}</td>
+                          <td>
+                            <Badge tone={status.tone} dot>
+                              {status.label}
+                            </Badge>
+                          </td>
+                          <td className="text-xs">
+                            {row.mismatchFields.length > 0 ? (
+                              <ul className="space-y-1">
+                                {row.mismatchFields.map((field) => (
+                                  <li key={field} className="text-ui-fg-2">
+                                    {mismatchText(row, field)}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <span className="text-ui-fg-4">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-              </div>
+              </TableScroll>
             )}
-          </section>
+          </Card>
         </>
+      ) : loading ? (
+        <div className="flex justify-center py-16">
+          <LoadingState message="Matching invoices against GSTR-2B…" />
+        </div>
       ) : null}
     </AppShell>
   );

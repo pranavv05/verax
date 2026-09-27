@@ -1,5 +1,7 @@
-﻿import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { AppThemeRoot } from "../../contexts/ThemeContext";
+import LoadingState from "../ui/LoadingState";
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, isBootstrapping } = useAuth();
@@ -7,9 +9,9 @@ const ProtectedRoute = ({ children }) => {
 
   if (isBootstrapping) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="panel px-6 py-4 text-sm font-semibold text-ink-700">Loading workspace...</div>
-      </div>
+      <AppThemeRoot className="flex items-center justify-center">
+        <LoadingState message="Loading workspace…" />
+      </AppThemeRoot>
     );
   }
 

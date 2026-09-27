@@ -1,5 +1,7 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useClientPortalAuth } from "../../contexts/ClientPortalAuthContext";
+import { AppThemeRoot } from "../../contexts/ThemeContext";
+import LoadingState from "../ui/LoadingState";
 
 const ProtectedClientRoute = ({ children }) => {
   const { isAuthenticated, isLoading } = useClientPortalAuth();
@@ -7,9 +9,9 @@ const ProtectedClientRoute = ({ children }) => {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white px-4">
-        <div className="text-base font-semibold text-ink-700">Loading your portal...</div>
-      </div>
+      <AppThemeRoot className="flex items-center justify-center px-4">
+        <LoadingState message="Loading your portal…" />
+      </AppThemeRoot>
     );
   }
 
