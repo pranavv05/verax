@@ -106,6 +106,11 @@ if exist ".env" (
         if /i "%%A"=="POSTGRES_PASSWORD" set "POSTGRES_PASSWORD=%%B"
         if /i "%%A"=="POSTGRES_DB" set "POSTGRES_DB=%%B"
         if /i "%%A"=="APP_DB_PASSWORD" set "APP_DB_PASSWORD=%%B"
+        REM The worker sends this key and the AI service checks it. Exported
+        REM here so ai-service\.env can't hold a different one: a mismatch
+        REM fails every document with "Invalid AI service token".
+        if /i "%%A"=="AI_SERVICE_API_KEY" set "AI_SERVICE_API_KEY=%%B"
+        if /i "%%A"=="LOCAL_STORAGE" set "LOCAL_STORAGE=%%B"
     )
 )
 REM DATABASE_URL is the superuser, used only for migrations. The backend and
@@ -117,8 +122,9 @@ set "REDIS_URL=redis://localhost:6379"
 set "AI_SERVICE_URL=http://localhost:8000"
 set "AI_SERVICE_PORT=8000"
 REM The backend always writes uploads to backend\local-storage; the AI service
-REM must read from the same folder.
+REM must read from the same folder, and in the same storage mode.
 set "LOCAL_STORAGE_PATH=%CD%\backend\local-storage"
+if not defined LOCAL_STORAGE set "LOCAL_STORAGE=true"
 
 if not exist "ai-service\venv\Scripts\uvicorn.exe" (
     echo ERROR: AI service virtualenv not found. Create it once with:
