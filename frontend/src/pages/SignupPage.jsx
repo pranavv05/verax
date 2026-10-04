@@ -3,8 +3,6 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { useAuth } from "../contexts/AuthContext";
-import { authApi } from "../api/auth-api";
-import { tokenStore, userStore } from "../lib/token-store";
 import { parseApiError } from "../lib/utils";
 import { normalizeGstin, validateGstin } from "../lib/gstin";
 import AuthLayout, { AuthButton, AuthCard, AuthError, AuthHeading, AuthLink } from "../components/auth/AuthLayout";
@@ -22,8 +20,8 @@ import { EASE } from "../components/public/motion";
  * `signupSchema` is `{ name, firmName, email, password (min 8) }` — plus the
  * pre-existing optional GSTIN, which is validated locally and stripped server
  * side by the Joi `stripUnknown: true` in `validate.middleware.js`. Nothing was
- * added, nothing was made required, and the submit path (authApi.signup →
- * tokenStore → userStore → /dashboard) is unchanged.
+ * added, nothing was made required. Submit goes through AuthContext's
+ * signup() so the session is live before navigating to /dashboard.
  */
 
 const legalLinkClass =
@@ -37,7 +35,7 @@ const signupSchema = z.object({
 });
 
 const SignupPage = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, signup } = useAuth();
   const navigate = useNavigate();
   const reduced = useReducedMotion();
 
@@ -95,12 +93,10 @@ const SignupPage = () => {
       // `gstin` is sent for forward-compatibility. The backend's Joi signup
       // schema runs with `stripUnknown: true`, so today it is discarded server
       // side and the firm's GSTIN still has to be set from Settings.
-      const result = await authApi.signup({
+      await signup({
         ...validation.data,
         ...(gstinCheck.state === "valid" ? { gstin: normalizeGstin(form.gstin) } : {})
       });
-      tokenStore.setAccessToken(result.accessToken);
-      if (result.user) userStore.setUser(result.user);
       navigate("/dashboard", { replace: true });
     } catch (submitError) {
       setError(parseApiError(submitError, "Unable to create account"));

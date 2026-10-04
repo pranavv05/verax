@@ -45,6 +45,19 @@ export const AuthProvider = ({ children }) => {
     return result;
   }, []);
 
+  // Same session hand-off as login. Writing the token store directly is not
+  // enough: isAuthenticated only recomputes when `user` changes, so the
+  // dashboard route still saw a signed-out user and bounced to /login.
+  const signup = useCallback(async (payload) => {
+    const result = await authApi.signup(payload);
+    tokenStore.setAccessToken(result.accessToken);
+    if (result.user) {
+      userStore.setUser(result.user);
+      setUser(result.user);
+    }
+    return result;
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await authApi.logout();
@@ -59,10 +72,11 @@ export const AuthProvider = ({ children }) => {
       isAuthenticated: Boolean(tokenStore.getAccessToken()),
       isBootstrapping,
       login,
+      signup,
       logout,
       clearSession
     }),
-    [user, isBootstrapping, login, logout, clearSession]
+    [user, isBootstrapping, login, signup, logout, clearSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

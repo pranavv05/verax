@@ -404,9 +404,10 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Use open context for email uniqueness check
+    // users_isolation_policy only exposes a row by email under the "login"
+    // context (exact email, not deleted) — the same visibility login has.
     await setLocalConfig(client, "app.current_firm_id", "");
-    await setLocalConfig(client, "app.auth_context", "signup");
+    await setLocalConfig(client, "app.auth_context", "login");
     await setLocalConfig(client, "app.auth_email", normalizedEmail);
     await setLocalConfig(client, "app.upload_token", "");
 
@@ -418,13 +419,19 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
       throw ApiError.conflict("An account with this email already exists");
     }
 
+    // firms_isolation_policy only admits rows whose id matches
+    // app.current_firm_id, and the backend's ca_app role is subject to RLS, so
+    // the id is minted here and set as the tenant before the INSERT. Letting
+    // Postgres default it left current_firm_id empty and every signup failed.
+    const firmId = randomUUID();
+    await setLocalConfig(client, "app.current_firm_id", firmId);
+
     const firmResult = await client.query(
-      `INSERT INTO firms (name, owner_email, plan) VALUES ($1, $2, 'starter') RETURNING id, name, plan`,
-      [firmName.trim(), normalizedEmail]
+      `INSERT INTO firms (id, name, owner_email, plan) VALUES ($1, $2, $3, 'starter') RETURNING id, name, plan`,
+      [firmId, firmName.trim(), normalizedEmail]
     );
     const firm = firmResult.rows[0];
 
-    await setLocalConfig(client, "app.current_firm_id", firm.id);
     await setLocalConfig(client, "app.auth_context", "");
     await setLocalConfig(client, "app.auth_email", "");
 
@@ -459,6 +466,11 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
     };
   } catch (error) {
     await client.query("ROLLBACK");
+    // Two signups racing on one email get past the check above; the unique
+    // indexes on users.email / firms.owner_email catch the loser.
+    if (error.code === "23505") {
+      throw ApiError.conflict("An account with this email already exists");
+    }
     throw error;
   } finally {
     client.release();
