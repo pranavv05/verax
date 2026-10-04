@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
 from typing import Any
 
 from groq import Groq
 
-from app.config import settings
+from app.config import groq_model_kwargs, settings
 from app.utils.json_parser import parse_json_object
 
 logger = logging.getLogger("ai-service")
@@ -382,6 +381,43 @@ def _to_number(value: Any) -> float:
     return 0.0
 
 
+# Rupee rounding across a statement's printed figures stays well under this.
+BANK_BALANCE_TOLERANCE = 1.0
+
+
+def check_bank_statement_totals(statement: dict) -> str | None:
+    """Why this statement's transactions can't be trusted, or None if they add up.
+
+    Opening and closing balances sit on the first and last page, so a model run
+    that silently drops rows (or every row) still gets them right and the result
+    looks complete. Replaying the transactions against the opening balance is
+    the one check that catches it without a second model call.
+    """
+    transactions = statement.get("transactions") or []
+    if not transactions:
+        return (
+            "No transactions were read from this statement. Check it against the "
+            "original before approving, or re-run extraction."
+        )
+
+    opening = statement.get("opening_balance")
+    closing = statement.get("closing_balance")
+    if opening in (None, "") or closing in (None, ""):
+        return None
+
+    credits = sum(_to_number(txn.get("credit") or 0) for txn in transactions)
+    debits = sum(_to_number(txn.get("debit") or 0) for txn in transactions)
+    expected_closing = _to_number(opening) + credits - debits
+    if abs(expected_closing - _to_number(closing)) > BANK_BALANCE_TOLERANCE:
+        return (
+            f"The {len(transactions)} transactions read don't add up: opening balance "
+            f"plus credits minus debits is {expected_closing:,.2f}, but the statement's "
+            f"closing balance is {_to_number(closing):,.2f}. Some rows were probably "
+            "missed or misread."
+        )
+    return None
+
+
 def validate_and_adjust_confidence(extracted: dict) -> dict:
     raw_confidence = extracted.get("confidence")
     logger.info("LLM raw confidence: %r", raw_confidence)
@@ -557,11 +593,7 @@ class LLMService:
         for attempt in range(1, GROQ_MAX_ATTEMPTS + 1):
             try:
                 response = self._client.chat.completions.create(
-                    # llama-3.1-70b-versatile was decommissioned by Groq and now
-                    # returns 400 model_decommissioned. llama-3.3-70b-versatile is
-                    # its direct replacement. Overridable so the next deprecation
-                    # does not require a code change.
-                    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    **groq_model_kwargs(),
                     messages=[
                         {
                             "role": "system",
@@ -625,6 +657,13 @@ class LLMService:
                     result[key] = parsed[key]
 
         result["transactions"] = transactions
+        warning = check_bank_statement_totals(result)
+        if warning:
+            logger.warning("Bank statement totals check failed: %s", warning)
+            result["_transactions_warning"] = warning
+            # Read by calculate_confidence; keeps the statement out of the
+            # "extracted" bucket so a person checks it before export.
+            result["confidence"] = 0.3
         return result
 
     def extract_structured_data(

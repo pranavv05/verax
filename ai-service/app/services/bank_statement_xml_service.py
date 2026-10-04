@@ -19,8 +19,8 @@ from fastapi import HTTPException
 from groq import Groq
 from pdf2image import convert_from_bytes
 
-from app.config import settings
-from app.services.ocr_service import get_paddle_ocr
+from app.config import groq_model_kwargs, settings
+from app.services.ocr_service import paddle_ocr
 from app.services.preprocess_service import PreprocessService
 from app.utils.json_parser import parse_json_object
 
@@ -330,7 +330,7 @@ def classify_narrations(narrations: list[str]) -> list[dict[str, Any]]:
     try:
         client = Groq(api_key=settings.groq_api_key)
         response = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            **groq_model_kwargs(),
             messages=[
                 {"role": "system", "content": CLASSIFICATION_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -867,8 +867,7 @@ def _paddle_layout_text(image: np.ndarray) -> str:
     are regrouped by vertical position and ordered left to right, so a statement
     row comes back as a single line of text.
     """
-    ocr = get_paddle_ocr()
-    result = ocr.ocr(image, cls=True)
+    result = paddle_ocr(image)
 
     boxes: list[dict[str, float | str]] = []
     for entry in (result or [None])[0] or []:
