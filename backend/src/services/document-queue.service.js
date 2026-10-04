@@ -3,6 +3,10 @@ const IORedis = require("ioredis");
 const env = require("../config/env");
 const { DOCUMENT_PROCESSING_QUEUE } = require("../constants/queues");
 
+// After this many failed attempts a document stays "uploaded" with its
+// processing_error set: it will not be read without someone stepping in.
+const DOCUMENT_JOB_ATTEMPTS = 3;
+
 let queueInstance;
 let redisConnection;
 
@@ -71,7 +75,7 @@ const enqueueDocumentProcessingJob = async ({ documentId, s3Key, docType, firmId
         client_id: clientId
       },
       {
-        attempts: 3,
+        attempts: DOCUMENT_JOB_ATTEMPTS,
         backoff: {
           type: "exponential",
           delay: 5000
@@ -93,6 +97,7 @@ const enqueueDocumentProcessingJob = async ({ documentId, s3Key, docType, firmId
 };
 
 module.exports = {
+  DOCUMENT_JOB_ATTEMPTS,
   enqueueDocumentProcessingJob,
   clearFinishedJob,
   checkRedisHealth
