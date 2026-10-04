@@ -70,9 +70,14 @@ class PersistenceService:
                     WHERE id = %s
                       AND firm_id = %s
                       AND deleted_at IS NULL
+                    RETURNING client_id
                     """,
                     (document_id, firm_id)
                 )
+                updated = cursor.fetchone()
+                # The audit log names the client from metadata.clientId, the
+                # same key the backend's document_processed entries carry.
+                client_id = str(updated["client_id"]) if updated else None
 
                 cursor.execute(
                     """
@@ -90,6 +95,6 @@ class PersistenceService:
                         "ai_extraction_saved",
                         "document",
                         document_id,
-                        json.dumps({"confidence_score": confidence_score})
+                        json.dumps({"confidence_score": confidence_score, "clientId": client_id})
                     )
                 )

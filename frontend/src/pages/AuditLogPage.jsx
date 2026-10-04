@@ -28,6 +28,7 @@ const CLIENT_ACTOR_ACTIONS = new Set([
 // System/worker-triggered actions that relate to a client's document but weren't
 // caused by anyone logging in — Actor is "System", with the related client called out.
 const SYSTEM_CLIENT_ACTIONS = new Set([
+  "ai_extraction_saved",
   "document_processed",
   "document_processing_failed",
   "document_processing_alert"
@@ -63,8 +64,9 @@ const getActorDisplay = (entry) => {
   if (clientName && CLIENT_ACTOR_ACTIONS.has(entry.action)) {
     return { primary: clientName, secondary: "Client" };
   }
-  if (clientName && SYSTEM_CLIENT_ACTIONS.has(entry.action)) {
-    return { primary: "System", secondary: `Client: ${clientName}` };
+  if (SYSTEM_CLIENT_ACTIONS.has(entry.action)) {
+    // Older AI-service entries were written without metadata.clientId.
+    return { primary: "System", secondary: clientName ? `Client: ${clientName}` : "" };
   }
   return { primary: "-", secondary: "" };
 };
