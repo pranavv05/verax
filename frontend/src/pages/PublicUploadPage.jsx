@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { authApi } from "../api/auth-api";
 import { uploadApi } from "../api/upload-api";
-import { parseApiError } from "../lib/utils";
+import { linkErrorMessage, parseApiError } from "../lib/utils";
 import PublicPageShell from "../components/public/PublicPageShell";
 import FileTypeIcon, { fileExtension } from "../components/public/FileTypeIcon";
 import { EASE } from "../components/public/motion";
@@ -79,7 +79,9 @@ const PublicUploadPage = () => {
         }
       } catch (error) {
         if (active) {
-          setTokenError(parseApiError(error, "Magic link is invalid or expired"));
+          setTokenError(
+            linkErrorMessage(error, "This link is invalid or has expired. Check you opened the full link from your CA firm.")
+          );
         }
       } finally {
         if (active) {
