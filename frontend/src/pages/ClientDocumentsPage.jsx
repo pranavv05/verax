@@ -39,7 +39,9 @@ const ClientDocumentsPage = () => {
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [docType, setDocType] = useState("other");
+  // Nothing preselected — see PublicUploadPage: a default type sent bank
+  // statements down the invoice extraction path.
+  const [docType, setDocType] = useState("");
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -129,7 +131,7 @@ const ClientDocumentsPage = () => {
 
   const processUploadQueue = async () => {
     const uploadable = items.filter((item) => item.status === "pending" || item.status === "error");
-    if (uploading || uploadable.length === 0) {
+    if (uploading || uploadable.length === 0 || !docType) {
       return;
     }
 
@@ -321,7 +323,7 @@ const ClientDocumentsPage = () => {
               </div>
             ) : null}
 
-            <button type="button" className="btn-primary w-full" disabled={uploading || uploadableCount === 0} onClick={processUploadQueue}>
+            <button type="button" className="btn-primary w-full" disabled={uploading || uploadableCount === 0 || !docType} onClick={processUploadQueue}>
               <IconUpload size={14} />
               {uploading
                 ? "Uploading…"
@@ -329,6 +331,9 @@ const ClientDocumentsPage = () => {
                   ? `Upload ${uploadableCount} file${uploadableCount === 1 ? "" : "s"}`
                   : "Upload files"}
             </button>
+            {!docType && uploadableCount > 0 ? (
+              <p className="text-center text-xs text-ui-fg-3">Choose a document type above to upload.</p>
+            ) : null}
           </div>
         </Card>
 
