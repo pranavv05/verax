@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import re
+from datetime import date, datetime
 
 import pandas as pd
 from openpyxl import Workbook
@@ -60,12 +61,24 @@ DATE_FMTS = [
 
 # Columns whose values should be cast to float
 NUMERIC_COL_RE = re.compile(
-    r"\bamount\b|\bbill\s*amt\b|\bdebit\b|\bcredit\b"
+    r"\bamount\b|\bamt\b|\bdebit\b|\bcredit\b"
     r"|\bdr\.?\b|\bcr\.?\b"
-    r"|\bigst\b|\bcgst\b|\bsgst\b"
+    r"|\bigst\b|\bcgst\b|\bsgst\b|\bgst\b|\bcess\b|\btax\b|\btds\b"
+    r"|\btaxable\b|\bvalue\b|\btotal\b|\bnet\b|\bgross\b"
     r"|\bbalance\b|\brate\b|\bqty\b|\bquantity\b",
     re.IGNORECASE,
 )
+
+# Identifier columns that happen to contain a numeric keyword ("Tax Invoice
+# No", "GST No") must stay text, or their values get mangled into floats.
+IDENTIFIER_COL_RE = re.compile(
+    r"\bno\b|\bnumber\b|\bnum\b|\bgstin\b|\bpan\b|\bhsn\b|\bsac\b|\bref\b|\bid\b",
+    re.IGNORECASE,
+)
+
+
+def _is_numeric_col(col: str) -> bool:
+    return bool(NUMERIC_COL_RE.search(col)) and not IDENTIFIER_COL_RE.search(col)
 
 # Columns whose values should be parsed as dates
 DATE_COL_RE = re.compile(r"\bdate\b", re.IGNORECASE)
@@ -140,20 +153,25 @@ def _parse_date(val):
             return pd.NaT
     except (TypeError, ValueError):
         pass
+    # A real Excel date cell arrives as a datetime and is already unambiguous.
+    if isinstance(val, (datetime, date)):
+        return pd.Timestamp(val)
     if str(val).strip() == "":
         return pd.NaT
     s = str(val).strip()
-    try:
-        ts = pd.Timestamp(s)
-        if 1990 < ts.year < 2100:
-            return ts
-    except Exception:
-        pass
+    # Indian registers write dates day-first. The explicit formats run before
+    # any guessing, which read "01/09/2026" month-first as 9 January.
     for fmt in DATE_FMTS:
         try:
             return pd.to_datetime(s, format=fmt)
         except ValueError:
             continue
+    try:
+        ts = pd.to_datetime(s, dayfirst=True)
+        if 1990 < ts.year < 2100:
+            return ts
+    except (ValueError, OverflowError):
+        pass
     return pd.NaT
 
 
@@ -312,7 +330,7 @@ def clean_block(col_labels: list, rows: list) -> pd.DataFrame:
         series = raw.iloc[:, ci]
         if DATE_COL_RE.search(col):
             cleaned_cols[ci] = pd.to_datetime(series.apply(_parse_date), errors="coerce").tolist()
-        elif NUMERIC_COL_RE.search(col):
+        elif _is_numeric_col(col):
             cleaned_cols[ci] = series.apply(_parse_number).tolist()
         else:
             cleaned_cols[ci] = [
@@ -326,7 +344,7 @@ def clean_block(col_labels: list, rows: list) -> pd.DataFrame:
 
     # Drop rows missing both a date and any number
     date_idx = [ci for ci, c in enumerate(col_names) if DATE_COL_RE.search(c)]
-    num_idx  = [ci for ci, c in enumerate(col_names) if NUMERIC_COL_RE.search(c)]
+    num_idx  = [ci for ci, c in enumerate(col_names) if _is_numeric_col(c)]
     has_date = df.iloc[:, date_idx].notna().any(axis=1) if date_idx else pd.Series(True, index=df.index)
     has_num  = df.iloc[:, num_idx].notna().any(axis=1)  if num_idx  else pd.Series(True, index=df.index)
     df = df[has_date | has_num]
@@ -375,7 +393,7 @@ def merge_all(blocks: list, source_labels: list) -> pd.DataFrame:
 
     # Column order: Source → date cols → text cols → numeric cols
     date_c = [c for c in merged.columns if c != "Source" and DATE_COL_RE.search(c)]
-    num_c  = [c for c in merged.columns if NUMERIC_COL_RE.search(c)]
+    num_c  = [c for c in merged.columns if _is_numeric_col(c)]
     txt_c  = [c for c in merged.columns if c != "Source" and c not in date_c and c not in num_c]
     ordered = ["Source"] + date_c + txt_c + num_c
 
@@ -471,7 +489,7 @@ def write_output(df: pd.DataFrame) -> bytes:
                 except (TypeError, ValueError):
                     _isna = False
                 cv, fmt, align = (pd.Timestamp(val) if not _isna else None), "DD-MMM-YYYY", _CENTER
-            elif NUMERIC_COL_RE.search(col):
+            elif _is_numeric_col(col):
                 try:
                     _isna = pd.isna(val)
                 except (TypeError, ValueError):
@@ -489,7 +507,7 @@ def write_output(df: pd.DataFrame) -> bytes:
         ws.row_dimensions[xl_row].height = 16
 
     # Grand total row — SUM only actual data rows (skip separator rows)
-    num_col_indices = [ci for ci, col in enumerate(df.columns, 1) if NUMERIC_COL_RE.search(col)]
+    num_col_indices = [ci for ci, col in enumerate(df.columns, 1) if _is_numeric_col(col)]
     if num_col_indices and data_rows:
         xl_row += 1
         for ci in range(1, ncols + 1):
