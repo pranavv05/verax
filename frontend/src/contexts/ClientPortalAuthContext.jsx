@@ -1,6 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { clientPortalApi } from "../api/client-portal-api";
-import { clientTokenStore, setClientUnauthorizedHandler } from "../lib/client-portal-client";
+import {
+  clientTokenStore,
+  refreshClientAccessToken,
+  setClientUnauthorizedHandler
+} from "../lib/client-portal-client";
 
 const ClientPortalAuthContext = createContext(null);
 
@@ -19,8 +23,11 @@ export const ClientPortalAuthProvider = ({ children }) => {
 
   const bootstrap = useCallback(async () => {
     try {
-      const refreshed = await clientPortalApi.refresh();
-      clientTokenStore.setAccessToken(refreshed.accessToken);
+      // Shares the in-flight refresh with any other caller. Two refreshes with
+      // the same cookie (StrictMode's double effect, a 401 retry, a second
+      // tab) look like a replayed token to the backend, which revokes every
+      // session for this client and signs the user out.
+      const refreshed = await refreshClientAccessToken();
       setClient(refreshed.client || null);
       setSessionVersion((version) => version + 1);
     } catch {
