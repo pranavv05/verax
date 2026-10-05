@@ -1,0 +1,11 @@
+# Regenerable build artifacts — not worth versioning:
+#   - vendor/: a plain npm-installed copy of gsap, re-fetchable with
+#     `npm install gsap@3.14.2`
+#   - music/, sfx/: copies of assets bundled with the /brag skill itself
+#     (~/.claude/skills/brag/assets), re-copyable from there
+#   - snapshots/: debug PNGs from `hyperframes snapshot`, not part of the
+#     composition source
+composition/assets/vendor/
+composition/assets/music/
+composition/assets/sfx/
+composition/snapshots/

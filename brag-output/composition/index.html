@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Verax — Brag</title>
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "Instrument Serif";
+        font-style: normal;
+        font-weight: 400;
+        src: url("assets/fonts/InstrumentSerif-Regular.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Instrument Serif";
+        font-style: italic;
+        font-weight: 400;
+        src: url("assets/fonts/InstrumentSerif-Italic.woff2") format("woff2");
+      }
+
+      :root {
+        --ink: #131316;
+        --ink-soft: #63636d;
+        --accent: #3b5bff;
+        --verify: #0d9488;
+        --hairline: #e9e9ec;
+        --canvas: #ffffff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: "Inter", sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--canvas);
+      }
+
+      .scene-inner {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .center {
+        flex-direction: column;
+      }
+
+      /* ---- Scene 1 / 6 — wordmark ---- */
+      .wordmark {
+        margin: 0;
+        font-family: "Instrument Serif", serif;
+        font-style: italic;
+        font-weight: 400;
+        font-size: 160px;
+        line-height: 1;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+      }
+      .wordmark.small {
+        font-size: 96px;
+      }
+      .rule {
+        display: block;
+        width: 220px;
+        height: 1px;
+        background: var(--accent);
+        margin-top: 36px;
+      }
+      .tagline {
+        margin: 24px 0 0;
+        font-family: "Inter", sans-serif;
+        font-size: 30px;
+        color: var(--ink-soft);
+      }
+
+      /* ---- Scene 2 — headline ---- */
+      .stack-left {
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        padding-left: 180px;
+      }
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin: 0;
+        font-family: "Inter", sans-serif;
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+      .dot {
+        display: block;
+        width: 10px;
+        height: 10px;
+        background: var(--accent);
+        flex: none;
+      }
+      .headline {
+        margin: 40px 0 0;
+        font-family: "Instrument Serif", serif;
+        font-weight: 400;
+        font-size: 128px;
+        line-height: 1.04;
+        color: var(--ink);
+        letter-spacing: -0.015em;
+      }
+      .headline .line {
+        display: block;
+      }
+
+      /* ---- Card scene (extraction card) ---- */
+      #card-scene {
+        z-index: 1;
+      }
+      .card {
+        width: 760px;
+        background: #ffffff;
+        border: 1px solid var(--hairline);
+        border-radius: 24px;
+        box-shadow:
+          0 1px 2px rgba(10, 15, 26, 0.04),
+          0 24px 64px -28px rgba(17, 24, 39, 0.22);
+        overflow: hidden;
+      }
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 26px 34px;
+        border-bottom: 1px solid var(--hairline);
+      }
+      .card-label {
+        font-family: "Inter", sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+      .pill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 16px;
+        border-radius: 999px;
+        background: #f0fdfa;
+        color: #0b7a70;
+        font-family: "Inter", sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .card-body {
+        padding: 6px 34px;
+      }
+      .field-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 22px 0;
+        border-bottom: 1px solid var(--hairline);
+      }
+      .field-row:last-child {
+        border-bottom: none;
+      }
+      .field-label {
+        font-family: "Inter", sans-serif;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+        flex: none;
+      }
+      .field-value-wrap {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .field-value {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 20px;
+        font-weight: 500;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .tick {
+        flex: none;
+      }
+      .card-foot {
+        padding: 28px 34px 34px;
+      }
+      #export-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+        height: 68px;
+        border-radius: 16px;
+        background: var(--ink);
+        color: #ffffff;
+        font-family: "Inter", sans-serif;
+        font-size: 21px;
+        font-weight: 600;
+        border: none;
+      }
+      #export-check {
+        flex: none;
+      }
+
+      /* ---- Compliance overlay ---- */
+      #compliance-scene {
+        z-index: 2;
+        background: #ffffff;
+      }
+      .compliance-list {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 36px;
+      }
+      .compliance-item {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-family: "Inter", sans-serif;
+        font-size: 56px;
+        font-weight: 600;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+      }
+      .compliance-item .tick {
+        width: 34px;
+        height: 34px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="verax-brag"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="22"
+      data-fps="30"
+    >
+      <!-- Scene 1 — Wordmark — 0 - 2.5s -->
+      <section id="scene-1" class="clip scene-inner center" data-start="0" data-duration="2.5">
+        <h1 id="s1-word" class="wordmark">Verax</h1>
+        <span id="s1-rule" class="rule"></span>
+      </section>
+
+      <!-- Scene 2 — Headline — 2.5 - 6s -->
+      <section id="scene-2" class="clip scene-inner stack-left" data-start="2.5" data-duration="3.5">
+        <div>
+          <p id="s2-eyebrow" class="eyebrow">
+            <span class="dot" aria-hidden="true"></span>
+            Financial document intelligence
+          </p>
+          <h2 id="s2-headline" class="headline">
+            <span class="line">Paperwork in.</span>
+            <span class="line">Tally-ready data out.</span>
+          </h2>
+        </div>
+      </section>
+
+      <!-- Card scene — persists 6 - 20s so Scene 5 can reuse the same button -->
+      <section id="card-scene" class="clip scene-inner" data-start="6" data-duration="14">
+        <div id="card" class="card">
+          <div class="card-head">
+            <span class="card-label">Invoice · Extracted</span>
+            <span id="card-pill" class="pill">
+              <svg class="tick" width="14" height="14" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M2 6.2 4.6 8.8 10 3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" />
+              </svg>
+              Validated
+            </span>
+          </div>
+          <div class="card-body">
+            <div id="row-1" class="field-row">
+              <span class="field-label">Vendor</span>
+              <span class="field-value-wrap"><span class="field-value">Sharma Enterprises</span></span>
+            </div>
+            <div id="row-2" class="field-row">
+              <span class="field-label">GSTIN</span>
+              <span class="field-value-wrap">
+                <span class="field-value">29AABCS1429B1Z1</span>
+                <svg id="tick-2" class="tick" width="16" height="16" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path d="M2 6.2 4.6 8.8 10 3.4" stroke="#0D9488" stroke-width="1.6" stroke-linecap="square" />
+                </svg>
+              </span>
+            </div>
+            <div id="row-3" class="field-row">
+              <span class="field-label">Invoice No.</span>
+              <span class="field-value-wrap"><span class="field-value">INV-2024-0847</span></span>
+            </div>
+            <div id="row-4" class="field-row">
+              <span class="field-label">Taxable Amount</span>
+              <span class="field-value-wrap"><span class="field-value">₹84,500.00</span></span>
+            </div>
+            <div id="row-5" class="field-row">
+              <span class="field-label">CGST + SGST</span>
+              <span class="field-value-wrap">
+                <span class="field-value">₹7,605.00</span>
+                <svg id="tick-5" class="tick" width="16" height="16" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path d="M2 6.2 4.6 8.8 10 3.4" stroke="#0D9488" stroke-width="1.6" stroke-linecap="square" />
+                </svg>
+              </span>
+            </div>
+            <div id="row-6" class="field-row">
+              <span class="field-label">Total</span>
+              <span class="field-value-wrap"><span class="field-value">₹92,105.00</span></span>
+            </div>
+          </div>
+          <div class="card-foot">
+            <button id="export-btn" type="button">
+              <span id="export-label">Export to Tally</span>
+              <svg id="export-check" width="20" height="20" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M2 6.2 4.6 8.8 10 3.4" stroke="#ffffff" stroke-width="1.8" stroke-linecap="square" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Compliance overlay — 13 - 17s, covers the card -->
+      <section id="compliance-scene" class="clip scene-inner" data-start="13" data-duration="4">
+        <div class="compliance-list">
+          <p id="comp-1" class="compliance-item">
+            <svg class="tick" width="30" height="30" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M2 6.2 4.6 8.8 10 3.4" stroke="#3B5BFF" stroke-width="1.6" stroke-linecap="square" />
+            </svg>
+            GSTIN validated
+          </p>
+          <p id="comp-2" class="compliance-item">
+            <svg class="tick" width="30" height="30" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M2 6.2 4.6 8.8 10 3.4" stroke="#3B5BFF" stroke-width="1.6" stroke-linecap="square" />
+            </svg>
+            Tax math cross-checked
+          </p>
+          <p id="comp-3" class="compliance-item">
+            <svg class="tick" width="30" height="30" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M2 6.2 4.6 8.8 10 3.4" stroke="#3B5BFF" stroke-width="1.6" stroke-linecap="square" />
+            </svg>
+            GSTR-2B reconciled
+          </p>
+        </div>
+      </section>
+
+      <!-- Scene 6 — Outro — 20 - 22s -->
+      <section id="scene-6" class="clip scene-inner center" data-start="20" data-duration="2">
+        <h1 id="s6-word" class="wordmark small">Verax</h1>
+        <p id="s6-tagline" class="tagline">Financial document intelligence for CA firms.</p>
+      </section>
+
+      <!-- Audio -->
+      <audio
+        id="music"
+        src="assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3"
+        data-start="0"
+        data-duration="22"
+        data-track-index="10"
+        data-automation='{"version":1,"lanes":[{"target":"volume","points":[{"t":0,"v":0},{"t":0.5,"v":0.8},{"t":16.7,"v":0.8},{"t":17.2,"v":0.35},{"t":17.9,"v":0.35},{"t":18.3,"v":0.8},{"t":21,"v":0.8},{"t":21.9,"v":0}]}]}'
+      ></audio>
+      <audio id="sfx-tick-1" src="assets/sfx/validation-tick.ogg" data-start="7.4" data-duration="0.01" data-track-index="11" data-volume="0.7"></audio>
+      <audio id="sfx-tick-2" src="assets/sfx/validation-tick.ogg" data-start="8.45" data-duration="0.01" data-track-index="11" data-volume="0.7"></audio>
+      <audio id="sfx-press" src="assets/sfx/export-press.ogg" data-start="17.4" data-duration="0.18" data-track-index="11" data-volume="0.85"></audio>
+    </div>
+
+    <script>
+      document.fonts.ready.then(() => {
+        const tl = gsap.timeline({ paused: true });
+
+        // ---- Scene 1 — wordmark (0 - 2.5s) ----
+        tl.fromTo("#s1-word", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 0.15);
+        tl.fromTo("#s1-rule", { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.4, ease: "power2.out", transformOrigin: "50% 50%" }, 0.5);
+        tl.to("#scene-1", { opacity: 0, duration: 0.35, ease: "power1.in" }, 2.15);
+
+        // ---- Scene 2 — headline (2.5 - 6s) ----
+        tl.fromTo("#s2-eyebrow", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 2.6);
+        tl.fromTo("#s2-headline .line", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out", stagger: 0.12 }, 2.95);
+        tl.to("#scene-2", { opacity: 0, duration: 0.35, ease: "power1.in" }, 5.65);
+
+        // ---- Card scene (6 - 20s): frame, fields, ticks, pill ----
+        tl.fromTo("#card", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 6.0);
+
+        const rowStarts = [6.7, 7.05, 7.4, 7.75, 8.1, 8.45];
+        rowStarts.forEach((t, i) => {
+          tl.fromTo(`#row-${i + 1}`, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, t);
+        });
+
+        // Validation ticks land on their row's arrival — beat-grid: row2 @7.40s, row5 @8.45s
+        tl.fromTo("#tick-2", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.25, ease: "back.out(2)" }, 7.4);
+        tl.fromTo("#tick-5", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.25, ease: "back.out(2)" }, 8.45);
+
+        tl.set("#card-pill", { opacity: 0, scale: 0.85 }, 6.0);
+        tl.to("#card-pill", { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(1.8)" }, 8.9);
+
+        // ---- Transition to compliance overlay: dip through blank, not a true
+        // crossfade — a literal opacity crossfade between two text-heavy
+        // layers (card fields vs. compliance labels) creates a muddy,
+        // unreadable double-exposure, so the card is fully gone before the
+        // overlay appears, and fully back before the card is needed again. ----
+        tl.to("#card-scene", { opacity: 0, duration: 0.3, ease: "power1.in" }, 12.7);
+
+        // ---- Compliance overlay (13 - 17s) ----
+        tl.fromTo("#compliance-scene", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power1.out" }, 13.0);
+        const compItems = ["#comp-1", "#comp-2", "#comp-3"];
+        const compStarts = [13.1, 13.5, 13.9];
+        compItems.forEach((sel, i) => {
+          tl.fromTo(sel, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, compStarts[i]);
+        });
+        tl.to("#compliance-scene", { opacity: 0, duration: 0.3, ease: "power1.in" }, 16.7);
+
+        // Card reappears (already fully settled internally) before the export beat
+        tl.to("#card-scene", { opacity: 1, duration: 0.3, ease: "power1.out" }, 17.0);
+
+        // ---- Scene 5 — export press ----
+        // Press: linear compression. Release: spring back + state change to "Exported".
+        tl.to("#export-btn", { scale: 0.96, duration: 0.12, ease: "power1.in" }, 17.4);
+        tl.to("#export-btn", { scale: 1, backgroundColor: "#0D9488", duration: 0.35, ease: "back.out(1.4)" }, 17.52);
+        tl.to("#export-label", { opacity: 0, duration: 0.1 }, 17.52);
+        tl.call(() => { document.getElementById("export-label").textContent = "Exported"; }, null, 17.63);
+        tl.to("#export-label", { opacity: 1, duration: 0.18 }, 17.64);
+        tl.fromTo("#export-check", { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(1.8)" }, 17.65);
+
+        // Card scene fades out at its own end
+        tl.to("#card-scene", { opacity: 0, duration: 0.3, ease: "power1.in" }, 19.7);
+
+        // ---- Scene 6 — outro (20 - 22s) ----
+        tl.fromTo("#s6-word", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 20.1);
+        tl.fromTo("#s6-tagline", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 20.3);
+        tl.to("#scene-6", { opacity: 0, duration: 0.4, ease: "power1.in" }, 21.5);
+
+        window.__timelines["verax-brag"] = tl;
+      });
+    </script>
+  </body>
+</html>
