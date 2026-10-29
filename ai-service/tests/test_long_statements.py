@@ -168,6 +168,50 @@ class TestChunkedBankExtraction:
         assert service._client.chat.completions.create.call_count == 2
 
 
+class TestBankStatementTotalsCheck:
+    """Opening/closing balances survive a run that drops rows, so the
+    transactions are replayed against them before the result is trusted."""
+
+    def _extract(self, payload):
+        service = _service()
+        service._client.chat.completions.create.return_value = _response(payload)
+        result = service.extract_structured_data("01/04 UPI 100", doc_type="bank_statement")
+        return result, service.calculate_confidence(result, doc_type="bank_statement")
+
+    def test_transactions_that_add_up_pass(self):
+        result, confidence = self._extract({
+            "account_holder": "Kumar & Sons",
+            "account_number": "5010",
+            "bank_name": "HDFC",
+            "ifsc_code": "HDFC0000123",
+            "statement_period_from": "2026-04-01",
+            "statement_period_to": "2026-04-30",
+            "opening_balance": "1,000.00",
+            "closing_balance": 1180,
+            "transactions": [
+                {"date": "2026-04-01", "narration": "NEFT IN", "debit": None, "credit": "200.00"},
+                {"date": "2026-04-02", "narration": "UPI OUT", "debit": 20, "credit": None},
+            ],
+        })
+        assert "_transactions_warning" not in result
+        assert confidence > 0.3
+
+    def test_no_transactions_forces_review(self):
+        result, confidence = self._extract(
+            {"account_holder": "Kumar & Sons", "opening_balance": 1000, "closing_balance": 5000, "transactions": []}
+        )
+        assert "No transactions were read" in result["_transactions_warning"]
+        assert confidence == 0.3
+
+    def test_missing_rows_force_review(self):
+        result, confidence = self._extract(
+            {"opening_balance": 1000, "closing_balance": 5000, "transactions": [_txn(1), _txn(2)]}
+        )
+        assert "don't add up" in result["_transactions_warning"]
+        assert "980.00" in result["_transactions_warning"]
+        assert confidence == 0.3
+
+
 class TestRetryDelay:
     def _rate_limited(self, retry_after):
         error = RuntimeError("rate limited")

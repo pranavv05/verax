@@ -289,3 +289,46 @@ describe("buildTallyXml — multi-document envelope", () => {
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE>')).toBe(true);
   });
 });
+
+describe("buildTallyXml — text that would break the XML", () => {
+  const doc = (supplierName, invoiceNumber = "INV-1") => ({
+    doc_type: "invoice",
+    file_name: "x.pdf",
+    uploaded_at: "2025-04-16",
+    structured_data: {
+      invoiceNumber,
+      invoiceDate: "2025-04-15",
+      supplierName,
+      supplierGSTIN: "29ABCDE1234F1Z5",
+      line_items: [{ description: "Bolt", quantity: 1, unit_price: 100, total: 100 }],
+      cgst: 9,
+      sgst: 9,
+      totalAmount: 118
+    }
+  });
+
+  // The characters XML 1.0 forbids: C0 controls except tab/newline/return, and U+FFFE/U+FFFF.
+  const hasIllegalXmlChar = (xml) => /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/.test(xml);
+
+  test("control characters from OCR are dropped, not written into the file", () => {
+    const xml = buildTallyXml({ documents: [doc("Gupta\u0001 & Sons\u0008\u000B\u0000", "INV\u001F-1")] });
+    expect(hasIllegalXmlChar(xml)).toBe(false);
+    expect(xml).toContain("Gupta &amp; Sons");
+    expect(xml).toContain("INV-1");
+  });
+
+  test("lone surrogates are dropped but real emoji survive", () => {
+    const xml = buildTallyXml({ documents: [doc("A\uD800B \u{1F9FE}C")] });
+    expect(xml).toContain("AB \u{1F9FE}C");
+  });
+
+  test("line and paragraph separators become spaces", () => {
+    const xml = buildTallyXml({ documents: [doc("Line\u2028One\u2029Two")] });
+    expect(xml).toContain("Line One Two");
+  });
+
+  test("markup characters are still escaped", () => {
+    const xml = buildTallyXml({ documents: [doc("<b>\"A\" & 'B'</b> ]]>")] });
+    expect(xml).toContain("&lt;b&gt;&quot;A&quot; &amp; &apos;B&apos;&lt;/b&gt; ]]&gt;");
+  });
+});

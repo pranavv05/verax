@@ -23,6 +23,9 @@ class Settings:
         self.aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID", "").strip() or None
         self.aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip() or None
         self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
+        # Groq retires models without much notice (llama-3.1-70b, then
+        # llama-3.3-70b-versatile), so the model is always overridable.
+        self.groq_model = os.getenv("GROQ_MODEL", "").strip() or "openai/gpt-oss-120b"
         self.ai_service_api_key = os.getenv("AI_SERVICE_API_KEY", "").strip()
         self.ai_write_back_enabled = _as_bool(os.getenv("AI_WRITE_BACK_ENABLED", "true"), True)
         self.ai_service_port = int(os.getenv("AI_SERVICE_PORT", "8001"))
@@ -48,6 +51,18 @@ class Settings:
         if missing:
             joined = ", ".join(missing)
             raise ValueError(f"Missing required environment variables: {joined}")
+
+
+def groq_model_kwargs() -> dict:
+    """Model name plus any model-specific options for chat.completions.create.
+
+    gpt-oss models reason before answering; at the default effort they can spend
+    the whole max_tokens budget reasoning and never emit the JSON.
+    """
+    kwargs: dict = {"model": settings.groq_model}
+    if settings.groq_model.startswith("openai/gpt-oss"):
+        kwargs["extra_body"] = {"reasoning_effort": "low"}
+    return kwargs
 
 
 settings = Settings()

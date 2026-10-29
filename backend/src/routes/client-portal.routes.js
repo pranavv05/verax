@@ -17,6 +17,7 @@ const validate = require("../middlewares/validate.middleware");
 const ApiError = require("../utils/api-error");
 const { requireClientAuth } = require("../middlewares/client-auth.middleware");
 const { createDownloadUrl } = require("../services/s3.service");
+const { DOCUMENT_JOB_ATTEMPTS } = require("../services/document-queue.service");
 const {
   getReconciliationData,
   writeReconciliationWorkbook
@@ -26,15 +27,26 @@ const router = express.Router();
 
 router.use(requireClientAuth);
 
-// Client-facing labels. Internal statuses (extracted, review_required, ...) are
-// firm workflow vocabulary and are never shown to a client.
-const CLIENT_STATUS_LABELS = {
-  uploaded: "Processing",
+// The client sees three stages, never the firm's workflow statuses. One SQL
+// expression decides the stage so the labels, the filter and the dashboard
+// counts can't disagree. "Being read" is only work Verax is still doing: a
+// document that has been read waits on the accountant, and so does one Verax
+// gave up on (still "uploaded", error set, out of attempts).
+const CLIENT_STAGE_SQL = `
+  CASE
+    WHEN d.status = 'exported' THEN 'complete'
+    WHEN d.status IN ('extracted', 'review_required', 'reviewed') THEN 'under_review'
+    WHEN d.status = 'uploaded'
+      AND d.processing_error IS NOT NULL
+      AND d.processing_attempts >= ${DOCUMENT_JOB_ATTEMPTS} THEN 'under_review'
+    ELSE 'processing'
+  END
+`;
+
+const CLIENT_STAGE_LABELS = {
   processing: "Processing",
-  extracted: "Processing",
-  review_required: "Under Review",
-  reviewed: "Under Review",
-  exported: "Complete"
+  under_review: "Under Review",
+  complete: "Complete"
 };
 
 const CLIENT_STATUS_MESSAGES = {
@@ -46,22 +58,21 @@ const CLIENT_STATUS_MESSAGES = {
   reviewed: "Your accountant has checked this document. It's ready to be filed.",
   exported: "All done — this document has been filed into your accounts."
 };
-
-// Client-facing filter value -> the internal statuses it covers.
-const STATUS_FILTER_GROUPS = {
-  processing: ["uploaded", "processing", "extracted"],
-  under_review: ["review_required", "reviewed"],
-  complete: ["exported"]
-};
+const UNREADABLE_MESSAGE =
+  "We couldn't read this document. Your accountant will look at it and may ask you for a clearer copy.";
 
 const SOURCE_LABELS = {
   magic: "Uploaded by you",
   auth: "Uploaded by your accountant"
 };
 
-const toClientStatus = (status) => CLIENT_STATUS_LABELS[status] || "Processing";
-const toClientStatusMessage = (status) =>
-  CLIENT_STATUS_MESSAGES[status] || "We're working on this document.";
+const toClientStatus = (row) => CLIENT_STAGE_LABELS[row.client_stage] || "Processing";
+const toClientStatusMessage = (row) => {
+  if (row.status === "uploaded" && row.client_stage === "under_review") {
+    return UNREADABLE_MESSAGE;
+  }
+  return CLIENT_STATUS_MESSAGES[row.status] || "We're working on this document.";
+};
 
 const listDocumentsQuerySchema = Joi.object({
   status: Joi.string().valid("processing", "under_review", "complete").optional(),
@@ -135,17 +146,15 @@ router.get(
         `
           SELECT
             COUNT(*)::int AS total_documents,
-            COUNT(*) FILTER (WHERE status IN ('uploaded', 'processing', 'extracted'))::int
-              AS processing_count,
-            COUNT(*) FILTER (WHERE status IN ('review_required', 'reviewed'))::int
-              AS review_count,
-            COUNT(*) FILTER (WHERE status = 'exported')::int AS completed_count,
-            COUNT(*) FILTER (WHERE uploaded_at >= date_trunc('month', NOW()))::int
+            COUNT(*) FILTER (WHERE ${CLIENT_STAGE_SQL} = 'processing')::int AS processing_count,
+            COUNT(*) FILTER (WHERE ${CLIENT_STAGE_SQL} = 'under_review')::int AS review_count,
+            COUNT(*) FILTER (WHERE ${CLIENT_STAGE_SQL} = 'complete')::int AS completed_count,
+            COUNT(*) FILTER (WHERE d.uploaded_at >= date_trunc('month', NOW()))::int
               AS this_month_documents
-          FROM documents
-          WHERE firm_id = $1
-            AND client_id = $2
-            AND deleted_at IS NULL
+          FROM documents d
+          WHERE d.firm_id = $1
+            AND d.client_id = $2
+            AND d.deleted_at IS NULL
         `,
         [req.firmId, req.clientId]
       );
@@ -174,8 +183,8 @@ router.get(
     let idx = values.length + 1;
 
     if (status) {
-      filters.push(`d.status = ANY($${idx}::document_status_enum[])`);
-      values.push(STATUS_FILTER_GROUPS[status]);
+      filters.push(`(${CLIENT_STAGE_SQL}) = $${idx}`);
+      values.push(status);
       idx += 1;
     }
     if (fromDate) {
@@ -205,6 +214,7 @@ router.get(
             d.file_name,
             d.doc_type,
             d.status,
+            ${CLIENT_STAGE_SQL} AS client_stage,
             d.uploaded_at,
             d.updated_at,
             e.confidence_score,
@@ -228,7 +238,7 @@ router.get(
         id: row.id,
         originalFilename: row.file_name,
         documentType: row.doc_type,
-        status: toClientStatus(row.status),
+        status: toClientStatus(row),
         source: SOURCE_LABELS[row.source] || "Uploaded by your accountant",
         confidenceScore: row.confidence_score,
         createdAt: row.uploaded_at,
@@ -257,6 +267,7 @@ router.get(
             d.file_name,
             d.doc_type,
             d.status,
+            ${CLIENT_STAGE_SQL} AS client_stage,
             d.uploaded_at,
             d.updated_at,
             e.confidence_score,
@@ -285,8 +296,8 @@ router.get(
       id: row.id,
       originalFilename: row.file_name,
       documentType: row.doc_type,
-      status: toClientStatus(row.status),
-      statusMessage: toClientStatusMessage(row.status),
+      status: toClientStatus(row),
+      statusMessage: toClientStatusMessage(row),
       source: SOURCE_LABELS[row.source] || "Uploaded by your accountant",
       confidenceScore: row.confidence_score,
       createdAt: row.uploaded_at,

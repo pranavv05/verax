@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
-import { formatDate, formatDateTime, parseApiError, cn, triggerFileDownload } from "../../src/lib/utils";
+import { formatDate, formatDateTime, parseApiError, linkErrorMessage, cn, triggerFileDownload } from "../../src/lib/utils";
 
 describe("formatDate", () => {
   test("returns '-' for falsy input", () => {
@@ -113,5 +113,26 @@ describe("triggerFileDownload", () => {
     expect(URL.createObjectURL).toHaveBeenCalledWith(mockBlob);
     expect(clickSpy).toHaveBeenCalledTimes(1);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+  });
+});
+
+describe("linkErrorMessage", () => {
+  const withStatus = (statusCode, message) => Object.assign(new Error(message), { statusCode });
+
+  test("never shows the server's validation text for a malformed link", () => {
+    const error = withStatus(400, '"token" with value "abc" fails to match the required pattern: /^[a-zA-Z0-9]{32,128}$/');
+    expect(linkErrorMessage(error, "This link is invalid.")).toBe("This link is invalid.");
+  });
+
+  test("treats an unknown or expired link as invalid", () => {
+    expect(linkErrorMessage(withStatus(404, "Magic link is invalid or expired"), "This link is invalid.")).toBe(
+      "This link is invalid."
+    );
+  });
+
+  test("does not blame the link for rate limits, server errors or a dropped connection", () => {
+    expect(linkErrorMessage(withStatus(429, "Too many requests"), "invalid")).toMatch(/Too many attempts/);
+    expect(linkErrorMessage(withStatus(503, "Service unavailable"), "invalid")).toMatch(/couldn't check this link/);
+    expect(linkErrorMessage(new TypeError("Failed to fetch"), "invalid")).toMatch(/couldn't check this link/);
   });
 });

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { uploadApi } from "../api/upload-api";
-import { parseApiError } from "../lib/utils";
+import { linkErrorMessage } from "../lib/utils";
 import PublicPageShell from "../components/public/PublicPageShell";
 import FileTypeIcon, { fileExtension } from "../components/public/FileTypeIcon";
 import { EASE } from "../components/public/motion";
@@ -109,11 +109,7 @@ const PublicUploadStatusPage = () => {
       setLastUpdatedAt(new Date());
     } catch (statusError) {
       setData(null);
-      if (statusError.statusCode === 404) {
-        setError("This upload link was not found. Please contact your CA firm.");
-      } else {
-        setError(parseApiError(statusError, "Unable to load upload status"));
-      }
+      setError(linkErrorMessage(statusError, "This upload link was not found. Please contact your CA firm."));
     } finally {
       if (showLoading) setLoading(false);
       setRefreshing(false);

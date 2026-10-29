@@ -7,6 +7,14 @@ import { IconExport } from "./icons";
 const formatCurrency = (value) =>
   `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+// Tally dates arrive as YYYYMMDD; show them as DD-MM-YYYY like the rest of the app.
+const formatVoucherDate = (value) => {
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(String(value || ""));
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : value || "—";
+};
+
 /**
  * "What will land in Tally" — the voucher preview shown before any export is
  * generated. Shared by the Export page and the client bulk export.
@@ -22,7 +30,7 @@ const ExportPreviewModal = ({ open, preview, clientName, error, confirming, onCa
       busy={confirming}
       size="xl"
       title={`Export preview${clientName ? ` · ${clientName}` : ""}`}
-      description={`${preview?.documentCount || 0} documents become ${vouchers.length} vouchers in TallyPrime.`}
+      description={`${plural(preview?.documentCount || 0, "document")} ${preview?.documentCount === 1 ? "becomes" : "become"} ${plural(vouchers.length, "voucher")} in TallyPrime.`}
       footer={
         <>
           <button type="button" className="btn-secondary" disabled={confirming} onClick={onCancel}>
@@ -92,7 +100,7 @@ const ExportPreviewModal = ({ open, preview, clientName, error, confirming, onCa
                   {vouchers.slice(0, 20).map((voucher, index) => (
                     <tr key={`${voucher.voucherType}-${voucher.voucherDate}-${index}`}>
                       <td className="font-medium text-ui-fg">{voucher.voucherType}</td>
-                      <td className="whitespace-nowrap tabular-nums">{voucher.voucherDate || "—"}</td>
+                      <td className="whitespace-nowrap tabular-nums">{formatVoucherDate(voucher.voucherDate)}</td>
                       <td>{voucher.partyName || "—"}</td>
                       <td className="text-right tabular-nums">{voucher.lineItemCount || 0}</td>
                       <td className="whitespace-nowrap text-right font-medium tabular-nums text-ui-fg">{formatCurrency(voucher.totalAmount)}</td>

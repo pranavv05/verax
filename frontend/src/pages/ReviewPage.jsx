@@ -25,6 +25,7 @@ import { complianceApi } from "../api/compliance-api";
 import { documentVersionsApi } from "../api/document-versions-api";
 import { useAuth } from "../contexts/AuthContext";
 import { cn, parseApiError, triggerFileDownload } from "../lib/utils";
+import { isTaxFieldExpected } from "../lib/tax-fields";
 import { isAdmin } from "../utils/permissions";
 
 /* ─── field configs by doc type ────────────────────────────────────────────── */
@@ -620,6 +621,7 @@ const ReviewPage = () => {
   const taxMathWarning = structuredData?._tax_math_warning || "";
   const pageTruncationWarning = structuredData?._page_truncation_warning || "";
   const docTypeMismatchWarning = structuredData?._doc_type_mismatch_warning || "";
+  const transactionsWarning = structuredData?._transactions_warning || "";
   const lowConfidenceFields = Array.isArray(structuredData?.low_confidence_fields)
     ? structuredData.low_confidence_fields
     : [];
@@ -634,11 +636,13 @@ const ReviewPage = () => {
   const canAdmin = isAdmin(user);
 
   const isLowConfidenceField = (key) => {
+    if (key.startsWith("tds_") && !isTaxFieldExpected(structuredData, key)) return false;
     const candidates = [key, ...(FIELD_ALIASES[key] || [])];
     return candidates.some((candidate) => lowConfidenceFields.includes(candidate));
   };
 
   const isMissingExtractedField = (key) => {
+    if (!isTaxFieldExpected(structuredData, key)) return false;
     const candidates = [key, ...(FIELD_ALIASES[key] || [])];
     return candidates.some((candidate) => structuredData?.[candidate] === null);
   };
@@ -679,6 +683,7 @@ const ReviewPage = () => {
   const qualityWarnings = [
     taxMathWarning && { tone: "warn", title: "Tax maths doesn't add up — check the amounts", body: taxMathWarning },
     pageTruncationWarning && { tone: "err", title: "Some pages weren't processed", body: pageTruncationWarning },
+    transactionsWarning && { tone: "err", title: "Transactions may be missing", body: transactionsWarning },
     docTypeMismatchWarning && { tone: "warn", title: "This may not be the document type it was uploaded as", body: docTypeMismatchWarning }
   ].filter(Boolean);
 

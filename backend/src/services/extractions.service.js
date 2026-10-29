@@ -10,12 +10,14 @@ const insertAuditLog = async (db, { firmId, userId, action, entityType, entityId
   );
 };
 
-const assertDocumentBelongsToFirm = async (db, { firmId, documentId }) => {
+// lock: hold the row until the transaction ends, so two requests changing the same
+// document (e.g. a double-clicked Approve) run one after the other, not interleaved.
+const assertDocumentBelongsToFirm = async (db, { firmId, documentId, lock = false }) => {
   const result = await db.query(
     `SELECT id, client_id, status, s3_key, doc_type
      FROM documents
      WHERE id = $1 AND firm_id = $2 AND deleted_at IS NULL
-     LIMIT 1`,
+     LIMIT 1${lock ? "\n     FOR UPDATE" : ""}`,
     [documentId, firmId]
   );
   if (result.rowCount === 0) {
@@ -91,7 +93,7 @@ const snapshotCurrentExtraction = async (db, { documentId, snapshotReason, creat
 };
 
 const updateExtraction = async (db, { firmId, documentId, structuredData, userId = null }) => {
-  const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId });
+  const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId, lock: true });
 
   if (doc.status === "exported" || doc.status === "reviewed") {
     throw ApiError.badRequest(
@@ -131,9 +133,14 @@ const updateExtraction = async (db, { firmId, documentId, structuredData, userId
 };
 
 const approveExtraction = async (db, { firmId, documentId, userId, nameMappingService }) => {
-  const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId });
+  const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId, lock: true });
 
-  if (!["extracted", "review_required", "reviewed"].includes(doc.status)) {
+  if (doc.status === "reviewed") {
+    // Already approved (a double click, or a retry after a slow response).
+    return { success: true, documentId, status: "reviewed" };
+  }
+
+  if (!["extracted", "review_required"].includes(doc.status)) {
     throw ApiError.badRequest(
       `Cannot approve a document with status '${doc.status}'. Document must be in 'extracted' or 'review_required' state.`
     );
@@ -191,7 +198,7 @@ const approveExtraction = async (db, { firmId, documentId, userId, nameMappingSe
 };
 
 const reprocessDocument = async (db, { firmId, documentId, userId }) => {
-  const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId });
+  const doc = await assertDocumentBelongsToFirm(db, { firmId, documentId, lock: true });
 
   if (doc.status === "exported") {
     throw ApiError.badRequest("Cannot reprocess a document that has already been exported");

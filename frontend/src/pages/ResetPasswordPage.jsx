@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { authApi } from "../api/auth-api";
-import { parseApiError } from "../lib/utils";
+import { linkErrorMessage, parseApiError } from "../lib/utils";
 import AuthLayout, {
   AuthButton,
   AuthCard,
@@ -78,7 +78,7 @@ const ResetPasswordPage = () => {
         }
       } catch (validationError) {
         if (active) {
-          setTokenError(parseApiError(validationError, "Password reset link is invalid or expired"));
+          setTokenError(linkErrorMessage(validationError, "This password reset link is invalid or has expired."));
         }
       } finally {
         if (active) {

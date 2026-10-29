@@ -226,9 +226,23 @@ async def register_clean(file: UploadFile = File(...)) -> Response:
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are accepted")
     try:
         raw_bytes = await read_upload_file_limited(file)
+        if not raw_bytes:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
         # CPU-bound pandas/openpyxl work: run it on the thread pool so it can't
         # stall the event loop (and with it /health and every /process call).
-        cleaned_bytes = await run_in_threadpool(clean_register_bytes, raw_bytes)
+        try:
+            cleaned_bytes = await run_in_threadpool(clean_register_bytes, raw_bytes)
+        except RuntimeError as error:
+            # "No transaction data found in any sheet" - the file opened but isn't a register.
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except Exception as error:
+            # pandas/openpyxl/xlrd raise assorted errors (BadZipFile, ValueError, XLRDError...)
+            # for a file that isn't a real workbook; their text means nothing to a CA.
+            logger.warning("Register clean could not read the workbook: %s", error)
+            raise HTTPException(
+                status_code=422,
+                detail="This doesn't look like a valid Excel file. Re-save it as .xlsx from Excel and try again.",
+            ) from error
         safe_name = file.filename.rsplit(".", 1)[0] + "_cleaned.xlsx"
         return Response(
             content=cleaned_bytes,

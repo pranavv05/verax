@@ -252,9 +252,13 @@ const ClientDetailPage = () => {
     setError("");
     setToast("");
     try {
-      await clientsApi.requestDocuments(id, { documentTypes: requestDocsTypes });
+      const result = await clientsApi.requestDocuments(id, { documentTypes: requestDocsTypes });
       setShowRequestDocs(false);
-      setToast("Document request sent successfully.");
+      setToast(
+        result?.emailSent === false
+          ? "Upload link is ready, but the email could not be sent. Copy the link below and share it with the client."
+          : "Document request sent successfully."
+      );
       await loadClient();
     } catch (requestError) {
       setRequestDocsError(parseApiError(requestError, "Unable to request documents"));

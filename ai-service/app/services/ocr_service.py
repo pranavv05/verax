@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 import cv2
@@ -29,24 +30,35 @@ def _run_with_timeout(func, *args, timeout_seconds: int, label: str):
         return ""
 
 _paddle_ocr: PaddleOCR | None = None
+# One PaddleOCR instance is shared by every request thread, and its predictor
+# is not thread-safe: two documents OCR'd at once fail with "Tensor holds no
+# memory" and fall back to (or, without Tesseract, fail on) the weaker engine.
+_paddle_lock = threading.Lock()
 
 
 def get_paddle_ocr() -> PaddleOCR:
     global _paddle_ocr
-    if _paddle_ocr is None:
-        _paddle_ocr = PaddleOCR(
-            use_angle_cls=True,
-            lang="en",
-            use_gpu=False,
-            show_log=False,
-        )
+    with _paddle_lock:
+        if _paddle_ocr is None:
+            _paddle_ocr = PaddleOCR(
+                use_angle_cls=True,
+                lang="en",
+                use_gpu=False,
+                show_log=False,
+            )
     return _paddle_ocr
+
+
+def paddle_ocr(image: np.ndarray):
+    """Run PaddleOCR on one image, one caller at a time."""
+    ocr = get_paddle_ocr()
+    with _paddle_lock:
+        return ocr.ocr(image, cls=True)
 
 
 def run_paddle_ocr(image: np.ndarray) -> str:
     try:
-        ocr = get_paddle_ocr()
-        result = ocr.ocr(image, cls=True)
+        result = paddle_ocr(image)
         lines: list[str] = []
         dropped = 0
         if result and result[0]:
@@ -231,12 +243,19 @@ class OCRService:
         logger.info(
             "PaddleOCR returned only %d char(s) (<50), falling back to Tesseract", len(paddle_text)
         )
-        fallback_text = _run_with_timeout(
-            self._ocr_with_tesseract,
-            processed_images,
-            timeout_seconds=timeout_seconds,
-            label="Tesseract",
-        )
+        try:
+            fallback_text = _run_with_timeout(
+                self._ocr_with_tesseract,
+                processed_images,
+                timeout_seconds=timeout_seconds,
+                label="Tesseract",
+            )
+        except Exception as error:  # noqa: BLE001
+            # A missing or broken Tesseract binary must not fail the document
+            # when PaddleOCR already read something; the extraction step's
+            # confidence checks decide whether a person needs to look at it.
+            logger.error("Tesseract fallback failed: %s", error)
+            fallback_text = ""
         if fallback_text:
             logger.info("OCR result: engine=tesseract chars=%d", len(fallback_text))
             return self._normalize_whitespace(fallback_text), "tesseract"

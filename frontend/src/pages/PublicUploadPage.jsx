@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { z } from "zod";
 import { authApi } from "../api/auth-api";
 import { uploadApi } from "../api/upload-api";
-import { parseApiError } from "../lib/utils";
+import { linkErrorMessage, parseApiError } from "../lib/utils";
 import PublicPageShell from "../components/public/PublicPageShell";
 import FileTypeIcon, { fileExtension } from "../components/public/FileTypeIcon";
 import { EASE } from "../components/public/motion";
@@ -57,7 +57,10 @@ const PublicUploadPage = () => {
   const [tokenLoading, setTokenLoading] = useState(true);
   const [tokenError, setTokenError] = useState("");
 
-  const [docType, setDocType] = useState("other");
+  // Nothing preselected: anything not marked "Bank statement" is read as an
+  // invoice, so a statement dropped in under a default type went down the
+  // wrong extraction path. The client picks every time.
+  const [docType, setDocType] = useState("");
   const [items, setItems] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [globalError, setGlobalError] = useState("");
@@ -79,7 +82,9 @@ const PublicUploadPage = () => {
         }
       } catch (error) {
         if (active) {
-          setTokenError(parseApiError(error, "Magic link is invalid or expired"));
+          setTokenError(
+            linkErrorMessage(error, "This link is invalid or has expired. Check you opened the full link from your CA firm.")
+          );
         }
       } finally {
         if (active) {
@@ -165,7 +170,7 @@ const PublicUploadPage = () => {
   };
 
   const processUploadQueue = async () => {
-    if (uploading || items.length === 0) {
+    if (uploading || items.length === 0 || !docType) {
       return;
     }
 
@@ -544,7 +549,7 @@ const PublicUploadPage = () => {
             <button
               type="button"
               className="group mt-5 inline-flex h-12 w-full items-center justify-center rounded-full bg-brand-500 text-[15px] font-medium text-white shadow-[0_1px_2px_rgba(38,30,110,0.3),inset_0_1px_0_rgba(255,255,255,0.18)] transition-[background-color,opacity] duration-200 hover:bg-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-brand-500"
-              disabled={uploading || pendingCount === 0}
+              disabled={uploading || pendingCount === 0 || !docType}
               onClick={processUploadQueue}
             >
               {uploading ? (
@@ -564,6 +569,11 @@ const PublicUploadPage = () => {
                 </>
               )}
             </button>
+            {!docType && pendingCount > 0 ? (
+              <p className="mt-3 text-center text-[13px] text-carbon-500">
+                Choose what you&apos;re sending above to upload.
+              </p>
+            ) : null}
           </section>
 
           <AnimatePresence>

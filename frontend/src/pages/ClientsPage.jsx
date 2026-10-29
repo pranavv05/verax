@@ -645,13 +645,13 @@ const ClientsPage = () => {
                         key={client.id}
                         className={editingClient?.id === client.id && drawerOpen ? "bg-ui-accent/[0.05]" : ""}
                       >
-                        <td>
+                        <td className="max-w-[22rem]">
                           <div className="flex items-center gap-3">
                             <Avatar name={client.name} size={30} />
                             <div className="min-w-0">
                               <Link
                                 to={`/clients/${client.id}`}
-                                className="font-medium text-ui-fg transition-colors hover:text-ui-accent-text"
+                                className="font-medium text-ui-fg transition-colors [overflow-wrap:anywhere] hover:text-ui-accent-text"
                               >
                                 {client.name}
                               </Link>
@@ -659,7 +659,7 @@ const ClientsPage = () => {
                             </div>
                           </div>
                         </td>
-                        <td>
+                        <td className="max-w-[16rem] [overflow-wrap:anywhere]">
                           <div className="text-ui-fg-2">{client.email || <span className="text-ui-fg-4">—</span>}</div>
                           {client.phone ? <div className="text-xs text-ui-fg-3">{client.phone}</div> : null}
                         </td>
