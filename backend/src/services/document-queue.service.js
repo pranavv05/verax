@@ -60,7 +60,28 @@ const clearFinishedJob = async (queue, jobId) => {
   }
 };
 
-const enqueueDocumentProcessingJob = async ({ documentId, s3Key, docType, firmId, clientId }) => {
+// With Redis unreachable, ioredis (maxRetriesPerRequest: null) queues commands and waits
+// forever, which left the upload's confirm request hanging. Give up after a few seconds so
+// the caller can record the failure and answer; the document stays "uploaded" and is
+// picked up again once Redis is back.
+const ENQUEUE_TIMEOUT_MS = 8000;
+
+const withTimeout = (promise, ms, message) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
+
+const enqueueDocumentProcessingJob = (payload) =>
+  withTimeout(
+    enqueueDocumentProcessingJobUnbounded(payload),
+    ENQUEUE_TIMEOUT_MS,
+    "The processing queue is not reachable right now. The file is saved and will be read as soon as it is back."
+  );
+
+const enqueueDocumentProcessingJobUnbounded = async ({ documentId, s3Key, docType, firmId, clientId }) => {
   const queue = getQueue();
   await clearFinishedJob(queue, documentId);
   let job;

@@ -9,15 +9,9 @@
 const ExcelJS = require("exceljs");
 const ApiError = require("../utils/api-error");
 const gspService = require("./gsp.service");
+const { toAmount } = require("../utils/amount");
 
-const toNumber = (value) => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.replace(/,/g, "").trim());
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
+const toNumber = toAmount;
 
 const buildInvoiceFromExtraction = (documentId, structuredData) => ({
   documentId,

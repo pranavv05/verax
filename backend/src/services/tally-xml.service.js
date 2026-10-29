@@ -1,3 +1,4 @@
+const { toAmount } = require("../utils/amount");
 const ALLOWED_VOUCHER_TYPES = new Set([
   "Purchase",
   "Sales",
@@ -6,22 +7,22 @@ const ALLOWED_VOUCHER_TYPES = new Set([
   "Journal"
 ]);
 
+// Control characters (a stray \u0001 from OCR, a pasted form-feed) are illegal in XML 1.0:
+// one in any field makes the whole file unimportable, so drop them. Line/paragraph
+// separators become spaces. Lone UTF-16 surrogates are dropped too.
+const INVALID_XML_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 const escapeXml = (value) =>
   String(value ?? "")
+    .replace(INVALID_XML_CHARS, "")
+    .replace(/[\u2028\u2029]/g, " ")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
 
-const toNumber = (value) => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.replace(/,/g, "").trim());
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
+const toNumber = toAmount;
 
 const parseDateValue = (value) => {
   if (value instanceof Date) return value;

@@ -15,6 +15,7 @@ const {
   resetClientUploadLink
 } = require("../services/clients.service");
 const { enableClientPortal } = require("../services/client-auth.service");
+const { validateGstin } = require("../services/compliance.service");
 const {
   MAX_FILE_SIZE_BYTES,
   buildTemplateCsv,
@@ -51,19 +52,37 @@ const listClientsQuerySchema = Joi.object({
   search: Joi.string().trim().max(255).optional()
 });
 
+// Structural GSTIN problems (length, state code, PAN pattern) are rejected, same as the
+// CSV import. A bad checksum is only a warning, so it is accepted here too.
+const gstinField = Joi.string()
+  .trim()
+  .uppercase()
+  .max(15)
+  .custom((value, helpers) => {
+    const result = validateGstin(value);
+    return !result.valid && result.severity === "error" ? helpers.message(result.message) : value;
+  })
+  .allow(null, "");
+
+const phoneField = Joi.string()
+  .trim()
+  .max(15)
+  .pattern(/^\+?[0-9][0-9\s-]{5,13}$/, "phone number")
+  .allow(null, "");
+
 const createClientBodySchema = Joi.object({
   name: Joi.string().trim().max(255).required(),
-  gstin: Joi.string().trim().uppercase().max(15).allow(null, ""),
+  gstin: gstinField,
   email: Joi.string().email().max(255).allow(null, ""),
-  phone: Joi.string().trim().max(15).allow(null, ""),
+  phone: phoneField,
   status: Joi.string().valid("active", "inactive", "pending").default("active")
 });
 
 const updateClientBodySchema = Joi.object({
   name: Joi.string().trim().max(255).optional(),
-  gstin: Joi.string().trim().uppercase().max(15).allow(null, "").optional(),
+  gstin: gstinField.optional(),
   email: Joi.string().email().max(255).allow(null, "").optional(),
-  phone: Joi.string().trim().max(15).allow(null, "").optional(),
+  phone: phoneField.optional(),
   status: Joi.string().valid("active", "inactive", "pending").optional()
 }).min(1);
 

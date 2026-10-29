@@ -1,5 +1,6 @@
 const env = require("../config/env");
 const { validateGstin } = require("./compliance.service");
+const { toAmount } = require("../utils/amount");
 
 class GSPAuthError extends Error {
   constructor(message = "GSP authentication failed") {
@@ -125,14 +126,7 @@ const normalizeGstinResponse = (gstin, payload) => {
   };
 };
 
-const toNumber = (value) => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.replace(/,/g, "").trim());
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
+const toNumber = toAmount;
 
 const normalizeInvoiceNumber = (value) =>
   String(value || "").trim().replace(/\s+/g, "").toUpperCase();

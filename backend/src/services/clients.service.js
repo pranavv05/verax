@@ -439,6 +439,9 @@ const requestClientDocuments = async (db, { firmId, clientId, actorUserId, docum
     }
   });
 
+  let emailSent = false;
+  let emailError = client.email ? null : "This client has no email address.";
+
   if (client.email) {
     const uploadToken = requestResult.rows[0].upload_token;
     const uploadTokenExpiresAt = requestResult.rows[0].upload_token_expires_at;
@@ -455,6 +458,9 @@ const requestClientDocuments = async (db, { firmId, clientId, actorUserId, docum
         singleUse: env.MAGIC_LINK_SINGLE_USE
       })
     });
+
+    emailSent = Boolean(emailResult.sent);
+    emailError = emailSent ? null : emailResult.error || "Email is not set up on this server.";
 
     await insertAuditLog(db, {
       firmId,
@@ -474,6 +480,8 @@ const requestClientDocuments = async (db, { firmId, clientId, actorUserId, docum
   return {
     message: "Document request queued",
     clientId,
+    emailSent,
+    emailError,
     uploadToken: requestResult.rows[0].upload_token,
     uploadTokenExpiresAt: requestResult.rows[0].upload_token_expires_at
   };

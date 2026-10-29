@@ -42,7 +42,7 @@ const refreshAccessToken = async () => {
       if (payload.user) {
         userStore.setUser(payload.user);
       }
-      return payload.accessToken;
+      return payload;
     })().finally(() => {
       refreshPromise = null;
     });
@@ -50,6 +50,14 @@ const refreshAccessToken = async () => {
 
   return refreshPromise;
 };
+
+/**
+ * Refreshes the session through the same de-duplicated call every 401 retry uses.
+ * Refresh tokens rotate, so two refreshes in flight at once (React StrictMode's
+ * double effect in dev, or a 401 retry landing during start-up) make the server
+ * see the old token twice, treat it as stolen, and sign the user out.
+ */
+export const refreshSession = () => refreshAccessToken();
 
 const handleUnauthorized = () => {
   tokenStore.clearAccessToken();

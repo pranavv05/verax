@@ -111,6 +111,38 @@ describe("validateTaxMath", () => {
     });
     expect(issues).toEqual([]);
   });
+
+  // The Review page saves blank fields as "". Number("") is 0, so an IGST
+  // invoice approved there failed export with "... = 21366, but tax_amount = 0".
+  test("treats blank fields as missing, not zero (IGST invoice saved from the Review page)", () => {
+    const issues = validateTaxMath({
+      cgst: "",
+      sgst: "",
+      igst: 21366,
+      tax_amount: "",
+      subtotal: 118700,
+      total_amount: 140066
+    });
+    expect(issues).toEqual([]);
+  });
+
+  test("checks the total against CGST/SGST/IGST when tax_amount is blank", () => {
+    const issues = validateTaxMath({
+      cgst: "",
+      sgst: "",
+      igst: 5262,
+      tax_amount: "",
+      taxable_amount: 37400,
+      total_amount: 41720
+    });
+    expect(issues).toEqual([
+      expect.objectContaining({ field: "total_amount", message: expect.stringContaining("Tax(5262) = 42662") })
+    ]);
+  });
+
+  test("checks an intra-state total from CGST + SGST when tax_amount was never extracted", () => {
+    expect(validateTaxMath({ cgst: 3558.6, sgst: 3558.6, tax_amount: null, taxable_amount: 39540, total_amount: 46657.2 })).toEqual([]);
+  });
 });
 
 describe("validateTdsRate", () => {

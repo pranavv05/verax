@@ -25,6 +25,7 @@ import { complianceApi } from "../api/compliance-api";
 import { documentVersionsApi } from "../api/document-versions-api";
 import { useAuth } from "../contexts/AuthContext";
 import { cn, parseApiError, triggerFileDownload } from "../lib/utils";
+import { isTaxFieldExpected } from "../lib/tax-fields";
 import { isAdmin } from "../utils/permissions";
 
 /* ─── field configs by doc type ────────────────────────────────────────────── */
@@ -635,11 +636,13 @@ const ReviewPage = () => {
   const canAdmin = isAdmin(user);
 
   const isLowConfidenceField = (key) => {
+    if (key.startsWith("tds_") && !isTaxFieldExpected(structuredData, key)) return false;
     const candidates = [key, ...(FIELD_ALIASES[key] || [])];
     return candidates.some((candidate) => lowConfidenceFields.includes(candidate));
   };
 
   const isMissingExtractedField = (key) => {
+    if (!isTaxFieldExpected(structuredData, key)) return false;
     const candidates = [key, ...(FIELD_ALIASES[key] || [])];
     return candidates.some((candidate) => structuredData?.[candidate] === null);
   };

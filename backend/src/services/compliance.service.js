@@ -5,6 +5,8 @@
  * Returns validation results keyed by field for inline display on the Review page.
  */
 
+const { toAmount } = require("../utils/amount");
+
 /* ──────────────────────────────── GSTIN ──────────────────────────────────────── */
 
 const VALID_STATE_CODES = new Set([
@@ -62,14 +64,7 @@ const validateGstin = (gstin) => {
 
 /* ──────────────────────────────── Tax Math ───────────────────────────────────── */
 
-const toNum = (v) => {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const parsed = Number(v.replace(/,/g, "").trim());
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
+const toNum = toAmount;
 
 const validateTaxMath = (extraction) => {
   const issues = [];
@@ -92,13 +87,19 @@ const validateTaxMath = (extraction) => {
     }
   }
 
-  // Check: taxable_amount + tax_amount ≈ total_amount
-  if (taxableAmount !== null && taxAmount !== null && totalAmount !== null) {
-    const expected = taxableAmount + taxAmount;
+  // Check: taxable_amount + tax ≈ total_amount. The model rarely fills
+  // tax_amount (and it's blank whenever "Total tax" is left empty on the
+  // Review page), so fall back to the CGST/SGST/IGST it did read — otherwise
+  // most invoices, every IGST one included, never had their total checked.
+  const componentTax =
+    cgst !== null || sgst !== null || igst !== null ? (cgst || 0) + (sgst || 0) + (igst || 0) : null;
+  const tax = taxAmount ?? componentTax;
+  if (taxableAmount !== null && tax !== null && totalAmount !== null) {
+    const expected = taxableAmount + tax;
     if (Math.abs(expected - totalAmount) > 1) {
       issues.push({
         field: "total_amount",
-        message: `Taxable(${taxableAmount}) + Tax(${taxAmount}) = ${expected}, but total = ${totalAmount}`,
+        message: `Taxable(${taxableAmount}) + Tax(${tax}) = ${expected}, but total = ${totalAmount}`,
         severity: "warning"
       });
     }

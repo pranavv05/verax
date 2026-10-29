@@ -17,36 +17,74 @@ const router = express.Router();
 router.use(requireAuth);
 router.use(standardApiLimiter);
 
+// Largest figure we accept in one field: far above any real invoice, far below
+// what would overflow downstream arithmetic or the Tally XML.
+const MAX_AMOUNT = 1e13;
+
+// An amount arrives as a number, a blank, or text such as "1,18,000.50" or "₹ 500".
+const amountField = Joi.alternatives()
+  .try(
+    Joi.number().min(-MAX_AMOUNT).max(MAX_AMOUNT),
+    Joi.string()
+      .allow("", null)
+      .custom((value, helpers) => {
+        const cleaned = value.replace(/[₹,\s]|rs\.?|inr/gi, "");
+        if (cleaned === "") return value;
+        const parsed = Number(cleaned);
+        if (!Number.isFinite(parsed) || Math.abs(parsed) > MAX_AMOUNT) return helpers.error("any.invalid");
+        return value;
+      })
+  )
+  .messages({ "alternatives.match": "must be a valid amount", "any.invalid": "must be a valid amount" });
+
+// Real calendar date as YYYY-MM-DD or DD-MM-YYYY / DD/MM/YYYY, years 1990-2100.
+const dateField = Joi.string()
+  .trim()
+  .allow("", null)
+  .custom((value, helpers) => {
+    if (value === "") return value;
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    const dmy = /^(\d{2})[-/](\d{2})[-/](\d{4})$/.exec(value);
+    const [year, month, day] = iso ? [iso[1], iso[2], iso[3]].map(Number) : dmy ? [dmy[3], dmy[2], dmy[1]].map(Number) : [];
+    if (!year || year < 1990 || year > 2100) return helpers.error("any.invalid");
+    const date = new Date(Date.UTC(year, month - 1, day));
+    const real = date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+    return real ? value : helpers.error("any.invalid");
+  })
+  .messages({ "any.invalid": "must be a real date (YYYY-MM-DD)" });
+
+const shortText = Joi.string().max(255).allow("", null);
+
 const lineItemSchema = Joi.object({
-  description: Joi.string().allow("", null).optional(),
-  quantity: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  unit_price: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  total: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  tally_item_name: Joi.string().allow("", null).optional(),
-  hsn_code: Joi.string().allow("", null).optional(),
-  uom: Joi.string().allow("", null).optional(),
-  cgst: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  sgst: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  igst: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional()
+  description: Joi.string().max(1000).allow("", null).optional(),
+  quantity: amountField.optional(),
+  unit_price: amountField.optional(),
+  total: amountField.optional(),
+  tally_item_name: shortText.optional(),
+  hsn_code: Joi.string().max(20).allow("", null).optional(),
+  uom: Joi.string().max(30).allow("", null).optional(),
+  cgst: amountField.optional(),
+  sgst: amountField.optional(),
+  igst: amountField.optional()
 });
 
 const updateSchema = Joi.object({
-  vendor_name: Joi.string().allow("", null).optional(),
-  vendor_gstin: Joi.string().allow("", null).optional(),
-  invoice_number: Joi.string().allow("", null).optional(),
-  invoice_date: Joi.string().allow("", null).optional(),
-  subtotal: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  taxable_amount: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  cgst: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  sgst: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  igst: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  tax_amount: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  total_amount: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  payment_terms: Joi.string().allow("", null).optional(),
-  tds_section: Joi.string().allow("", null).optional(),
-  tds_amount: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  tds_rate: Joi.alternatives().try(Joi.number(), Joi.string().allow("", null)).optional(),
-  line_items: Joi.array().items(lineItemSchema).optional()
+  vendor_name: Joi.string().max(500).allow("", null).optional(),
+  vendor_gstin: Joi.string().max(20).allow("", null).optional(),
+  invoice_number: Joi.string().max(100).allow("", null).optional(),
+  invoice_date: dateField.optional(),
+  subtotal: amountField.optional(),
+  taxable_amount: amountField.optional(),
+  cgst: amountField.optional(),
+  sgst: amountField.optional(),
+  igst: amountField.optional(),
+  tax_amount: amountField.optional(),
+  total_amount: amountField.optional(),
+  payment_terms: Joi.string().max(500).allow("", null).optional(),
+  tds_section: Joi.string().max(30).allow("", null).optional(),
+  tds_amount: amountField.optional(),
+  tds_rate: amountField.optional(),
+  line_items: Joi.array().items(lineItemSchema).max(500).optional()
 }).unknown(true);
 
 // GET /api/extractions/:documentId

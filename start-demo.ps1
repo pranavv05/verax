@@ -94,6 +94,43 @@ if (-not $authOk) {
     )
 }
 
+# --- 6b. Native-process environment -------------------------------------------
+# The repo-root .env uses docker-network hostnames (postgres, redis, ai-service)
+# for the compose setup. Backend, worker, AI service and frontend run natively
+# here, so point them at localhost -- the same overrides start.bat applies.
+# dotenv never overrides a variable that is already set, so these win over .env.
+$pgUser = Get-EnvValue -Key "POSTGRES_USER";     if (-not $pgUser) { $pgUser = "ca_user" }
+$pgPass = Get-EnvValue -Key "POSTGRES_PASSWORD"; if (-not $pgPass) { $pgPass = "ca_password" }
+$pgDb   = Get-EnvValue -Key "POSTGRES_DB";       if (-not $pgDb)   { $pgDb   = "ca_saas" }
+$appPass = Get-EnvValue -Key "APP_DB_PASSWORD";  if (-not $appPass) { $appPass = "ca_app_dev_password_change_me" }
+$env:DATABASE_URL     = "postgresql://${pgUser}:${pgPass}@localhost:5432/${pgDb}"
+$env:APP_DATABASE_URL = "postgresql://ca_app:${appPass}@localhost:5432/${pgDb}"
+$env:REDIS_URL        = "redis://localhost:6379"
+$env:AI_SERVICE_URL   = "http://localhost:$AiServicePort"
+$env:AI_SERVICE_PORT  = "$AiServicePort"
+$aiKey = Get-EnvValue -Key "AI_SERVICE_API_KEY"; if ($aiKey) { $env:AI_SERVICE_API_KEY = $aiKey }
+$localStorage = Get-EnvValue -Key "LOCAL_STORAGE"; if (-not $localStorage) { $localStorage = "true" }
+$env:LOCAL_STORAGE      = $localStorage
+$env:LOCAL_STORAGE_PATH = Join-Path $BackendDir "local-storage"
+
+# Dockerised dev copies of the app (restart: unless-stopped) come back whenever
+# Docker Desktop starts and squat on 3000/5173, so the native services can't bind.
+foreach ($stale in @("ca-backend", "ca-frontend", "ca-worker", "ca-ai-service")) {
+    if ((Get-ContainerState -Name $stale) -eq "running") {
+        Write-Host "  Stopping stale container $stale (it would hold the app's ports)..."
+        docker stop $stale *> $null
+    }
+}
+
+# Apply pending migrations (no-op when up to date); ca_app is created by one of them.
+Write-Host "Applying database migrations..."
+Push-Location $BackendDir
+npm run migrate:latest *> "$RunDir\migrate.log"
+$migrateExit = $LASTEXITCODE
+Pop-Location
+Write-StatusLine "Migrations" ($migrateExit -eq 0) "(log: $RunDir\migrate.log)"
+if ($migrateExit -ne 0) { Fail "Database migrations failed. See $RunDir\migrate.log" }
+
 # --- 7. Backend --------------------------------------------------------------
 Write-Host ""
 Write-Host "Checking backend (port $BackendPort)..."
@@ -159,7 +196,7 @@ if ($existingAiOwner) {
     }
     Write-Host "  Starting AI service..."
     $p = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c", "`"$uvicornExe`" app.main:app --host 0.0.0.0 --port $AiServicePort > `"$RunDir\ai-service.log`" 2>&1" `
+        -ArgumentList "/c", "`"`"$uvicornExe`" app.main:app --host 0.0.0.0 --port $AiServicePort > `"$RunDir\ai-service.log`" 2>&1`"" `
         -WorkingDirectory $AiServiceDir -WindowStyle Minimized -PassThru
     Save-Pid -Name "ai-service" -ProcessId $p.Id
     $aiRunning = Wait-ForHealth -Url $aiHealthUrl -TimeoutSec 60

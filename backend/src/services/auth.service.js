@@ -477,6 +477,15 @@ const registerFirm = async ({ name, firmName, email, password, userAgent, ipAddr
   }
 };
 
+// A valid hash (same cost as real passwords) that matches nothing; built once, on first use.
+let dummyPasswordHashPromise = null;
+const getDummyPasswordHash = () => {
+  if (!dummyPasswordHashPromise) {
+    dummyPasswordHashPromise = bcrypt.hash(crypto.randomBytes(24).toString("hex"), 12);
+  }
+  return dummyPasswordHashPromise;
+};
+
 const loginUser = async ({ email, password, userAgent, ipAddress }) => {
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -498,6 +507,10 @@ const loginUser = async ({ email, password, userAgent, ipAddress }) => {
       );
 
       if (userResult.rowCount === 0) {
+        // Spend the same bcrypt time a real account would, so response time doesn't
+        // reveal which emails are registered.
+        await bcrypt.compare(password, await getDummyPasswordHash());
+
         // No firm can be resolved for an unknown email, so this can't be a
         // firm-scoped audit row — firm_id is NULL, permitted by the
         // audit_logs RLS policy's 'login' auth_context escape hatch (see

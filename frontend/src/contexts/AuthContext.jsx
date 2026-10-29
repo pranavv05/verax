@@ -1,6 +1,6 @@
 ﻿import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { authApi } from "../api/auth-api";
-import { setUnauthorizedHandler } from "../lib/api-client";
+import { refreshSession, setUnauthorizedHandler } from "../lib/api-client";
 import { tokenStore, userStore } from "../lib/token-store";
 
 const AuthContext = createContext(null);
@@ -17,7 +17,7 @@ export const AuthProvider = ({ children }) => {
 
   const bootstrap = useCallback(async () => {
     try {
-      const refreshed = await authApi.refresh();
+      const refreshed = await refreshSession();
       tokenStore.setAccessToken(refreshed.accessToken);
       if (refreshed.user) {
         userStore.setUser(refreshed.user);
