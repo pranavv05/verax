@@ -14,6 +14,7 @@ const pool = require("./db/pool");
 const { assertRuntimeRoleIsNotSuperuser } = require("./db/assert-safe-role");
 const { addScheduledRequestsJob, addDocumentDigestJob } = require("./jobs/scheduled-requests.job");
 const { getFrontendDomainWarning } = require("./config/deployment-checks");
+const { verifyTransport, closeTransport } = require("./services/email.service");
 
 let server;
 
@@ -26,6 +27,23 @@ const startServer = async () => {
   }
   await pool.query("SELECT 1");
   await assertRuntimeRoleIsNotSuperuser();
+
+  // Non-fatal email self-test. env.js already refuses to boot in production
+  // without a configured provider; this catches a provider that is configured
+  // but cannot actually authenticate (wrong SMTP creds/host), so the failure
+  // shows up once at startup instead of silently, one undelivered invite at a
+  // time. Never blocks boot.
+  try {
+    const emailCheck = await verifyTransport();
+    if (!emailCheck.ok && emailCheck.configured) {
+      process.stderr.write(
+        `[config warning] Email provider "${emailCheck.provider}" is configured but failed verification: ${emailCheck.error}\n`
+      );
+    }
+  } catch (error) {
+    process.stderr.write(`[config warning] Email verification error: ${error.message}\n`);
+  }
+
   await addScheduledRequestsJob();
   await addDocumentDigestJob();
   server = app.listen(env.PORT, () => {
@@ -39,6 +57,7 @@ const shutdown = async () => {
       server.close(resolve);
     });
   }
+  closeTransport();
   await pool.end();
   process.exit(0);
 };
