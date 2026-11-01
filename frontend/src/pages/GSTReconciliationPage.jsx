@@ -1,15 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
 import LoadingState from "../components/ui/LoadingState";
 import { TableScroll, Toolbar } from "../components/app/TableKit";
-import { Alert, Badge, Card, FormField, PageHeader, Segmented } from "../components/app/primitives";
+import { Alert, Badge, Card, FormField, PageHeader, Segmented, StatTile } from "../components/app/primitives";
 import { IconRefresh, IconTable } from "../components/app/icons";
 import { complianceApi } from "../api/compliance-api";
 import { useAuth } from "../contexts/AuthContext";
 import { cn, parseApiError } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
+
+// How reconciliation got its GSTR-2B data, shown so a firm knows whether they
+// are looking at a real match or need to upload a file first.
+const SOURCE_LABEL = {
+  offline_upload: "Matched against your uploaded GSTR-2B",
+  gsp: "Matched against the live GST portal",
+  unavailable: "No GSTR-2B data for this period yet"
+};
+
+const ACCEPTED_GSTR2B = ".json,.xlsx";
 
 const MONTHS = [
   ["01", "Jan"],
@@ -81,6 +91,10 @@ const GSTReconciliationPage = () => {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const [filter, setFilter] = useState("all");
+  const [snapshot, setSnapshot] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadNote, setUploadNote] = useState("");
+  const fileInputRef = useRef(null);
 
   const years = useMemo(() => {
     const current = new Date().getFullYear();
@@ -101,11 +115,24 @@ const GSTReconciliationPage = () => {
     return rows;
   }, [result, filter]);
 
+  const loadSnapshot = async () => {
+    try {
+      const status = await complianceApi.getGstr2bSnapshot({ clientId, period });
+      setSnapshot(status?.exists ? status : null);
+    } catch {
+      // A snapshot-status failure is non-blocking; reconciliation still runs.
+      setSnapshot(null);
+    }
+  };
+
   const runReconciliation = async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await complianceApi.getReconciliation({ clientId, period });
+      const [data] = await Promise.all([
+        complianceApi.getReconciliation({ clientId, period }),
+        loadSnapshot()
+      ]);
       setResult(data);
       setFilter("all");
     } catch (reconcileError) {
@@ -116,8 +143,28 @@ const GSTReconciliationPage = () => {
     }
   };
 
+  const onUploadGstr2b = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    setUploadNote("");
+    try {
+      const uploaded = await complianceApi.uploadGstr2b({ clientId, period, file });
+      setUploadNote(
+        `Loaded ${uploaded.recordCount} supplier record${uploaded.recordCount === 1 ? "" : "s"} from ${file.name}.`
+      );
+      await runReconciliation();
+    } catch (uploadError) {
+      setError(parseApiError(uploadError, "Unable to read that GSTR-2B file"));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   useEffect(() => {
     runReconciliation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
   const onExport = async () => {
@@ -132,7 +179,6 @@ const GSTReconciliationPage = () => {
     }
   };
 
-  const unavailableOnly = result?.rows?.length > 0 && result.rows.every((row) => row.matchStatus === "unavailable");
   const total = Number(summary.total || 0);
   const breakdown = [
     { key: "matched", label: "Matched", value: Number(summary.matched || 0), bar: "bg-ui-ok" },
@@ -185,7 +231,33 @@ const GSTReconciliationPage = () => {
             <IconRefresh size={14} className={loading ? "animate-spin" : ""} />
             {loading ? "Running…" : "Run reconciliation"}
           </button>
+          {canAdmin ? (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_GSTR2B}
+                className="hidden"
+                onChange={(event) => onUploadGstr2b(event.target.files?.[0])}
+              />
+              <button
+                type="button"
+                className="btn-secondary sm:mb-px"
+                disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+                title="Upload the GSTR-2B JSON or Excel you downloaded from the GST portal"
+              >
+                <IconTable size={14} />
+                {uploading ? "Reading…" : snapshot ? "Replace GSTR-2B" : "Upload GSTR-2B"}
+              </button>
+            </>
+          ) : null}
         </div>
+        {uploadNote ? (
+          <div className="border-t border-ui-line px-5 py-3">
+            <Alert tone="ok" onDismiss={() => setUploadNote("")}>{uploadNote}</Alert>
+          </div>
+        ) : null}
         {error ? (
           <div className="border-t border-ui-line px-5 py-4">
             <Alert tone="err">{error}</Alert>
@@ -195,10 +267,29 @@ const GSTReconciliationPage = () => {
 
       {result ? (
         <>
-          {unavailableOnly ? (
-            <Alert tone="info" className="mb-5" title="GST portal unreachable">
-              Showing local data only — match status is unavailable until the portal responds.
+          {result.source === "unavailable" ? (
+            <Alert tone="info" className="mb-5" title="No GSTR-2B to match against">
+              Upload the client&apos;s GSTR-2B for this period (the JSON or Excel from the GST portal) to see which
+              invoices are missing or mismatched. Until then, match status is unavailable.
             </Alert>
+          ) : (
+            <p className="mb-4 flex items-center gap-2 text-xs text-ui-fg-3">
+              <Badge tone={result.source === "offline_upload" ? "ok" : "neutral"} dot>
+                {SOURCE_LABEL[result.source] || "Matched"}
+              </Badge>
+              {snapshot?.sourceFilename ? <span className="text-ui-fg-4">{snapshot.sourceFilename}</span> : null}
+            </p>
+          )}
+
+          {Number(summary.itcAtRisk || 0) > 0 ? (
+            <div className="mb-5">
+              <StatTile
+                label="Input tax credit at risk this period"
+                value={formatCurrency(summary.itcAtRisk)}
+                tone="err"
+                hint="GST on invoices that are in the books but not cleanly matched in GSTR-2B — resolve these before filing GSTR-3B or the client loses this credit."
+              />
+            </div>
           ) : null}
 
           <Card className="mb-5">

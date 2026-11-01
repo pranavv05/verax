@@ -31,6 +31,24 @@ export const complianceApi = {
     return request(`/api/compliance/gstr2b/reconciliation${toQuery({ clientId, period })}`);
   },
 
+  // Whether a GSTR-2B snapshot has been uploaded for this client+period, so the
+  // UI can prompt an upload before showing an empty reconciliation.
+  getGstr2bSnapshot({ clientId, period }) {
+    return request(`/api/compliance/gstr2b/snapshot${toQuery({ clientId, period })}`);
+  },
+
+  // Upload a GSTR-2B portal export (JSON or Excel) for a client+period.
+  uploadGstr2b({ clientId, period, file }) {
+    const formData = new FormData();
+    formData.append("clientId", clientId);
+    formData.append("period", period);
+    formData.append("file", file);
+    return request("/api/compliance/gstr2b/upload", {
+      method: "POST",
+      body: formData
+    });
+  },
+
   async downloadReconciliationExcel({ clientId, period }) {
     const url = `${API_BASE_URL}/api/compliance/gstr2b/reconciliation/export${toQuery({ clientId, period })}`;
     const fetchWorkbook = () => {
