@@ -49,7 +49,17 @@ const getGstr2bNumber = (record, field) => {
   return null;
 };
 
+// Period is MMYYYY. Validate here as defence-in-depth: the HTTP routes already
+// enforce the format with Joi, but a malformed value slipping through (a future
+// caller, a job, the portal) must fail loudly rather than silently compute a
+// bogus range — "2026" otherwise yielded an August-1927 window, and garbage
+// yielded null dates, both producing silently-wrong reconciliation output.
+const PERIOD_PATTERN = /^(0[1-9]|1[0-2])\d{4}$/;
+
 const getPeriodRange = (period) => {
+  if (typeof period !== "string" || !PERIOD_PATTERN.test(period)) {
+    throw ApiError.badRequest("period must be in MMYYYY format");
+  }
   const month = Number(period.slice(0, 2));
   const year = Number(period.slice(2));
   const start = new Date(Date.UTC(year, month - 1, 1));
@@ -313,5 +323,7 @@ module.exports = {
   buildInvoiceFromExtraction,
   getReconciliationData,
   writeReconciliationWorkbook,
-  safeFilename
+  safeFilename,
+  // exported for unit testing of period validation
+  getPeriodRange
 };
