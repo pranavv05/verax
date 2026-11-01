@@ -3,6 +3,7 @@ import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
 import LoadingState from "../components/ui/LoadingState";
 import { Alert, Badge, Card, CardHeader, FormField, PageHeader } from "../components/app/primitives";
+import { ConfirmDialog } from "../components/app/Modal";
 import { tallyApi } from "../api/tally-api";
 import { useAuth } from "../contexts/AuthContext";
 import { parseApiError } from "../lib/utils";
@@ -39,6 +40,8 @@ const TallyAgentsPage = () => {
   const [registering, setRegistering] = useState(false);
   const [newToken, setNewToken] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [confirmRevokeId, setConfirmRevokeId] = useState(null);
+  const [revokingId, setRevokingId] = useState(null);
   const copyTimer = useRef(null);
 
   const load = async () => {
@@ -80,13 +83,17 @@ const TallyAgentsPage = () => {
     }
   };
 
-  const onRevoke = async (agentId) => {
+  const onRevokeConfirm = async (agentId) => {
     setError("");
+    setRevokingId(agentId);
     try {
       await tallyApi.revokeAgent(agentId);
+      setConfirmRevokeId(null);
       await load();
     } catch (revokeError) {
       setError(parseApiError(revokeError, "Unable to revoke the agent"));
+    } finally {
+      setRevokingId(null);
     }
   };
 
@@ -102,8 +109,22 @@ const TallyAgentsPage = () => {
     }
   };
 
+  const confirmingAgent = agents.find((agent) => agent.id === confirmRevokeId);
+
   return (
     <AppShell>
+      <ConfirmDialog
+        open={Boolean(confirmRevokeId)}
+        onCancel={() => setConfirmRevokeId(null)}
+        onConfirm={() => onRevokeConfirm(confirmRevokeId)}
+        title={`Revoke ${confirmingAgent?.name || "this agent"}?`}
+        description="Its token stops working immediately and cannot be recovered. The agent machine will need a new token to push to Tally again."
+        confirmLabel="Revoke agent"
+        busyLabel="Revoking…"
+        busy={Boolean(revokingId)}
+        destructive
+      />
+
       <PageHeader
         breadcrumbs={[{ label: "Settings", to: "/settings" }, { label: "Tally agent" }]}
         title="Tally agent."
@@ -204,7 +225,11 @@ const TallyAgentsPage = () => {
                         </p>
                       </div>
                       {agent.status !== "revoked" ? (
-                        <button type="button" className="btn-ghost btn-sm shrink-0" onClick={() => onRevoke(agent.id)}>
+                        <button
+                          type="button"
+                          className="btn-ghost btn-sm shrink-0"
+                          onClick={() => setConfirmRevokeId(agent.id)}
+                        >
                           Revoke
                         </button>
                       ) : null}
