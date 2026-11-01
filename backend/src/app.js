@@ -22,6 +22,7 @@ const complianceRoutes = require("./routes/compliance.routes");
 const notificationRoutes = require("./routes/notifications.routes");
 const scheduledRequestRoutes = require("./routes/scheduled-requests.routes");
 const narrationMappingRoutes = require("./routes/narration-mappings.routes");
+const tallyConnectorRoutes = require("./routes/tally-connector.routes");
 const env = require("./config/env");
 const pool = require("./db/pool");
 const { checkRedisHealth } = require("./services/document-queue.service");
@@ -101,6 +102,7 @@ app.use("/api/compliance", complianceRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/scheduled-requests", scheduledRequestRoutes);
 app.use("/api/narration-mappings", narrationMappingRoutes);
+app.use("/api/tally", tallyConnectorRoutes);
 if (env.LOCAL_STORAGE) {
   app.use("/api", localUploadRoutes);
 }

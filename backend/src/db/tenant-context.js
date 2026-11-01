@@ -22,6 +22,10 @@ const withTenantTransaction = async (context, handler) => {
       "app.password_reset_token_hash",
       resolvedContext.passwordResetTokenHash ?? ""
     );
+    // Set only during Tally-agent authentication, before the agent's firm is
+    // known: the tally_agents RLS policy reads the one matching active agent by
+    // this token hash (see the tally_connector migration).
+    await setLocalConfig(client, "app.agent_token_hash", resolvedContext.agentTokenHash ?? "");
 
     const result = await resolvedHandler(client);
     await client.query("COMMIT");
