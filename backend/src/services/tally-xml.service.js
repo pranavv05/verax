@@ -299,17 +299,44 @@ const buildBankStatementVouchersXml = (document) => {
 
 /* ── Entry point ────────────────────────────────────────────────────────────── */
 
-const buildVoucherXml = (document) => {
-  if (document.doc_type === "bank_statement") {
-    return buildBankStatementVouchersXml(document);
-  }
-  return buildInvoiceVoucherXml(document);
+/**
+ * Add a stable REMOTEID (and matching VCHKEY) to every <VOUCHER> in a block so
+ * a re-import updates the existing voucher instead of creating a duplicate.
+ * Tally keys an imported voucher on REMOTEID; importing the same REMOTEID again
+ * with ACTION="Create" alters the existing one. When several vouchers come from
+ * one document (a bank statement), each gets a stable "-N" suffix by position.
+ *
+ * This is a string transform on the generated block rather than a change to each
+ * builder, so the file-export path (buildTallyXml, no remoteId) is untouched.
+ */
+const withRemoteIds = (vouchersXml, remoteId) => {
+  if (!remoteId) return vouchersXml;
+  let index = 0;
+  return vouchersXml.replace(/<VOUCHER\b([^>]*)>/g, (full, attrs) => {
+    // Skip if a REMOTEID is somehow already present.
+    if (/REMOTEID=/i.test(attrs)) return full;
+    const id = index === 0 ? remoteId : `${remoteId}-${index}`;
+    index += 1;
+    return `<VOUCHER REMOTEID="${escapeXml(id)}" VCHKEY="${escapeXml(id)}"${attrs}>`;
+  });
 };
 
-const buildTallyXml = ({ documents }) => {
-  const vouchersXml = documents.map((document) => buildVoucherXml(document)).join("");
+/**
+ * Build the voucher XML for one document. `options.remoteId`, when given, makes
+ * the push idempotent (see withRemoteIds). Without it, output is identical to
+ * before, so the file export path is unaffected.
+ */
+const buildVoucherXml = (document, options = {}) => {
+  const vouchersXml =
+    document.doc_type === "bank_statement"
+      ? buildBankStatementVouchersXml(document)
+      : buildInvoiceVoucherXml(document);
+  return withRemoteIds(vouchersXml, options.remoteId);
+};
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
+/** Wrap one or more <TALLYMESSAGE> voucher blocks in a Tally import envelope. */
+const wrapVouchersEnvelope = (vouchersXml) =>
+  `<?xml version="1.0" encoding="UTF-8"?>
 <ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Import Data</TALLYREQUEST>
@@ -324,10 +351,16 @@ const buildTallyXml = ({ documents }) => {
     </IMPORTDATA>
   </BODY>
 </ENVELOPE>`;
+
+const buildTallyXml = ({ documents }) => {
+  const vouchersXml = documents.map((document) => buildVoucherXml(document)).join("");
+  return wrapVouchersEnvelope(vouchersXml);
 };
 
 module.exports = {
-  buildTallyXml
+  buildTallyXml,
+  buildVoucherXml,
+  wrapVouchersEnvelope
 };
 
 if (require.main === module) {
