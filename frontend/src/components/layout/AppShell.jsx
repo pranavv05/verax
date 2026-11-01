@@ -49,6 +49,7 @@ const primaryNav = [
 const accountNav = (user) =>
   [
     { to: "/settings", label: "Settings", icon: IconSettings },
+    isAdmin(user) ? { to: "/settings/tally-agent", label: "Tally agent", icon: IconExport } : null,
     isAdmin(user) ? { to: "/audit-logs", label: "Audit log", icon: IconAudit } : null
   ].filter(Boolean);
 

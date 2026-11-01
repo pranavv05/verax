@@ -17,6 +17,7 @@ const {
   storeSnapshot,
   getLatestSnapshot
 } = require("../services/gstr2b-source.service");
+const { verifyGstinCached } = require("../services/gstin-verification.service");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -126,11 +127,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const { firmId, userId } = req.user;
     const { gstin } = req.body;
+    const forceRefresh = req.query.refresh === "true";
 
-    const result = await gspService.verifyGSTIN(gstin);
+    const result = await req.withTenantTransaction(async (db) => {
+      const verification = await verifyGstinCached(db, gstin, { forceRefresh });
 
-    await req.withTenantTransaction((db) =>
-      insertAuditLog(db, {
+      await insertAuditLog(db, {
         firmId,
         userId,
         action: "gstin_verified",
@@ -138,12 +140,15 @@ router.post(
         entityId: null,
         metadata: {
           gstin,
-          valid: result.valid,
-          source: result.source,
-          registrationStatus: result.registrationStatus
+          valid: verification.valid,
+          source: verification.source,
+          cached: verification.cached,
+          registrationStatus: verification.registrationStatus
         }
-      })
-    );
+      });
+
+      return verification;
+    });
 
     res.status(200).json({
       valid: result.valid,
@@ -152,6 +157,7 @@ router.post(
       registrationStatus: result.registrationStatus,
       stateCode: result.stateCode,
       source: result.source,
+      cached: Boolean(result.cached),
       message: result.message
     });
   })

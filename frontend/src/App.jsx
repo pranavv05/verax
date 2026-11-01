@@ -34,6 +34,7 @@ const ExportPage = lazy(() => import("./pages/ExportPage"));
 const GSTReconciliationPage = lazy(() => import("./pages/GSTReconciliationPage"));
 const ReviewPage = lazy(() => import("./pages/ReviewPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const TallyAgentsPage = lazy(() => import("./pages/TallyAgentsPage"));
 const TeamPage = lazy(() => import("./pages/TeamPage"));
 const ToolsPage = lazy(() => import("./pages/ToolsPage"));
 const ClientPortalDashboardPage = lazy(() => import("./pages/ClientPortalDashboardPage"));
@@ -154,6 +155,15 @@ const App = () => (
         element={
           <Protected>
             <SettingsPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/settings/tally-agent"
+        element={
+          <Protected>
+            <TallyAgentsPage />
           </Protected>
         }
       />

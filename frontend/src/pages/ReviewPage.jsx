@@ -22,6 +22,7 @@ import { documentsApi } from "../api/documents-api";
 import { clientsApi } from "../api/clients-api";
 import { extractionsApi } from "../api/extractions-api";
 import { complianceApi } from "../api/compliance-api";
+import { tallyApi } from "../api/tally-api";
 import { documentVersionsApi } from "../api/document-versions-api";
 import { useAuth } from "../contexts/AuthContext";
 import { cn, parseApiError, triggerFileDownload } from "../lib/utils";
@@ -577,6 +578,55 @@ const ReviewPage = () => {
   const [downloadError, setDownloadError] = useState("");
   const [downloading, setDownloading] = useState(false);
 
+  // Live Tally push state. A push queues a job that the firm's Tally agent picks
+  // up; we show the latest status and poll briefly while it is in flight.
+  const [tallyJob, setTallyJob] = useState(null);
+  const [pushing, setPushing] = useState(false);
+  const [tallyError, setTallyError] = useState("");
+  const tallyPollRef = useRef(null);
+
+  const refreshTallyStatus = useCallback(async () => {
+    if (!documentId) return null;
+    try {
+      const { job } = await tallyApi.getSyncStatus(documentId);
+      setTallyJob(job);
+      return job;
+    } catch {
+      return null;
+    }
+  }, [documentId]);
+
+  useEffect(() => {
+    refreshTallyStatus();
+    return () => {
+      if (tallyPollRef.current) clearInterval(tallyPollRef.current);
+    };
+  }, [refreshTallyStatus]);
+
+  const onPushToTally = async () => {
+    setPushing(true);
+    setTallyError("");
+    try {
+      const { job } = await tallyApi.pushDocument(documentId);
+      setTallyJob(job);
+      // Poll until the agent reports a terminal state (or we stop after a while).
+      if (tallyPollRef.current) clearInterval(tallyPollRef.current);
+      let ticks = 0;
+      tallyPollRef.current = setInterval(async () => {
+        ticks += 1;
+        const latest = await refreshTallyStatus();
+        if (!latest || ["succeeded", "failed", "cancelled"].includes(latest.status) || ticks > 40) {
+          clearInterval(tallyPollRef.current);
+          tallyPollRef.current = null;
+        }
+      }, 3000);
+    } catch (pushError) {
+      setTallyError(parseApiError(pushError, "Unable to queue the Tally push"));
+    } finally {
+      setPushing(false);
+    }
+  };
+
   const handleDownloadOriginal = async () => {
     const url = document?.preview_url || document?.download_url || document?.downloadUrl;
     if (!url) return;
@@ -937,6 +987,24 @@ const ReviewPage = () => {
                 {approving ? "Approving…" : isReviewed ? "Approved" : "Approve"}
               </button>
             ) : null}
+            {canAdmin && (isReviewed || isExported) ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={pushing || tallyJob?.status === "queued" || tallyJob?.status === "claimed"}
+                onClick={onPushToTally}
+                title="Queue this voucher to post into TallyPrime via your installed agent"
+              >
+                <IconExport size={14} />
+                {pushing
+                  ? "Queueing…"
+                  : tallyJob?.status === "queued" || tallyJob?.status === "claimed"
+                    ? "Pushing to Tally…"
+                    : tallyJob?.status === "succeeded"
+                      ? "Pushed to Tally"
+                      : "Push to Tally"}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -945,6 +1013,21 @@ const ReviewPage = () => {
 
       <div className="space-y-3 empty:hidden [&:not(:empty)]:mb-5">
         {error ? <Alert tone="err">{error}</Alert> : null}
+        {tallyError ? <Alert tone="err" onDismiss={() => setTallyError("")}>{tallyError}</Alert> : null}
+        {tallyJob?.status === "succeeded" ? (
+          <Alert tone="ok" onDismiss={() => setTallyJob(null)}>
+            Posted into Tally{tallyJob.result?.altered ? " (updated an existing voucher)" : ""}.
+          </Alert>
+        ) : null}
+        {tallyJob?.status === "failed" ? (
+          <Alert tone="err" title="Tally push failed">
+            {tallyJob.last_error || "The agent could not post this voucher."} Check that the Verax agent is running and
+            the right company is open in TallyPrime, then try again.
+          </Alert>
+        ) : null}
+        {tallyJob?.status === "queued" || tallyJob?.status === "claimed" ? (
+          <Alert tone="info">Waiting for your Tally agent to pick up this voucher…</Alert>
+        ) : null}
         {toast ? (
           <Alert tone="ok" onDismiss={() => setToast("")}>
             {toast}
