@@ -1,4 +1,5 @@
 const express = require("express");
+const multer = require("multer");
 const Joi = require("joi");
 const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
@@ -11,10 +12,46 @@ const {
   getReconciliationData,
   writeReconciliationWorkbook
 } = require("../services/reconciliation.service");
+const { parseGstr2bFile, MAX_FILE_SIZE_BYTES } = require("../services/gstr2b-parser.service");
+const {
+  storeSnapshot,
+  getLatestSnapshot
+} = require("../services/gstr2b-source.service");
 
 const router = express.Router();
 router.use(requireAuth);
 router.use(standardApiLimiter);
+
+// GSTR-2B files (portal JSON can be several MB) use memory storage so the
+// parser works on the buffer directly, exactly like the client-import upload.
+const gstr2bUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE_BYTES }
+});
+
+const handleGstr2bUpload = (req, res, next) => {
+  gstr2bUpload.single("file")(req, res, (error) => {
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+      return next(
+        ApiError.badRequest(
+          `File exceeds ${Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024))}MB limit`
+        )
+      );
+    }
+    if (error) {
+      return next(error);
+    }
+    return next();
+  });
+};
+
+const gstr2bUploadSchema = Joi.object({
+  clientId: Joi.string().guid({ version: "uuidv4" }).required(),
+  period: Joi.string()
+    .pattern(/^(0[1-9]|1[0-2])\d{4}$/)
+    .required()
+    .messages({ "string.pattern.base": "period must be in MMYYYY format" })
+});
 
 const gstinVerifySchema = Joi.object({
   gstin: Joi.string().trim().uppercase().length(15).required()
@@ -230,6 +267,113 @@ router.post(
     });
 
     res.status(200).json(response);
+  })
+);
+
+// POST /api/compliance/gstr2b/upload
+// Upload a client's GSTR-2B (portal JSON or Excel) for a period. Parses the
+// file and stores a snapshot that reconciliation then matches against — the
+// zero-GSP path that makes reconciliation work today.
+router.post(
+  "/gstr2b/upload",
+  requireAdmin,
+  handleGstr2bUpload,
+  validate(gstr2bUploadSchema),
+  asyncHandler(async (req, res) => {
+    const { firmId, userId } = req.user;
+    const { clientId, period } = req.body;
+
+    if (!req.file || !req.file.buffer) {
+      throw ApiError.badRequest("No file uploaded. Attach a GSTR-2B JSON or Excel file.");
+    }
+
+    const { records, summary } = await parseGstr2bFile({
+      buffer: req.file.buffer,
+      filename: req.file.originalname
+    });
+
+    const response = await req.withTenantTransaction(async (db) => {
+      // Confirm the client belongs to this firm before storing anything.
+      // RLS already scopes writes, but this returns a clean 404 rather than a
+      // policy error, and matches how clients.service guards client access.
+      const clientResult = await db.query(
+        `SELECT id, name FROM clients WHERE id = $1 AND firm_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [clientId, firmId]
+      );
+      if (clientResult.rowCount === 0) {
+        throw ApiError.notFound("Client not found");
+      }
+
+      const stored = await storeSnapshot(db, {
+        firmId,
+        clientId,
+        period,
+        source: "offline_upload",
+        sourceFilename: req.file.originalname,
+        records,
+        summary,
+        uploadedBy: userId
+      });
+
+      await insertAuditLog(db, {
+        firmId,
+        userId,
+        action: "gstr2b_snapshot_uploaded",
+        entityType: "client",
+        entityId: clientId,
+        metadata: {
+          period,
+          source: "offline_upload",
+          filename: req.file.originalname,
+          recordCount: summary.recordCount
+        }
+      });
+
+      return {
+        snapshotId: stored.id,
+        clientId,
+        clientName: clientResult.rows[0].name,
+        period,
+        recordCount: summary.recordCount,
+        totalTaxable: summary.totalTaxable,
+        totalGst: summary.totalGst,
+        uploadedAt: stored.created_at
+      };
+    });
+
+    res.status(201).json(response);
+  })
+);
+
+// GET /api/compliance/gstr2b/snapshot
+// Report whether a GSTR-2B snapshot exists for a client+period (so the UI can
+// prompt an upload before showing an empty reconciliation).
+router.get(
+  "/gstr2b/snapshot",
+  validate(reconciliationQuerySchema, "query"),
+  asyncHandler(async (req, res) => {
+    const { firmId } = req.user;
+    const snapshot = await req.withTenantTransaction((db) =>
+      getLatestSnapshot(db, {
+        firmId,
+        clientId: req.query.clientId,
+        period: req.query.period
+      })
+    );
+
+    if (!snapshot) {
+      return res.status(200).json({ exists: false });
+    }
+
+    return res.status(200).json({
+      exists: true,
+      source: snapshot.source,
+      sourceFilename: snapshot.sourceFilename,
+      recordCount: snapshot.recordCount,
+      totalTaxable: snapshot.totalTaxable,
+      totalGst: snapshot.totalGst,
+      uploadedAt: snapshot.createdAt
+    });
   })
 );
 

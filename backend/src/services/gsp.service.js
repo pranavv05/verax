@@ -1,6 +1,22 @@
+/**
+ * GSP (GST Suvidha Provider) client — the LIVE data source for GSTIN
+ * verification and GSTR-2B retrieval.
+ *
+ * This talks to a GSP over HTTP when GSP credentials are configured. When they
+ * are not (the common case until a firm signs a GSP contract), verifyGSTIN
+ * falls back to a local checksum check and matchGSTR2B reports every invoice as
+ * "unavailable". The offline-upload path (gstr2b-source.service.js) is what
+ * makes reconciliation work without a GSP; this module is the live alternative
+ * behind the same matching logic (gstr2b-matching.js).
+ */
+
 const env = require("../config/env");
 const { validateGstin } = require("./compliance.service");
-const { toAmount } = require("../utils/amount");
+const {
+  normalizeGstr2bRecord,
+  matchInvoices,
+  unavailableResults
+} = require("./gstr2b-matching");
 
 class GSPAuthError extends Error {
   constructor(message = "GSP authentication failed") {
@@ -126,36 +142,11 @@ const normalizeGstinResponse = (gstin, payload) => {
   };
 };
 
-const toNumber = toAmount;
-
-const normalizeInvoiceNumber = (value) =>
-  String(value || "").trim().replace(/\s+/g, "").toUpperCase();
-
-const normalizeDate = (value) => {
-  if (!value) return "";
-  const raw = String(value).trim();
-  const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toISOString().slice(0, 10);
-  }
-  return raw;
-};
-
-const normalizeGstr2bRecord = (record) => {
-  const gstAmount =
-    toNumber(record.gstAmount ?? record.gst_amount ?? record.iamt) ??
-    ((toNumber(record.camt) || 0) + (toNumber(record.samt) || 0) + (toNumber(record.csamt) || 0));
-
-  return {
-    invoiceNumber: record.invoiceNumber || record.invoice_number || record.inum || record.invNum || "",
-    supplierGSTIN: record.supplierGSTIN || record.supplier_gstin || record.ctin || record.gstin || "",
-    taxableAmount: toNumber(record.taxableAmount ?? record.taxable_amount ?? record.txval),
-    gstAmount,
-    invoiceDate: record.invoiceDate || record.invoice_date || record.idt || record.date || "",
-    raw: record
-  };
-};
-
+/**
+ * Collect the supplier records out of a GSP's GSTR-2B response, tolerating the
+ * several envelope shapes different GSPs use. Returns an array of raw records
+ * (B2B invoices), flattened so each carries its supplier ctin.
+ */
 const collectGstr2bRecords = (payload) => {
   const candidates = [
     payload.records,
@@ -180,80 +171,6 @@ const collectGstr2bRecords = (payload) => {
   return [];
 };
 
-const valuesDiffer = (left, right, tolerance = 1) => {
-  const leftNumber = toNumber(left);
-  const rightNumber = toNumber(right);
-  if (leftNumber === null || rightNumber === null) return false;
-  return Math.abs(leftNumber - rightNumber) > tolerance;
-};
-
-const matchInvoices = (invoices, gstr2bRecords) => {
-  const recordsByInvoice = new Map();
-  for (const record of gstr2bRecords.map(normalizeGstr2bRecord)) {
-    const key = normalizeInvoiceNumber(record.invoiceNumber);
-    if (key && !recordsByInvoice.has(key)) {
-      recordsByInvoice.set(key, record);
-    }
-  }
-
-  return invoices.map((invoice) => {
-    const key = normalizeInvoiceNumber(invoice.invoiceNumber);
-    const record = recordsByInvoice.get(key);
-    if (!record) {
-      return {
-        invoiceNumber: invoice.invoiceNumber || "",
-        matchStatus: "not_found",
-        mismatchFields: [],
-        gstr2bRecord: null
-      };
-    }
-
-    const mismatchFields = [];
-    if (
-      invoice.supplierGSTIN &&
-      record.supplierGSTIN &&
-      String(invoice.supplierGSTIN).toUpperCase() !== String(record.supplierGSTIN).toUpperCase()
-    ) {
-      mismatchFields.push("supplierGSTIN");
-    }
-    if (valuesDiffer(invoice.taxableAmount, record.taxableAmount)) {
-      mismatchFields.push("taxableAmount");
-    }
-    if (valuesDiffer(invoice.gstAmount, record.gstAmount)) {
-      mismatchFields.push("gstAmount");
-    }
-    if (
-      invoice.invoiceDate &&
-      record.invoiceDate &&
-      normalizeDate(invoice.invoiceDate) !== normalizeDate(record.invoiceDate)
-    ) {
-      mismatchFields.push("invoiceDate");
-    }
-
-    const matchStatus =
-      mismatchFields.length === 0
-        ? "matched"
-        : mismatchFields.includes("supplierGSTIN")
-        ? "mismatch"
-        : "partial";
-
-    return {
-      invoiceNumber: invoice.invoiceNumber || "",
-      matchStatus,
-      mismatchFields,
-      gstr2bRecord: record.raw
-    };
-  });
-};
-
-const unavailableResults = (invoices) =>
-  invoices.map((invoice) => ({
-    invoiceNumber: invoice.invoiceNumber || "",
-    matchStatus: "unavailable",
-    mismatchFields: [],
-    gstr2bRecord: null
-  }));
-
 const verifyGSTIN = async (gstin) => {
   const cleaned = String(gstin || "").replace(/\s/g, "").toUpperCase();
   if (!isGspEnabled()) {
@@ -271,25 +188,46 @@ const verifyGSTIN = async (gstin) => {
   }
 };
 
-const matchGSTR2B = async (gstin, period, invoices) => {
+/**
+ * Fetch and normalise a client's GSTR-2B B2B records from the live GSP for a
+ * period. Returns normalised records (see gstr2b-matching.normalizeGstr2bRecord)
+ * or null when no GSP is configured or the call fails — the caller decides the
+ * fallback (offline snapshot, or "unavailable").
+ */
+const fetchGstr2bRecords = async (gstin, period) => {
   if (!isGspEnabled()) {
-    return unavailableResults(invoices);
+    return null;
   }
-
   try {
     const payload = await requestGsp(
       `/gstr2b?gstin=${encodeURIComponent(gstin)}&period=${encodeURIComponent(period)}`,
       { method: "GET" }
     );
-    return matchInvoices(invoices, collectGstr2bRecords(payload));
+    return collectGstr2bRecords(payload).map(normalizeGstr2bRecord);
   } catch (error) {
-    console.error("GSP GSTR-2B match unavailable:", error.name || error.message);
+    console.error("GSP GSTR-2B fetch unavailable:", error.name || error.message);
+    return null;
+  }
+};
+
+/**
+ * Match invoices against the live GSP's GSTR-2B for a period. Preserved for
+ * backward compatibility; returns "unavailable" results when no GSP is
+ * configured. New callers should prefer gstr2b-source.service, which also
+ * consults offline snapshots.
+ */
+const matchGSTR2B = async (gstin, period, invoices) => {
+  const records = await fetchGstr2bRecords(gstin, period);
+  if (records === null) {
     return unavailableResults(invoices);
   }
+  return matchInvoices(invoices, records);
 };
 
 module.exports = {
   GSPAuthError,
+  isGspEnabled,
   verifyGSTIN,
+  fetchGstr2bRecords,
   matchGSTR2B
 };
