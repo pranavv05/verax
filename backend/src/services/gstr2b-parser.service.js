@@ -27,14 +27,29 @@ const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024; // GSTR-2B JSON for a large client
 const MAX_RECORDS = 50000; // A hard ceiling so a malformed or hostile file cannot exhaust memory.
 const ALLOWED_EXTENSIONS = new Set(["json", "xlsx"]);
 
+// A GST amount far above any real invoice; anything beyond this (including
+// Infinity from a 1e308-style value in a hostile file) is treated as garbage and
+// zeroed, so a crafted file cannot poison the stored NUMERIC totals with
+// Infinity/NaN or overflow the column.
+const MAX_SANE_AMOUNT = 1e13; // ₹10,00,000 crore — orders of magnitude past any real invoice.
+
 const toNumberOrZero = (value) => {
   const parsed = toAmount(value);
-  return parsed === null ? 0 : parsed;
+  if (parsed === null || !Number.isFinite(parsed) || Math.abs(parsed) > MAX_SANE_AMOUNT) {
+    return 0;
+  }
+  return parsed;
 };
+
+// Control characters (null bytes, form feeds, stray OCR/encoding junk) must not
+// reach the stored snapshot: they break JSONB display, voucher matching, and the
+// Tally XML that is generated downstream. Strip them from every parsed string.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
 const cleanString = (value) => {
   if (value === null || value === undefined) return "";
-  return String(value).trim();
+  return String(value).replace(CONTROL_CHARS, "").trim();
 };
 
 const cleanGstin = (value) => cleanString(value).replace(/\s/g, "").toUpperCase();
@@ -111,7 +126,42 @@ const normalizePortalInvoice = (supplierGstin, supplierName, inv) => {
  * Older/thinner exports put `b2b` directly under `data` or at the top level, so
  * all three nestings are checked.
  */
+// Reject pathologically nested JSON before handing it to JSON.parse, whose
+// recursive parse blows the call stack (an uncaught RangeError -> 500) on inputs
+// thousands of levels deep. A real GSTR-2B nests only a handful of levels, so a
+// generous cap rejects hostile input without touching legitimate files. Counting
+// unescaped structural brackets is a cheap upper bound on nesting depth.
+const MAX_JSON_DEPTH = 100;
+
+const exceedsMaxDepth = (text) => {
+  let depth = 0;
+  let max = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") {
+      depth += 1;
+      if (depth > max) max = depth;
+      if (max > MAX_JSON_DEPTH) return true;
+    } else if (ch === "}" || ch === "]") {
+      depth -= 1;
+    }
+  }
+  return false;
+};
+
 const parseGstr2bJson = (text) => {
+  if (exceedsMaxDepth(text)) {
+    throw ApiError.badRequest("The uploaded file is not a valid GSTR-2B export (structure too deeply nested).");
+  }
   let payload;
   try {
     payload = JSON.parse(text);
@@ -188,6 +238,29 @@ const canonicalHeader = (header) => {
 };
 
 /**
+ * Unwrap an ExcelJS cell into its underlying scalar value. A cell's `.value` is
+ * not always a plain string/number: a formula cell is `{ formula, result }`, a
+ * rich-text cell is `{ richText: [...] }`, a hyperlink is `{ text, hyperlink }`,
+ * and an error cell is `{ error }`. Reading `.value` blindly made formula cells
+ * (common in re-saved GSTR-2B exports) parse as 0, silently understating the
+ * taxable/GST amounts — and therefore the ITC-at-risk figure. Resolve each shape
+ * to the value a human sees.
+ */
+const cellValue = (cell) => {
+  if (!cell) return null;
+  const v = cell.value;
+  if (v === null || v === undefined) return null;
+  if (typeof v === "object") {
+    if ("result" in v) return v.result; // formula cell -> its computed result
+    if ("text" in v) return v.text; // hyperlink cell -> its text
+    if (Array.isArray(v.richText)) return v.richText.map((part) => part.text).join("");
+    if ("error" in v) return null; // #REF!/#DIV0! etc. -> treat as empty
+    if (v instanceof Date) return v;
+  }
+  return v;
+};
+
+/**
  * Parse the GST portal's GSTR-2B Excel export (the "B2B" sheet). Reads the
  * first sheet that contains a recognisable supplier-GSTIN + invoice-number
  * header row, then maps each data row into the normalised shape.
@@ -212,7 +285,7 @@ const parseGstr2bExcel = async (buffer) => {
       const row = worksheet.getRow(rowNumber);
       const candidate = {};
       row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-        const canonical = canonicalHeader(cell.value);
+        const canonical = canonicalHeader(cellValue(cell));
         if (canonical) candidate[canonical] = colNumber;
       });
       if (candidate.supplierGSTIN && candidate.invoiceNumber) {
@@ -224,8 +297,8 @@ const parseGstr2bExcel = async (buffer) => {
 
     if (!headerRowNumber || !columnMap) continue;
 
-    const cellText = (row, col) => (col ? cleanString(row.getCell(col).value) : "");
-    const cellNum = (row, col) => (col ? toNumberOrZero(row.getCell(col).value) : 0);
+    const cellText = (row, col) => (col ? cleanString(cellValue(row.getCell(col))) : "");
+    const cellNum = (row, col) => (col ? toNumberOrZero(cellValue(row.getCell(col))) : 0);
 
     for (let rowNumber = headerRowNumber + 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
       const row = worksheet.getRow(rowNumber);
