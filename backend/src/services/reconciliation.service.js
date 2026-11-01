@@ -8,7 +8,7 @@
 
 const ExcelJS = require("exceljs");
 const ApiError = require("../utils/api-error");
-const gspService = require("./gsp.service");
+const { matchAgainstBestSource } = require("./gstr2b-source.service");
 const { toAmount } = require("../utils/amount");
 
 const toNumber = toAmount;
@@ -157,7 +157,13 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
     invoiceDate: invoice.invoiceDate.toISOString().slice(0, 10)
   }));
 
-  const matches = await gspService.matchGSTR2B(client.gstin, period, invoices);
+  const { matches, source } = await matchAgainstBestSource(db, {
+    firmId,
+    clientId,
+    gstin: client.gstin,
+    period,
+    invoices
+  });
   const rows = documents.map(({ invoice }, index) => {
     const match = matches[index] || {};
     return {
@@ -185,6 +191,14 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
       if (row.matchStatus === "mismatch") acc.mismatched += 1;
       if (row.matchStatus === "not_found") acc.notFound += 1;
       if (row.matchStatus === "unavailable") acc.unavailable += 1;
+      // ITC at risk: GST on invoices that are in the client's books but do not
+      // cleanly match GSTR-2B (not found, wrong supplier GSTIN, or amount
+      // mismatch). This credit is what the firm stands to lose if the exception
+      // is not resolved before the period's 3B — the number the ITC Desk is
+      // built around. Fully matched and (source-)unavailable rows are excluded.
+      if (["not_found", "mismatch", "partial"].includes(row.matchStatus)) {
+        acc.itcAtRisk += row.gstAmount || 0;
+      }
       return acc;
     },
     {
@@ -195,7 +209,8 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
       notFound: 0,
       unavailable: 0,
       totalTaxableAmount: 0,
-      totalGstAmount: 0
+      totalGstAmount: 0,
+      itcAtRisk: 0
     }
   );
 
@@ -205,12 +220,17 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
     action: auditAction,
     entityType: "client",
     entityId: clientId,
-    metadata: { period, documentCount: rows.length }
+    metadata: { period, documentCount: rows.length, source }
   });
 
   return {
     client: { id: client.id, name: client.name, gstin: client.gstin },
     period,
+    // Which GSTR-2B source these results were matched against:
+    // "offline_upload" | "gsp" | "unavailable". The UI uses this to tell the
+    // firm whether they are seeing a real reconciliation or need to upload a
+    // GSTR-2B file first.
+    source,
     summary,
     rows
   };
