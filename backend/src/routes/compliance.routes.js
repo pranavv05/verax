@@ -19,6 +19,8 @@ const {
 } = require("../services/gstr2b-source.service");
 const { verifyGstinCached } = require("../services/gstin-verification.service");
 const taxpayerSession = require("../services/gstr2b-taxpayer-session.service");
+const { getItcDeskOverview } = require("../services/itc-desk.service");
+const imsActions = require("../services/ims-action.service");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -381,6 +383,88 @@ router.get(
       totalGst: snapshot.totalGst,
       uploadedAt: snapshot.createdAt
     });
+  })
+);
+
+// ── ITC Desk (portfolio ITC-at-risk across all clients) ────────────────────────
+
+const itcDeskQuerySchema = Joi.object({
+  period: Joi.string()
+    .pattern(/^(0[1-9]|1[0-2])\d{4}$/)
+    .required()
+    .messages({ "string.pattern.base": "period must be in MMYYYY format" })
+});
+
+// GET /api/compliance/itc-desk?period=MMYYYY
+router.get(
+  "/itc-desk",
+  validate(itcDeskQuerySchema, "query"),
+  asyncHandler(async (req, res) => {
+    const { firmId } = req.user;
+    const overview = await req.withTenantTransaction((db) =>
+      getItcDeskOverview(db, { firmId, period: req.query.period })
+    );
+    res.status(200).json(overview);
+  })
+);
+
+// ── IMS action tracking ────────────────────────────────────────────────────────
+
+const imsListQuerySchema = Joi.object({
+  clientId: Joi.string().guid({ version: "uuidv4" }).required(),
+  period: Joi.string()
+    .pattern(/^(0[1-9]|1[0-2])\d{4}$/)
+    .required()
+    .messages({ "string.pattern.base": "period must be in MMYYYY format" })
+});
+
+const imsSetActionSchema = Joi.object({
+  clientId: Joi.string().guid({ version: "uuidv4" }).required(),
+  actionId: Joi.string().guid({ version: "uuidv4" }).required(),
+  action: Joi.string().valid("none", "accept", "reject", "pending").required(),
+  note: Joi.string().trim().max(1000).allow("").optional()
+});
+
+// GET /api/compliance/ims?clientId=&period= — tracked IMS rows + deemed-accept risk
+router.get(
+  "/ims",
+  validate(imsListQuerySchema, "query"),
+  asyncHandler(async (req, res) => {
+    const { firmId } = req.user;
+    const result = await req.withTenantTransaction((db) =>
+      imsActions.listActions(db, { firmId, clientId: req.query.clientId, period: req.query.period })
+    );
+    res.status(200).json(result);
+  })
+);
+
+// POST /api/compliance/ims/action — record Accept/Reject/Pending on one record
+router.post(
+  "/ims/action",
+  requireAdmin,
+  validate(imsSetActionSchema),
+  asyncHandler(async (req, res) => {
+    const { firmId, userId } = req.user;
+    const result = await req.withTenantTransaction(async (db) => {
+      const out = await imsActions.setAction(db, {
+        firmId,
+        clientId: req.body.clientId,
+        actionId: req.body.actionId,
+        action: req.body.action,
+        note: req.body.note,
+        userId
+      });
+      await insertAuditLog(db, {
+        firmId,
+        userId,
+        action: "ims_action_recorded",
+        entityType: "client",
+        entityId: req.body.clientId,
+        metadata: { imsActionId: req.body.actionId, imsAction: req.body.action }
+      });
+      return out;
+    });
+    res.status(200).json(result);
   })
 );
 

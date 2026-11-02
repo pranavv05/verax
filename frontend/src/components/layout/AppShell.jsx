@@ -19,6 +19,7 @@ import {
   IconMenu,
   IconMonitor,
   IconMoon,
+  IconScale,
   IconSettings,
   IconSun,
   IconTools,
@@ -41,6 +42,7 @@ const primaryNav = [
     icon: IconUsers,
     match: ["/clients", "/documents", "/review"]
   },
+  { to: "/itc-desk", label: "ITC Desk", icon: IconScale, match: ["/itc-desk"] },
   { to: "/export", label: "Export", icon: IconExport, match: ["/export"] },
   { to: "/tools", label: "Tools", icon: IconTools, match: ["/tools"] },
   { to: "/team", label: "Team", icon: IconUsers, match: ["/team"] }

@@ -49,6 +49,23 @@ export const complianceApi = {
     });
   },
 
+  // ITC Desk — portfolio ITC-at-risk across all clients for a period.
+  getItcDesk({ period }) {
+    return request(`/api/compliance/itc-desk${toQuery({ period })}`);
+  },
+
+  // IMS action tracking for a client+period.
+  getImsActions({ clientId, period }) {
+    return request(`/api/compliance/ims${toQuery({ clientId, period })}`);
+  },
+
+  setImsAction({ clientId, actionId, action, note }) {
+    return request("/api/compliance/ims/action", {
+      method: "POST",
+      body: { clientId, actionId, action, note }
+    });
+  },
+
   // GST taxpayer session (live GSTR-2B via GSP). The CA triggers an OTP to the
   // client, the client reads it back, the CA verifies it to connect the GSTIN.
   getGstSession({ clientId }) {

@@ -32,6 +32,7 @@ const ClientsPage = lazy(() => import("./pages/ClientsPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ExportPage = lazy(() => import("./pages/ExportPage"));
 const GSTReconciliationPage = lazy(() => import("./pages/GSTReconciliationPage"));
+const ItcDeskPage = lazy(() => import("./pages/ItcDeskPage"));
 const ReviewPage = lazy(() => import("./pages/ReviewPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const TallyAgentsPage = lazy(() => import("./pages/TallyAgentsPage"));
@@ -92,6 +93,15 @@ const App = () => (
         element={
           <Protected>
             <ClientsPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/itc-desk"
+        element={
+          <Protected>
+            <ItcDeskPage />
           </Protected>
         }
       />
