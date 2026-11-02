@@ -7,6 +7,7 @@ import { TableScroll, Toolbar } from "../components/app/TableKit";
 import { Alert, Badge, Card, FormField, PageHeader, Segmented, StatTile } from "../components/app/primitives";
 import { IconRefresh, IconTable } from "../components/app/icons";
 import { complianceApi } from "../api/compliance-api";
+import GstConnectCard from "../components/compliance/GstConnectCard";
 import { useAuth } from "../contexts/AuthContext";
 import { cn, parseApiError } from "../lib/utils";
 import { isAdmin } from "../utils/permissions";
@@ -264,6 +265,16 @@ const GSTReconciliationPage = () => {
           </div>
         ) : null}
       </Card>
+
+      {clientId ? (
+        <div className="mb-5">
+          <GstConnectCard
+            clientId={clientId}
+            canAdmin={canAdmin}
+            onConnected={() => runReconciliation()}
+          />
+        </div>
+      ) : null}
 
       {result ? (
         <>

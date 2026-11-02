@@ -95,6 +95,10 @@ const envSchema = Joi.object({
   SANDBOX_API_KEY: Joi.string().allow("").optional(),
   SANDBOX_API_SECRET: Joi.string().allow("").optional(),
   SANDBOX_API_VERSION: Joi.string().default("1.0.0"),
+  // 32-byte key (hex or base64) that encrypts GST taxpayer tokens at rest.
+  // Required only when the live GSP (sandbox) is actually used; generate with
+  // `openssl rand -hex 32`. Validated by utils/secret-box at first use.
+  GSP_TOKEN_ENCRYPTION_KEY: Joi.string().allow("").optional(),
   ACCESS_TOKEN_TTL_MINUTES: Joi.number().integer().min(1).default(15),
   REFRESH_TOKEN_TTL_DAYS: Joi.number().integer().min(1).default(7),
   REFRESH_COOKIE_NAME: Joi.string().default("ca_refresh_token"),
@@ -189,6 +193,7 @@ module.exports = Object.freeze({
   SANDBOX_API_KEY: value.SANDBOX_API_KEY,
   SANDBOX_API_SECRET: value.SANDBOX_API_SECRET,
   SANDBOX_API_VERSION: value.SANDBOX_API_VERSION,
+  GSP_TOKEN_ENCRYPTION_KEY: value.GSP_TOKEN_ENCRYPTION_KEY,
   ACCESS_TOKEN_TTL_MINUTES: value.ACCESS_TOKEN_TTL_MINUTES,
   REFRESH_TOKEN_TTL_DAYS: value.REFRESH_TOKEN_TTL_DAYS,
   REFRESH_TOKEN_TTL_SECONDS: value.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60,
