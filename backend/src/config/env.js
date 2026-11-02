@@ -85,6 +85,16 @@ const envSchema = Joi.object({
   GSP_USERNAME: Joi.string().allow("").optional(),
   GSP_PASSWORD: Joi.string().allow("").optional(),
   GSP_DISABLED: Joi.boolean().truthy("true").falsy("false").default(false),
+  // GSP provider selection. "sandbox" uses the Sandbox (api.sandbox.co.in)
+  // adapter with key/secret auth + per-GSTIN OTP taxpayer sessions; "adaequare"
+  // keeps the legacy username/password client. Defaults to adaequare so nothing
+  // changes for existing deployments until SANDBOX_* are set.
+  GSP_PROVIDER: Joi.string().valid("adaequare", "sandbox").default("adaequare"),
+  // Sandbox (sandbox.co.in) credentials. Secrets live only in env, never in code.
+  SANDBOX_API_BASE_URL: Joi.string().uri().default("https://api.sandbox.co.in"),
+  SANDBOX_API_KEY: Joi.string().allow("").optional(),
+  SANDBOX_API_SECRET: Joi.string().allow("").optional(),
+  SANDBOX_API_VERSION: Joi.string().default("1.0.0"),
   ACCESS_TOKEN_TTL_MINUTES: Joi.number().integer().min(1).default(15),
   REFRESH_TOKEN_TTL_DAYS: Joi.number().integer().min(1).default(7),
   REFRESH_COOKIE_NAME: Joi.string().default("ca_refresh_token"),
@@ -174,6 +184,11 @@ module.exports = Object.freeze({
   GSP_USERNAME: value.GSP_USERNAME,
   GSP_PASSWORD: value.GSP_PASSWORD,
   GSP_DISABLED: value.GSP_DISABLED,
+  GSP_PROVIDER: value.GSP_PROVIDER,
+  SANDBOX_API_BASE_URL: value.SANDBOX_API_BASE_URL,
+  SANDBOX_API_KEY: value.SANDBOX_API_KEY,
+  SANDBOX_API_SECRET: value.SANDBOX_API_SECRET,
+  SANDBOX_API_VERSION: value.SANDBOX_API_VERSION,
   ACCESS_TOKEN_TTL_MINUTES: value.ACCESS_TOKEN_TTL_MINUTES,
   REFRESH_TOKEN_TTL_DAYS: value.REFRESH_TOKEN_TTL_DAYS,
   REFRESH_TOKEN_TTL_SECONDS: value.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60,

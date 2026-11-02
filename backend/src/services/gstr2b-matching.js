@@ -31,9 +31,20 @@ const normalizeDate = (value) => {
  * snake_case/camelCase forms an offline parser or a GSP wrapper may emit.
  */
 const normalizeGstr2bRecord = (record) => {
+  // Prefer an explicit pre-summed total if the source provides one; otherwise
+  // sum the tax components. The components must be SUMMED, not short-circuited
+  // on igst: a real intra-state GSTR-2B invoice sets igst:0 explicitly and
+  // carries only cgst+sgst, so the old `?? record.iamt` (which treats a present
+  // 0 as the answer) returned gstAmount 0 for every intra-state invoice —
+  // breaking matching and understating ITC for all intra-state supply.
+  const explicitTotal = toNumber(record.gstAmount ?? record.gst_amount);
   const gstAmount =
-    toNumber(record.gstAmount ?? record.gst_amount ?? record.iamt) ??
-    ((toNumber(record.camt) || 0) + (toNumber(record.samt) || 0) + (toNumber(record.csamt) || 0));
+    explicitTotal !== null
+      ? explicitTotal
+      : (toNumber(record.iamt) || 0) +
+        (toNumber(record.camt) || 0) +
+        (toNumber(record.samt) || 0) +
+        (toNumber(record.csamt) || 0);
 
   return {
     invoiceNumber:
