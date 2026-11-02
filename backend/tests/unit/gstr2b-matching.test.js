@@ -24,6 +24,23 @@ describe("normalizeGstr2bRecord", () => {
     expect(record.gstAmount).toBe(190);
   });
 
+  test("sums the GSTN tax components even when igst is explicitly 0 (real intra-state 2B shape)", () => {
+    // Regression: GSTN sets iamt:0 on intra-state invoices. The old `?? iamt`
+    // treated that present 0 as the total and returned gstAmount 0, zeroing GST
+    // for every intra-state invoice. It must sum iamt+camt+samt+csamt. (The
+    // Sandbox adapter maps igst->iamt, cgst->camt, sgst->samt, cess->csamt
+    // before calling this, so the short keys are what flow through.)
+    const record = normalizeGstr2bRecord({
+      inum: "INV-INTRA",
+      txval: 1694.92,
+      iamt: 0,
+      camt: 152.54,
+      samt: 152.54,
+      csamt: 0
+    });
+    expect(record.gstAmount).toBeCloseTo(305.08, 2);
+  });
+
   test("accepts already-normalised camelCase records (GSP wrapper output)", () => {
     const record = normalizeGstr2bRecord({
       invoiceNumber: "INV-3",
