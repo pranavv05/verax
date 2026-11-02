@@ -49,6 +49,30 @@ export const complianceApi = {
     });
   },
 
+  // GST taxpayer session (live GSTR-2B via GSP). The CA triggers an OTP to the
+  // client, the client reads it back, the CA verifies it to connect the GSTIN.
+  getGstSession({ clientId }) {
+    return request(`/api/compliance/gstr2b/session${toQuery({ clientId })}`);
+  },
+
+  requestGstOtp({ clientId, gstUsername }) {
+    return request("/api/compliance/gstr2b/session/otp", {
+      method: "POST",
+      body: { clientId, gstUsername }
+    });
+  },
+
+  verifyGstOtp({ clientId, otp }) {
+    return request("/api/compliance/gstr2b/session/verify", {
+      method: "POST",
+      body: { clientId, otp }
+    });
+  },
+
+  disconnectGstSession({ clientId }) {
+    return request(`/api/compliance/gstr2b/session${toQuery({ clientId })}`, { method: "DELETE" });
+  },
+
   async downloadReconciliationExcel({ clientId, period }) {
     const url = `${API_BASE_URL}/api/compliance/gstr2b/reconciliation/export${toQuery({ clientId, period })}`;
     const fetchWorkbook = () => {
