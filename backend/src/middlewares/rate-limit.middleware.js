@@ -31,6 +31,21 @@ const buildRateLimiter = ({
 const STANDARD_API_MAX = 900;
 const standardApiLimiter = buildRateLimiter({ windowMs: 15 * 60 * 1000, max: STANDARD_API_MAX });
 
+// Tally-agent routes (heartbeat/claim/result) authenticate via req.agent, not
+// req.user, so perUserKey's fallback would silently key every agent behind
+// standardApiLimiter's IP bucket instead — fine for one agent, but means a
+// second agent on the same office NAT shares its budget. Keyed on the agent's
+// own id once authenticated. 2/sec sustained comfortably covers a short-poll
+// claim loop plus heartbeats while still bounding a stolen or runaway token.
+const perAgentKey = (req) => (req.agent?.id ? `agent:${req.agent.id}` : `ip:${req.ip}`);
+const AGENT_API_MAX = 1800;
+const agentApiLimiter = buildRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: AGENT_API_MAX,
+  keyGenerator: perAgentKey,
+  message: "Too many requests from this agent. Please slow down."
+});
+
 // Magic-link (client upload) limits, per client IP. Uploading one file is two
 // requests (initiate, then confirm), and they used to share one 50-per-hour
 // bucket, so a client sending 30 bills was cut off halfway. Each step now has
@@ -93,10 +108,13 @@ const buildAuthLimiters = ({ message } = {}) => ({
 module.exports = {
   buildRateLimiter,
   standardApiLimiter,
+  agentApiLimiter,
   buildAuthLimiters,
   buildPublicUploadLimiters,
   perUserKey,
+  perAgentKey,
   STANDARD_API_MAX,
+  AGENT_API_MAX,
   PUBLIC_UPLOAD_MAX_PER_HOUR,
   MAGIC_LINK_OPEN_MAX
 };

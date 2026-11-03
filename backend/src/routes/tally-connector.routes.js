@@ -22,7 +22,7 @@ const asyncHandler = require("../utils/async-handler");
 const validate = require("../middlewares/validate.middleware");
 const { requireAuth, requireAdmin } = require("../middlewares/auth.middleware");
 const { requireAgentAuth } = require("../middlewares/tally-agent-auth.middleware");
-const { standardApiLimiter } = require("../middlewares/rate-limit.middleware");
+const { standardApiLimiter, agentApiLimiter } = require("../middlewares/rate-limit.middleware");
 const ApiError = require("../utils/api-error");
 const connector = require("../services/tally-connector.service");
 
@@ -187,6 +187,7 @@ appRouter.get(
 
 const agentRouter = express.Router();
 agentRouter.use(requireAgentAuth);
+agentRouter.use(agentApiLimiter);
 
 const heartbeatSchema = Joi.object({
   agentVersion: Joi.string().trim().max(50).allow("").optional()
