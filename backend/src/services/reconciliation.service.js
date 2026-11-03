@@ -224,14 +224,18 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
     }
   );
 
-  await insertAuditLog(db, {
-    firmId,
-    userId,
-    action: auditAction,
-    entityType: "client",
-    entityId: clientId,
-    metadata: { period, documentCount: rows.length, source }
-  });
+  // auditAction is optional: the portfolio ITC Desk reconciles many clients at
+  // once and must not write one audit row per client on every view.
+  if (auditAction) {
+    await insertAuditLog(db, {
+      firmId,
+      userId,
+      action: auditAction,
+      entityType: "client",
+      entityId: clientId,
+      metadata: { period, documentCount: rows.length, source }
+    });
+  }
 
   return {
     client: { id: client.id, name: client.name, gstin: client.gstin },
