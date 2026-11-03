@@ -229,20 +229,13 @@ const getDocumentTrend = async (db, { firmId, days = TREND_DAYS }) => {
           AND uploaded_at >= NOW() - ($2::int + 1) * interval '1 day'
         GROUP BY 1
       ),
-      -- MATERIALIZED pins the plan to "recent reviews first" (idx_extractions_reviewed_at).
-      -- Left to itself the planner, misled by the RLS predicates' estimates,
-      -- walked every document the firm ever had and probed extractions per row.
-      recent_reviews AS MATERIALIZED (
-        SELECT document_id, reviewed_at
-        FROM extractions
-        WHERE deleted_at IS NULL
-          AND reviewed_at >= NOW() - ($2::int + 1) * interval '1 day'
-      ),
       approved AS (
         SELECT (e.reviewed_at AT TIME ZONE 'Asia/Kolkata')::date AS day, COUNT(*)::int AS n
-        FROM recent_reviews e
+        FROM extractions e
         JOIN documents d ON d.id = e.document_id
-        WHERE d.firm_id = $1
+        WHERE e.firm_id = $1
+          AND e.deleted_at IS NULL
+          AND e.reviewed_at >= NOW() - ($2::int + 1) * interval '1 day'
           AND d.deleted_at IS NULL
         GROUP BY 1
       )
