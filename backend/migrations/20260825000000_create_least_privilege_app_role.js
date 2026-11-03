@@ -18,7 +18,36 @@
 
 const APP_ROLE = "ca_app";
 
+// Managed Postgres (Render, and most others) hands the app a non-superuser
+// owner role that may not be allowed to create roles at all. That deployment
+// doesn't need ca_app: the owner is not a superuser and every tenant table
+// has FORCE ROW LEVEL SECURITY, which binds the owner too. So when this role
+// can't create or alter ca_app, skip it with a NOTICE instead of failing the
+// whole first deploy ("permission denied to create role").
+const canManageAppRole = async (knex) => {
+  const { rows } = await knex.raw(
+    `SELECT r.rolsuper,
+            r.rolcreaterole,
+            EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ?) AS app_role_exists,
+            pg_has_role(current_user, (SELECT oid FROM pg_roles WHERE rolname = ?), 'MEMBER WITH ADMIN OPTION') AS admin_of_app_role
+     FROM pg_roles r WHERE r.rolname = current_user`,
+    [APP_ROLE, APP_ROLE]
+  );
+  const me = rows[0];
+  if (me.rolsuper) return true;
+  if (!me.rolcreaterole) return false;
+  // PG16+: CREATEROLE only covers roles this role created (or administers).
+  return !me.app_role_exists || Boolean(me.admin_of_app_role);
+};
+
 exports.up = async (knex) => {
+  if (!(await canManageAppRole(knex))) {
+    await knex.raw(
+      `DO $$ BEGIN RAISE NOTICE 'Skipping ${APP_ROLE}: this role cannot create roles. The app will connect as the owner role, which FORCE ROW LEVEL SECURITY still binds.'; END $$;`
+    );
+    return;
+  }
+
   // Password comes from APP_DB_PASSWORD. Falls back to a fixed dev-only
   // value so local/dev/CI setups that haven't set the new var keep working —
   // production deployments MUST set APP_DB_PASSWORD explicitly (documented
@@ -58,6 +87,8 @@ exports.up = async (knex) => {
 };
 
 exports.down = async (knex) => {
+  const { rows } = await knex.raw(`SELECT 1 FROM pg_roles WHERE rolname = ?`, [APP_ROLE]);
+  if (rows.length === 0 || !(await canManageAppRole(knex))) return;
   await knex.raw(
     `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM ${APP_ROLE};`
   );
