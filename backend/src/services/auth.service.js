@@ -127,14 +127,16 @@ const requestPasswordReset = async ({ email, userAgent, ipAddress }) => {
       authEmail: normalizedEmail
     },
     async (client) => {
+      // users alone first: the `login` RLS escape hatch exposes the user row by
+      // email, but `firms` stays hidden until app.current_firm_id is set — a
+      // JOIN here returned zero rows for every user under the ca_app role, so
+      // no reset email was ever sent. Same two-step shape as login.
       const userResult = await client.query(
         `
-          SELECT u.id, u.firm_id, u.name, u.email, f.name AS firm_name
-          FROM users u
-          JOIN firms f ON f.id = u.firm_id
-          WHERE lower(u.email) = $1
-            AND u.deleted_at IS NULL
-            AND f.deleted_at IS NULL
+          SELECT id, firm_id, name, email
+          FROM users
+          WHERE lower(email) = $1
+            AND deleted_at IS NULL
           LIMIT 1
         `,
         [normalizedEmail]
@@ -148,6 +150,15 @@ const requestPasswordReset = async ({ email, userAgent, ipAddress }) => {
       await setLocalConfig(client, "app.current_firm_id", user.firm_id);
       await setLocalConfig(client, "app.auth_context", "");
       await setLocalConfig(client, "app.auth_email", "");
+
+      const firmResult = await client.query(
+        `SELECT name FROM firms WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+        [user.firm_id]
+      );
+      if (firmResult.rowCount === 0) {
+        return null;
+      }
+      user.firm_name = firmResult.rows[0].name;
 
       await client.query(
         `

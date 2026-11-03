@@ -37,7 +37,7 @@ router.post(
   requireAdmin,
   validate(inviteUserSchema),
   asyncHandler(async (req, res) => {
-    const user = await req.withTenantTransaction((db) =>
+    const { user, emailSent } = await req.withTenantTransaction((db) =>
       inviteUser(db, {
         firmId: req.user.firmId,
         actorUserId: req.user.userId,
@@ -47,7 +47,7 @@ router.post(
         role: req.body.role
       })
     );
-    res.status(201).json({ user });
+    res.status(201).json({ user, emailSent });
   })
 );
 

@@ -66,10 +66,14 @@ const TeamPage = () => {
 
     setSaving(true);
     try {
-      await usersApi.invite(validation.data);
+      const result = await usersApi.invite(validation.data);
       setForm({ name: "", email: "", password: "", role: "staff" });
       setShowInviteForm(false);
-      setToast("Invite sent.");
+      setToast(
+        result?.emailSent === false
+          ? `${validation.data.email} was added, but the invite email couldn't be sent. Share their login email and password with them yourself.`
+          : "Invite sent."
+      );
       await loadUsers();
     } catch (submitError) {
       setFormError(parseApiError(submitError, "Unable to invite team member"));

@@ -111,6 +111,7 @@ const ClientDetailPage = () => {
   const [enablingPortal, setEnablingPortal] = useState(false);
   const [tempPassword, setTempPassword] = useState("");
   const [tempPasswordCopied, setTempPasswordCopied] = useState(false);
+  const [portalEmailSent, setPortalEmailSent] = useState(true);
   const [requestDocsTypes, setRequestDocsTypes] = useState(docTypeOptions.map(([value]) => value));
   const [requestDocsError, setRequestDocsError] = useState("");
   const [copyLinkFeedback, setCopyLinkFeedback] = useState("");
@@ -313,6 +314,7 @@ const ClientDetailPage = () => {
       const result = await clientsApi.enablePortal(id, { portalEmail });
       setTempPassword(result.tempPassword);
       setTempPasswordCopied(false);
+      setPortalEmailSent(result.emailSent !== false);
       await loadClient();
     } catch (enableError) {
       setPortalError(parseApiError(enableError, "Unable to enable the client portal"));
@@ -744,10 +746,17 @@ const ClientDetailPage = () => {
                 </button>
               </div>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-ui-fg-3">
-              We also emailed these details to {portalEmail}. They sign in at{" "}
-              <span className="ui-mono text-ui-fg-2">/client-portal/login</span>.
-            </p>
+            {portalEmailSent ? (
+              <p className="mt-3 text-xs leading-relaxed text-ui-fg-3">
+                We also emailed these details to {portalEmail}. They sign in at{" "}
+                <span className="ui-mono text-ui-fg-2">/client-portal/login</span>.
+              </p>
+            ) : (
+              <Alert tone="warn" className="mt-3">
+                We couldn&apos;t email {portalEmail}. Copy the password above and share it with your client
+                yourself — they sign in at <span className="ui-mono">/client-portal/login</span>.
+              </Alert>
+            )}
           </div>
         ) : (
           <FormField label="Client's email address" htmlFor="portal-email">
