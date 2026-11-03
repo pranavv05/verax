@@ -89,48 +89,46 @@ const insertAuditLog = async (db, { firmId, userId, action, entityType, entityId
   );
 };
 
-const getReconciliationData = async (db, { firmId, userId, clientId, period, auditAction }) => {
-  const clientResult = await db.query(
+// Inclusive UTC period bounds plus a one-day-wider window for the SQL
+// pre-filter (timezone edges); the exact cut is always the JS filter.
+const getPeriodWindow = (period) => {
+  const { start, end } = getPeriodRange(period);
+  const dayMs = 24 * 60 * 60 * 1000;
+  return {
+    start,
+    end,
+    windowStart: new Date(start.getTime() - dayMs).toISOString().slice(0, 10),
+    windowEnd: new Date(end.getTime() + dayMs).toISOString().slice(0, 10)
+  };
+};
+
+// Invoices that could fall in the period, for one client or (clientId null)
+// the whole firm. documents.invoice_date is kept by a trigger from the
+// extraction's ISO date; NULL (non-ISO or missing) is always included and left
+// to the exact JS filter, so this narrows what is read without changing what
+// reconciles. Reads one period's rows however much history a firm has.
+const loadPeriodInvoiceDocuments = async (db, { firmId, clientId = null, windowStart, windowEnd }) => {
+  const result = await db.query(
     `
-      SELECT id, name, gstin
-      FROM clients
-      WHERE id = $1
-        AND firm_id = $2
-        AND deleted_at IS NULL
-      LIMIT 1
-    `,
-    [clientId, firmId]
-  );
-
-  if (clientResult.rowCount === 0) {
-    throw ApiError.notFound("Client not found");
-  }
-
-  const client = clientResult.rows[0];
-  if (!client.gstin) {
-    throw ApiError.badRequest("Client does not have a GSTIN configured");
-  }
-
-  const documentsResult = await db.query(
-    `
-      SELECT
-        d.id,
-        d.doc_type,
-        e.structured_data
+      SELECT d.id, d.client_id, d.doc_type, e.structured_data
       FROM documents d
       JOIN extractions e ON e.document_id = d.id AND e.deleted_at IS NULL
       WHERE d.firm_id = $1
-        AND d.client_id = $2
+        AND ($2::uuid IS NULL OR d.client_id = $2::uuid)
         AND d.doc_type = 'invoice'
         AND d.status IN ('extracted', 'reviewed', 'exported')
         AND d.deleted_at IS NULL
-      ORDER BY d.uploaded_at ASC
+        AND (d.invoice_date BETWEEN $3::date AND $4::date OR d.invoice_date IS NULL)
+      ORDER BY d.uploaded_at ASC, d.id ASC
     `,
-    [firmId, clientId]
+    [firmId, clientId, windowStart, windowEnd]
   );
+  return result.rows;
+};
 
-  const { start, end } = getPeriodRange(period);
-  const documents = documentsResult.rows
+// Exact period filter and invoice shaping (unchanged behaviour).
+const toPeriodDocuments = (documentRows, { start, end }) =>
+  documentRows
     .map((row) => {
       const structuredData = row.structured_data || {};
       const invoice = buildInvoiceFromExtraction(row.id, structuredData);
@@ -158,7 +156,8 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
       return invoice.invoiceDate >= start && invoice.invoiceDate <= end;
     });
 
-  const invoices = documents.map(({ invoice }) => ({
+const toMatchableInvoices = (documents) =>
+  documents.map(({ invoice }) => ({
     documentId: invoice.documentId,
     invoiceNumber: invoice.invoiceNumber,
     supplierGSTIN: invoice.supplierGSTIN,
@@ -167,13 +166,8 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
     invoiceDate: invoice.invoiceDate.toISOString().slice(0, 10)
   }));
 
-  const { matches, source } = await matchAgainstBestSource(db, {
-    firmId,
-    clientId,
-    gstin: client.gstin,
-    period,
-    invoices
-  });
+// Rows + summary from documents and their matches (pure).
+const buildReconciliationRows = (documents, matches) => {
   const rows = documents.map(({ invoice }, index) => {
     const match = matches[index] || {};
     return {
@@ -223,6 +217,48 @@ const getReconciliationData = async (db, { firmId, userId, clientId, period, aud
       itcAtRisk: 0
     }
   );
+  // Summing floats leaves noise like 8675.999999999996 (and which noise depends
+  // on row order) — money is shown and exported, so round to paise.
+  for (const key of ["totalTaxableAmount", "totalGstAmount", "itcAtRisk"]) {
+    summary[key] = Math.round(summary[key] * 100) / 100;
+  }
+  return { rows, summary };
+};
+
+const getReconciliationData = async (db, { firmId, userId, clientId, period, auditAction }) => {
+  const clientResult = await db.query(
+    `
+      SELECT id, name, gstin
+      FROM clients
+      WHERE id = $1
+        AND firm_id = $2
+        AND deleted_at IS NULL
+      LIMIT 1
+    `,
+    [clientId, firmId]
+  );
+
+  if (clientResult.rowCount === 0) {
+    throw ApiError.notFound("Client not found");
+  }
+
+  const client = clientResult.rows[0];
+  if (!client.gstin) {
+    throw ApiError.badRequest("Client does not have a GSTIN configured");
+  }
+
+  const window = getPeriodWindow(period);
+  const documentRows = await loadPeriodInvoiceDocuments(db, { firmId, clientId, ...window });
+  const documents = toPeriodDocuments(documentRows, window);
+
+  const { matches, source } = await matchAgainstBestSource(db, {
+    firmId,
+    clientId,
+    gstin: client.gstin,
+    period,
+    invoices: toMatchableInvoices(documents)
+  });
+  const { rows, summary } = buildReconciliationRows(documents, matches);
 
   // auditAction is optional: the portfolio ITC Desk reconciles many clients at
   // once and must not write one audit row per client on every view.
@@ -326,6 +362,11 @@ module.exports = {
   toNumber,
   buildInvoiceFromExtraction,
   getReconciliationData,
+  getPeriodWindow,
+  loadPeriodInvoiceDocuments,
+  toPeriodDocuments,
+  toMatchableInvoices,
+  buildReconciliationRows,
   writeReconciliationWorkbook,
   safeFilename,
   // exported for unit testing of period validation
