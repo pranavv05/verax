@@ -144,7 +144,17 @@ The Blueprint is sized for real client data, not the free tier: `verax-ai-servic
 5. Back in Render, set `verax-backend`'s and `verax-worker`'s `FRONTEND_URL` to the frontend's custom domain, and `AI_SERVICE_URL` to the deployed `verax-ai-service` URL.
 6. Add the S3 CORS rule above for the frontend's custom domain.
 
-Migrations run automatically on every backend deploy (`npm run migrate:latest && npm start`).
+Migrations run automatically on every backend deploy (`npm run migrate:latest && npm start`). They work with Render's non-superuser database role; if that role cannot create roles, the `ca_app` step is skipped and the app connects as the owner role, which `FORCE ROW LEVEL SECURITY` still binds.
+
+**Backups on Render.** Render's own daily backups / point-in-time recovery (paid Postgres plans) are the primary backup and are unaffected by RLS. For an extra logical backup you control (before a risky migration, or to move hosts), a plain `pg_dump` as Render's role fails — every tenant table forces RLS on its owner — and `pg_dump --enable-row-security` silently writes zero tenant rows. Use the scripts instead; they are safe to run while the app is live:
+
+```bash
+DATABASE_URL=<external connection string> backend/scripts/db-backup.sh verax.vxbak
+# Restore into a NEW, empty database (never over the live one):
+DATABASE_URL=<new database> backend/scripts/db-restore.sh verax.vxbak
+```
+
+The backup copies every table from one consistent snapshot. RLS is lifted only inside a per-table transaction that is always rolled back, so no other session ever sees it lifted and a killed backup leaves nothing to undo; requests touching a table wait while that table is copied (a few seconds; 9s in total for 288k invoices). The restore loads everything in one transaction, checks row counts against the backup before re-enabling RLS, re-applies FORCE RLS and runs ANALYZE. The backend and worker refuse to start if any RLS table they own lacks FORCE. Uploaded documents are in S3, not in the backup — turn on S3 versioning for the bucket.
 
 ### Self-hosted: `docker-compose.prod.yml`
 

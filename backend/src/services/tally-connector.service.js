@@ -55,7 +55,7 @@ const registerAgent = async (db, { firmId, userId, name, tallyCompany }) => {
 const listAgents = async (db, { firmId }) => {
   const result = await db.query(
     `
-      SELECT id, name, tally_company, status, last_seen_at, agent_version, created_at
+      SELECT id, name, tally_company, status, last_seen_at, agent_version, tally_status, created_at
       FROM tally_agents
       WHERE firm_id = $1
       ORDER BY created_at DESC
@@ -107,14 +107,17 @@ const authenticateAgent = async (db, token) => {
 
 const hashAgentToken = (token) => hashToken(token);
 
-const recordHeartbeat = async (db, { agentId, firmId, agentVersion }) => {
+const recordHeartbeat = async (db, { agentId, firmId, agentVersion, tallyStatus }) => {
   await db.query(
     `
       UPDATE tally_agents
-      SET last_seen_at = NOW(), agent_version = COALESCE($3, agent_version), updated_at = NOW()
+      SET last_seen_at = NOW(),
+          agent_version = COALESCE($3, agent_version),
+          tally_status = COALESCE($4, tally_status),
+          updated_at = NOW()
       WHERE id = $1 AND firm_id = $2
     `,
-    [agentId, firmId, agentVersion ?? null]
+    [agentId, firmId, agentVersion || null, tallyStatus || null]
   );
 };
 
@@ -164,6 +167,22 @@ const enqueueDocumentSync = async (db, { firmId, userId, document }) => {
  * claimed job or null when the queue is empty.
  */
 const claimNextJob = async (db, { firmId, agentId }) => {
+  // A stale claim that has already used every attempt (the agent keeps dying
+  // or can never report) would otherwise be reclaimed forever and show
+  // "Pushing to Tally…" indefinitely — end it visibly instead.
+  await db.query(
+    `
+      UPDATE tally_sync_jobs
+      SET status = 'failed', completed_at = NOW(), updated_at = NOW(),
+          last_error = COALESCE(last_error, 'The Tally agent stopped responding while pushing this voucher. Check the agent on the Tally PC, then push again.')
+      WHERE firm_id = $1
+        AND status = 'claimed'
+        AND claimed_at < NOW() - ($2::int * INTERVAL '1 millisecond')
+        AND attempts >= $3
+    `,
+    [firmId, CLAIM_STALE_MS, MAX_ATTEMPTS]
+  );
+
   const result = await db.query(
     `
       WITH next_job AS (
@@ -172,7 +191,7 @@ const claimNextJob = async (db, { firmId, agentId }) => {
         WHERE firm_id = $1
           AND (
             status = 'queued'
-            OR (status = 'claimed' AND claimed_at < NOW() - ($3::int * INTERVAL '1 millisecond'))
+            OR (status = 'claimed' AND claimed_at < NOW() - ($3::int * INTERVAL '1 millisecond') AND attempts < $4)
           )
         ORDER BY created_at ASC
         FOR UPDATE SKIP LOCKED
@@ -188,7 +207,7 @@ const claimNextJob = async (db, { firmId, agentId }) => {
       WHERE j.id = next_job.id
       RETURNING j.id, j.document_id, j.remote_id, j.voucher_xml, j.attempts
     `,
-    [firmId, agentId, CLAIM_STALE_MS]
+    [firmId, agentId, CLAIM_STALE_MS, MAX_ATTEMPTS]
   );
   return result.rowCount > 0 ? result.rows[0] : null;
 };
@@ -225,15 +244,19 @@ const reportJobResult = async (db, { firmId, agentId, jobId, report }) => {
   // it retryable (e.g. Tally was closed / company not loaded). A data error
   // (LINEERROR) is terminal — retrying the same XML will fail identically.
   const canRetry = report.retryable === true && attempts < MAX_ATTEMPTS;
+  // completed_at is decided here rather than with `CASE WHEN $3 = 'failed'`:
+  // reusing $3 as both the varchar column value and a text comparison made
+  // Postgres reject every failure report ("inconsistent types deduced for
+  // parameter $3"), so no failed push was ever recorded.
   await db.query(
     `
       UPDATE tally_sync_jobs
       SET status = $3, result = $4::jsonb, last_error = $5,
-          completed_at = CASE WHEN $3 = 'failed' THEN NOW() ELSE NULL END,
+          completed_at = CASE WHEN $6::boolean THEN NOW() ELSE NULL END,
           updated_at = NOW()
       WHERE id = $1 AND firm_id = $2
     `,
-    [jobId, firmId, canRetry ? "queued" : "failed", JSON.stringify(report), report.error || null]
+    [jobId, firmId, canRetry ? "queued" : "failed", JSON.stringify(report), report.error || null, !canRetry]
   );
   return { status: canRetry ? "requeued" : "failed" };
 };
@@ -292,7 +315,14 @@ const parseTallyResponse = (xml) => {
     // A data/LINEERROR is terminal; the agent sets retryable for transport-level
     // problems (Tally closed, company not loaded) when it never got a response.
     retryable: false,
-    error: lineErrors.length > 0 ? lineErrors.join("; ") : ok ? null : "Tally reported no created or altered vouchers",
+    error:
+      lineErrors.length > 0
+        ? lineErrors.join("; ")
+        : ok
+          ? null
+          : errors > 0
+            ? `Tally reported ${errors} error(s) importing the voucher`
+            : "Tally reported no created or altered vouchers",
     raw: text.slice(0, 4000)
   };
 };

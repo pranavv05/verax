@@ -1,6 +1,6 @@
 # Verax Tally Agent — Specification
 
-Status: v1 (backend implemented; agent to be built)
+Status: v1 — backend and agent implemented (agent: `tally-agent/`, see its README for what still needs real-Windows/real-TallyPrime validation)
 Audience: whoever builds the Windows agent (`.exe`).
 
 ## Why an agent exists
@@ -32,7 +32,7 @@ revokes it in the UI and issues a new one.
 ### Agent-facing endpoints
 | Method & path | Purpose | Body | Response |
 |---|---|---|---|
-| `POST /api/tally/agent/heartbeat` | liveness + version | `{ "agentVersion": "1.0.0 (win)" }` | `{ "ok": true }` |
+| `POST /api/tally/agent/heartbeat` | liveness, version and Tally state | `{ "agentVersion": "1.0.0 (win)", "tallyStatus": "ready" }` | `{ "ok": true }` |
 | `POST /api/tally/agent/claim` | claim the next queued job | _(none)_ | `200` `{ job }` or `204` (queue empty) |
 | `POST /api/tally/agent/jobs/:jobId/result` | report a job's outcome | see **Result body** | `{ "status": "succeeded" \| "failed" \| "requeued" }` |
 
@@ -81,6 +81,8 @@ on start:
   POST /heartbeat
 
 loop forever:
+  check Tally: reachable, and exactly TALLY_COMPANY open
+  if not ready: heartbeat with tallyStatus=<reason>; sleep; continue   # never claim jobs it can't push
   POST /claim
   if 204:            sleep(pollInterval, e.g. 3–5s) ; continue
   if 200 with job:

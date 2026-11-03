@@ -123,7 +123,7 @@ const inviteUser = async (db, { firmId, actorUserId, name, email, password, role
     ]
   );
 
-  return toUserResponse(newUser);
+  return { user: toUserResponse(newUser), emailSent: Boolean(emailResult.sent) };
 };
 
 const removeUser = async (db, { firmId, actorUserId, targetUserId }) => {

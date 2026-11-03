@@ -39,4 +39,9 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:8001/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]
+# One worker: OCR is serialised behind a process-wide lock (PaddleOCR's
+# predictor isn't thread-safe), so a second worker adds no OCR throughput but
+# loads a second ~1-2 GB PaddleOCR copy — enough to OOM a 2 GB instance or blow
+# docker-compose.prod.yml's memory limit. render.yaml already overrides to 1
+# for the same reason; this keeps the image default consistent with it.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]

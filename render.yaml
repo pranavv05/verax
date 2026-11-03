@@ -59,9 +59,23 @@
 #                            without these, EMAIL_PROVIDER defaults to "smtp" with no
 #                            host configured and email sending silently fails)
 #   - SENTRY_DSN           (optional, backend + worker — error reporting; unset = disabled)
+#   - GSP_TOKEN_ENCRYPTION_KEY  (required before any firm connects live GSTR-2B —
+#                            AES-256-GCM key for taxpayer OTP tokens at rest, see
+#                            utils/secret-box.js. Generate with: openssl rand -hex 32.
+#                            Both SANDBOX_API_KEY/SECRET and this key are optional at
+#                            boot (no GSP subscription yet is a valid state), but the
+#                            first OTP verify after go-live will fail without it —
+#                            set it at deploy time, not after the first support ticket.)
+#   - SANDBOX_API_KEY / SANDBOX_API_SECRET  (optional — Sandbox (sandbox.co.in) GSP
+#                            credentials for live GSTR-2B pulls. Without these,
+#                            GSTR-2B still works via offline upload; "Connect GST"
+#                            (the OTP flow) is unavailable until both are set.)
 #
 # Then in Vercel, set:
 #   - VITE_API_BASE_URL = verax-backend's custom domain, e.g. https://api.yourdomain.in
+#   - VITE_TALLY_AGENT_DOWNLOAD_URL (optional) = where firms download the signed
+#     verax-tally-agent.exe (built from tally-agent/, see its README). Unset,
+#     the Tally agent page tells firms to ask support for the installer.
 
 databases:
   - name: verax-postgres
@@ -164,6 +178,12 @@ services:
       - key: EMAIL_FROM_ADDRESS
         sync: false
       - key: SENTRY_DSN
+        sync: false
+      - key: GSP_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: SANDBOX_API_KEY
+        sync: false
+      - key: SANDBOX_API_SECRET
         sync: false
 
   - type: web

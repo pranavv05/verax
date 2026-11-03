@@ -122,3 +122,40 @@ describe("env.js in production", () => {
     expect(env.LOCAL_STORAGE).toBe(true);
   });
 });
+
+describe("getProductionConfigErrors — secrets and https", () => {
+  const smtp = { EMAIL_PROVIDER: "smtp", SMTP_HOST: "smtp.example.com", SMTP_USER: "u", SMTP_PASS: "p" };
+
+  test.each([
+    ["JWT_SECRET", "replace-with-a-random-32-plus-char-secret"],
+    ["JWT_REFRESH_SECRET", "replace-with-another-random-32-plus-char-secret"],
+    ["CLIENT_JWT_SECRET", "client_jwt_secret_key_min_32_chars_long_and_unique"],
+    ["AI_SERVICE_API_KEY", "replace-with-a-random-32-plus-char-service-secret"],
+    ["JWT_SECRET", "ci-only-placeholder-secret-not-a-real-secret-32"]
+  ])("refuses %s left at the public example value", (key, value) => {
+    const errors = getProductionConfigErrors({ ...smtp, LOCAL_STORAGE: false, [key]: value });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(new RegExp(`${key}.*example value`));
+  });
+
+  test("random secrets pass", () => {
+    const random = "9f2c7d1e4b8a3f6c0d5e2a7b9c1f4e8d3a6b0c5f2e7d1a4b8c3f6e0d5a2b7c9e";
+    expect(
+      getProductionConfigErrors({
+        ...smtp,
+        LOCAL_STORAGE: false,
+        JWT_SECRET: random,
+        JWT_REFRESH_SECRET: random.split("").reverse().join(""),
+        CLIENT_JWT_SECRET: random.toUpperCase(),
+        AI_SERVICE_API_KEY: random.slice(1) + "0"
+      })
+    ).toEqual([]);
+  });
+
+  test("an http FRONTEND_URL is refused; https passes", () => {
+    expect(getProductionConfigErrors({ ...smtp, LOCAL_STORAGE: false, FRONTEND_URL: "http://app.verax.in" })[0]).toMatch(
+      /must be https/
+    );
+    expect(getProductionConfigErrors({ ...smtp, LOCAL_STORAGE: false, FRONTEND_URL: "https://app.verax.in" })).toEqual([]);
+  });
+});

@@ -6,10 +6,12 @@
  * book and which clients drive it — so nothing slips before the GSTR-3B / Sec
  * 16(4) deadline.
  *
- * It reuses the per-client reconciliation (getReconciliationData, called with no
- * auditAction so a portfolio view doesn't spam the audit log) and rolls the
- * per-client summaries up. One client failing (bad data, missing GSTIN) never
- * sinks the whole view — that client is reported with an error flag instead.
+ * It reads the period's invoices and saved GSTR-2B for the whole firm in a few
+ * queries, then runs the same matching and summary logic as the per-client
+ * reconciliation (reconciliation.service) in memory, and rolls the per-client
+ * summaries up. Nothing is written to the audit log for a portfolio view. One
+ * client failing (bad data, missing GSTIN) never sinks the whole view — that
+ * client is reported with an error flag instead.
  *
  * "ITC at risk" = GST on invoices in the client's books that do not cleanly
  * match GSTR-2B (not_found / mismatch / partial). A client with no 2B source
@@ -17,7 +19,14 @@
  * of data is never mistaken for a clean book.
  */
 
-const { getReconciliationData } = require("./reconciliation.service");
+const {
+  getPeriodWindow,
+  loadPeriodInvoiceDocuments,
+  toPeriodDocuments,
+  toMatchableInvoices,
+  buildReconciliationRows
+} = require("./reconciliation.service");
+const { matchInvoices, unavailableResults } = require("./gstr2b-matching");
 
 const PERIOD_PATTERN = /^(0[1-9]|1[0-2])\d{4}$/;
 
@@ -67,6 +76,31 @@ const getItcDeskOverview = async (db, { firmId, period }) => {
 
   const clients = await listActiveClients(db, { firmId });
 
+  // Three firm-wide queries instead of three per client: at 300 clients the
+  // per-client loop was ~900 round trips and ~2.5s, growing with history.
+  const window = getPeriodWindow(period);
+  const documentRows = await loadPeriodInvoiceDocuments(db, { firmId, ...window });
+  const docsByClient = new Map();
+  for (const row of documentRows) {
+    if (!docsByClient.has(row.client_id)) docsByClient.set(row.client_id, []);
+    docsByClient.get(row.client_id).push(row);
+  }
+  // Saved GSTR-2B only. The portfolio view deliberately never pulls live from
+  // the GSP: that would be one paid, slow (up to 20s) Sandbox call per client
+  // on every page load. A client without a saved 2B shows "needs data"; the
+  // client's own reconciliation page fetches live and saves it, after which
+  // it appears here.
+  const snapshotResult = await db.query(
+    `
+      SELECT DISTINCT ON (client_id) client_id, source, records
+      FROM gstr2b_snapshots
+      WHERE firm_id = $1 AND period = $2
+      ORDER BY client_id, created_at DESC
+    `,
+    [firmId, period]
+  );
+  const snapshots = new Map(snapshotResult.rows.map((r) => [r.client_id, r]));
+
   const rows = [];
   for (const client of clients) {
     if (!client.gstin) {
@@ -85,8 +119,12 @@ const getItcDeskOverview = async (db, { firmId, period }) => {
     }
 
     try {
-      const recon = await getReconciliationData(db, { firmId, clientId: client.id, period });
-      const s = recon.summary || {};
+      const documents = toPeriodDocuments(docsByClient.get(client.id) || [], window);
+      const invoices = toMatchableInvoices(documents);
+      const snapshot = snapshots.get(client.id);
+      const source = snapshot ? snapshot.source : "unavailable";
+      const matches = snapshot ? matchInvoices(invoices, snapshot.records) : unavailableResults(invoices);
+      const { summary: s } = buildReconciliationRows(documents, matches);
       const exceptions =
         Number(s.notFound || 0) + Number(s.mismatched || 0) + Number(s.partial || 0);
       rows.push({
@@ -94,8 +132,8 @@ const getItcDeskOverview = async (db, { firmId, period }) => {
         clientName: client.name,
         gstin: client.gstin,
         // "needs_data" when there's no 2B source yet — distinct from a clean book.
-        status: recon.source === "unavailable" ? "needs_data" : "reconciled",
-        source: recon.source,
+        status: source === "unavailable" ? "needs_data" : "reconciled",
+        source,
         itcAtRisk: Number(s.itcAtRisk || 0),
         totalGst: Number(s.totalGstAmount || 0),
         invoiceCount: Number(s.total || 0),

@@ -11,7 +11,7 @@ if (process.env.SENTRY_DSN) {
 const app = require("./app");
 const env = require("./config/env");
 const pool = require("./db/pool");
-const { assertRuntimeRoleIsNotSuperuser } = require("./db/assert-safe-role");
+const { assertRuntimeRoleIsNotSuperuser, assertOwnedTablesForceRls } = require("./db/assert-safe-role");
 const { addScheduledRequestsJob, addDocumentDigestJob } = require("./jobs/scheduled-requests.job");
 const { getFrontendDomainWarning } = require("./config/deployment-checks");
 const { verifyTransport, closeTransport } = require("./services/email.service");
@@ -27,6 +27,7 @@ const startServer = async () => {
   }
   await pool.query("SELECT 1");
   await assertRuntimeRoleIsNotSuperuser();
+  await assertOwnedTablesForceRls();
 
   // Non-fatal email self-test. env.js already refuses to boot in production
   // without a configured provider; this catches a provider that is configured

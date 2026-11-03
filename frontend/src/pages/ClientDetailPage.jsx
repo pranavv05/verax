@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
+import { buildWhatsAppShareUrl } from "../lib/whatsapp";
 import AppShell from "../components/layout/AppShell";
 import EmptyState from "../components/ui/EmptyState";
 import { ClientDetailSkeleton } from "../components/ui/skeletons";
@@ -110,6 +111,7 @@ const ClientDetailPage = () => {
   const [enablingPortal, setEnablingPortal] = useState(false);
   const [tempPassword, setTempPassword] = useState("");
   const [tempPasswordCopied, setTempPasswordCopied] = useState(false);
+  const [portalEmailSent, setPortalEmailSent] = useState(true);
   const [requestDocsTypes, setRequestDocsTypes] = useState(docTypeOptions.map(([value]) => value));
   const [requestDocsError, setRequestDocsError] = useState("");
   const [copyLinkFeedback, setCopyLinkFeedback] = useState("");
@@ -229,18 +231,16 @@ const ClientDetailPage = () => {
 
   // Build a WhatsApp share link: opens WhatsApp with a prefilled message that
   // contains the client's upload link. Uses the client's phone when present
-  // (digits only; wa.me wants no +, spaces or dashes) so it opens the right
-  // chat; without a number it opens the contact picker. This is the zero-
-  // integration "send on WhatsApp" that works today — no WhatsApp Business API
-  // needed — and reuses the same magic upload link as copy/email.
+  // so it opens the right chat; without a number it opens the contact picker.
+  // This is the zero-integration "send on WhatsApp" that works today — no
+  // WhatsApp Business API needed — and reuses the same magic upload link as
+  // copy/email. See lib/whatsapp.js for why the phone needs a country code added.
   const whatsappShareUrl = () => {
     const link = uploadLinkFor(client?.uploadToken);
     if (!link) return "";
     const message =
       `Hi${client?.name ? " " + client.name : ""}, please upload your invoices and bank statements here: ${link}`;
-    const phoneDigits = String(client?.phone || "").replace(/\D/g, "");
-    const base = phoneDigits ? `https://wa.me/${phoneDigits}` : "https://wa.me/";
-    return `${base}?text=${encodeURIComponent(message)}`;
+    return buildWhatsAppShareUrl({ phone: client?.phone, message });
   };
 
   const onShareWhatsApp = () => {
@@ -314,6 +314,7 @@ const ClientDetailPage = () => {
       const result = await clientsApi.enablePortal(id, { portalEmail });
       setTempPassword(result.tempPassword);
       setTempPasswordCopied(false);
+      setPortalEmailSent(result.emailSent !== false);
       await loadClient();
     } catch (enableError) {
       setPortalError(parseApiError(enableError, "Unable to enable the client portal"));
@@ -745,10 +746,17 @@ const ClientDetailPage = () => {
                 </button>
               </div>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-ui-fg-3">
-              We also emailed these details to {portalEmail}. They sign in at{" "}
-              <span className="ui-mono text-ui-fg-2">/client-portal/login</span>.
-            </p>
+            {portalEmailSent ? (
+              <p className="mt-3 text-xs leading-relaxed text-ui-fg-3">
+                We also emailed these details to {portalEmail}. They sign in at{" "}
+                <span className="ui-mono text-ui-fg-2">/client-portal/login</span>.
+              </p>
+            ) : (
+              <Alert tone="warn" className="mt-3">
+                We couldn&apos;t email {portalEmail}. Copy the password above and share it with your client
+                yourself — they sign in at <span className="ui-mono">/client-portal/login</span>.
+              </Alert>
+            )}
           </div>
         ) : (
           <FormField label="Client's email address" htmlFor="portal-email">

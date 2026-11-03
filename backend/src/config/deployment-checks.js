@@ -52,7 +52,34 @@ const getFrontendDomainWarning = (frontendUrl) => {
  * - LOCAL_STORAGE on a platform with an ephemeral disk (Render, most PaaS):
  *   every client document is lost on the next deploy. Self-hosted servers with
  *   a persistent volume can opt in with ALLOW_LOCAL_STORAGE_IN_PRODUCTION.
+ * - A signing secret copied unchanged from an example file: those values are
+ *   public in this repository, so anyone could forge a login for any firm.
+ * - A non-https FRONTEND_URL: the refresh cookie is Secure in production and
+ *   is never sent over plain http, so nobody could stay logged in.
  */
+const SECRET_KEYS = ["JWT_SECRET", "JWT_REFRESH_SECRET", "CLIENT_JWT_SECRET", "AI_SERVICE_API_KEY"];
+// Fragments of every placeholder in .env.example / .env.production.example /
+// CI config. Matching is case-insensitive.
+const PLACEHOLDER_MARKERS = [
+  "replace-with",
+  "replace_with",
+  "change-me",
+  "change_me",
+  "changeme",
+  "placeholder",
+  "min_32_chars",
+  "your-secret",
+  "your_secret",
+  "example",
+  "ci-only"
+];
+
+const getPlaceholderSecrets = (config) =>
+  SECRET_KEYS.filter((key) => {
+    const value = String(config[key] || "").toLowerCase();
+    return value && PLACEHOLDER_MARKERS.some((marker) => value.includes(marker));
+  });
+
 const getProductionConfigErrors = (config) => {
   const errors = [];
   const provider = config.EMAIL_PROVIDER || "smtp";
@@ -70,6 +97,26 @@ const getProductionConfigErrors = (config) => {
           "and password resets are never delivered."
       );
     }
+  }
+
+  const placeholders = getPlaceholderSecrets(config);
+  if (placeholders.length > 0) {
+    errors.push(
+      `${placeholders.join(", ")} still ${placeholders.length === 1 ? "has its" : "have their"} example value. ` +
+        "Example values are public, so anyone could sign their own login tokens. Generate real ones with " +
+        "`openssl rand -hex 32` (a different value for each)."
+    );
+  }
+
+  try {
+    if (config.FRONTEND_URL && new URL(config.FRONTEND_URL).protocol !== "https:") {
+      errors.push(
+        "FRONTEND_URL must be https:// in production — the login cookie is Secure and browsers never send " +
+          "it over plain http, so every page reload would log users out."
+      );
+    }
+  } catch {
+    // env.js already rejects a malformed FRONTEND_URL.
   }
 
   if (config.LOCAL_STORAGE && !config.ALLOW_LOCAL_STORAGE_IN_PRODUCTION) {

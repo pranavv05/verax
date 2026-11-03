@@ -21,9 +21,12 @@ const request = require("supertest");
 const { requireAuth } = require("../../src/middlewares/auth.middleware");
 const {
   perUserKey,
+  perAgentKey,
   standardApiLimiter,
+  agentApiLimiter,
   buildPublicUploadLimiters,
   STANDARD_API_MAX,
+  AGENT_API_MAX,
   PUBLIC_UPLOAD_MAX_PER_HOUR,
   MAGIC_LINK_OPEN_MAX
 } = require("../../src/middlewares/rate-limit.middleware");
@@ -79,6 +82,63 @@ describe("standard API limiter", () => {
   test("the per-user budget is well above the old 300-per-firm cap", () => {
     expect(STANDARD_API_MAX).toBeGreaterThanOrEqual(900);
   });
+});
+
+describe("perAgentKey", () => {
+  test("keys an authenticated agent request on the agent, not the IP", () => {
+    expect(perAgentKey({ agent: { id: "agent-1" }, ip: "10.0.0.1" })).toBe("agent:agent-1");
+  });
+
+  test("falls back to the IP when there is no authenticated agent", () => {
+    expect(perAgentKey({ ip: "10.0.0.1" })).toBe("ip:10.0.0.1");
+  });
+});
+
+describe("agent API limiter", () => {
+  // Regression test: the Tally agent routes (heartbeat/claim/result) used
+  // requireAgentAuth with no rate limiter at all — every other router in the
+  // app applies standardApiLimiter, this one was simply missed. An agent
+  // route can't use standardApiLimiter directly: its default key reads
+  // req.user.userId, which agent requests never set, so every agent (and
+  // every other agent behind the same office NAT) would silently collapse
+  // onto one shared IP-keyed budget.
+  const app = express();
+  app.set("trust proxy", 1);
+  app.get(
+    "/agent-limited",
+    (req, res, next) => {
+      req.agent = { id: req.headers["x-agent-id"] };
+      next();
+    },
+    agentApiLimiter,
+    (req, res) => res.sendStatus(200)
+  );
+
+  test("two agents behind one office IP each get their own budget", async () => {
+    const officeIp = freshIp();
+    const agentHeader = (id) => ({ "X-Agent-Id": id });
+
+    for (let i = 0; i < AGENT_API_MAX; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await request(app)
+        .get("/agent-limited")
+        .set("X-Forwarded-For", officeIp)
+        .set(agentHeader("agent-a"));
+      expect(res.status).toBe(200);
+    }
+    const exhausted = await request(app)
+      .get("/agent-limited")
+      .set("X-Forwarded-For", officeIp)
+      .set(agentHeader("agent-a"));
+    expect(exhausted.status).toBe(429);
+
+    // Same office IP, different agent — unaffected by agent-a's budget.
+    const otherAgent = await request(app)
+      .get("/agent-limited")
+      .set("X-Forwarded-For", officeIp)
+      .set(agentHeader("agent-b"));
+    expect(otherAgent.status).toBe(200);
+  }, 30000);
 });
 
 describe("public upload limiters", () => {

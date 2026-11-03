@@ -1,0 +1,47 @@
+[
+  {
+    "name": "a clean create is ok",
+    "xml": "<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><ERRORS>0</ERRORS><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>",
+    "expect": { "ok": true, "created": 1, "altered": 0, "errors": 0, "lineErrors": [], "error": null }
+  },
+  {
+    "name": "an alter (re-import of the same REMOTEID) is ok",
+    "xml": "<RESPONSE><CREATED>0</CREATED><ALTERED>1</ALTERED><ERRORS>0</ERRORS></RESPONSE>",
+    "expect": { "ok": true, "created": 0, "altered": 1, "errors": 0, "lineErrors": [], "error": null }
+  },
+  {
+    "name": "a LINEERROR is a terminal, non-ok result",
+    "xml": "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><ERRORS>1</ERRORS><LINEERROR>Ledger 'Foo' does not exist</LINEERROR></RESPONSE>",
+    "expect": { "ok": false, "created": 0, "altered": 0, "errors": 1, "lineErrors": ["Ledger 'Foo' does not exist"], "error": "Ledger 'Foo' does not exist" }
+  },
+  {
+    "name": "multiple line errors are all captured and joined",
+    "xml": "<RESPONSE><ERRORS>2</ERRORS><LINEERROR>err one</LINEERROR><LINEERROR>\n err two \n</LINEERROR></RESPONSE>",
+    "expect": { "ok": false, "created": 0, "altered": 0, "errors": 2, "lineErrors": ["err one", "err two"], "error": "err one; err two" }
+  },
+  {
+    "name": "zero created and zero altered with no errors is still not ok",
+    "xml": "<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><ERRORS>0</ERRORS></RESPONSE>",
+    "expect": { "ok": false, "created": 0, "altered": 0, "errors": 0, "lineErrors": [], "error": "Tally reported no created or altered vouchers" }
+  },
+  {
+    "name": "whitespace and lower-case tags are tolerated",
+    "xml": "<RESPONSE>\n  <created> 1 </created>\n  <ERRORS>0</ERRORS>\n</RESPONSE>",
+    "expect": { "ok": true, "created": 1, "altered": 0, "errors": 0, "lineErrors": [], "error": null }
+  },
+  {
+    "name": "EXCEPTIONS count as errors",
+    "xml": "<RESPONSE><CREATED>1</CREATED><ERRORS>0</ERRORS><EXCEPTIONS>1</EXCEPTIONS></RESPONSE>",
+    "expect": { "ok": false, "created": 1, "altered": 0, "errors": 1, "lineErrors": [], "error": "Tally reported 1 error(s) importing the voucher" }
+  },
+  {
+    "name": "empty input is not ok and does not throw",
+    "xml": "",
+    "expect": { "ok": false, "created": 0, "altered": 0, "errors": 0, "lineErrors": [], "error": "Tally reported no created or altered vouchers" }
+  },
+  {
+    "name": "garbage input is not ok and does not throw",
+    "xml": "not xml",
+    "expect": { "ok": false, "created": 0, "altered": 0, "errors": 0, "lineErrors": [], "error": "Tally reported no created or altered vouchers" }
+  }
+]

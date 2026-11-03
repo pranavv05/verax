@@ -1021,12 +1021,20 @@ const ReviewPage = () => {
         ) : null}
         {tallyJob?.status === "failed" ? (
           <Alert tone="err" title="Tally push failed">
-            {tallyJob.last_error || "The agent could not post this voucher."} Check that the Verax agent is running and
-            the right company is open in TallyPrime, then try again.
+            {tallyJob.last_error || "The agent could not post this voucher."}{" "}
+            {/does not exist/i.test(tallyJob.last_error || "")
+              ? "Create that ledger in TallyPrime (or correct the name here so it matches Tally exactly), then push again."
+              : "Check that the Verax agent is running and the right company is open in TallyPrime, then try again."}
           </Alert>
         ) : null}
         {tallyJob?.status === "queued" || tallyJob?.status === "claimed" ? (
-          <Alert tone="info">Waiting for your Tally agent to pick up this voucher…</Alert>
+          <Alert tone="info">
+            Waiting for your Tally agent to pick up this voucher… If nothing happens within a minute,{" "}
+            <Link to="/settings/tally-agent" className="font-medium underline">
+              check the agent&apos;s status
+            </Link>{" "}
+            — it shows if TallyPrime is closed or the wrong company is open.
+          </Alert>
         ) : null}
         {toast ? (
           <Alert tone="ok" onDismiss={() => setToast("")}>

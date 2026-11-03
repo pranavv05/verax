@@ -8,7 +8,7 @@ if (process.env.SENTRY_DSN) {
   });
 }
 
-const { assertRuntimeRoleIsNotSuperuser } = require("../db/assert-safe-role");
+const { assertRuntimeRoleIsNotSuperuser, assertOwnedTablesForceRls } = require("../db/assert-safe-role");
 const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.job");
 
 // An uncaught exception or unhandled rejection previously crashed this
@@ -62,6 +62,7 @@ process.on("SIGTERM", () => {
 (async () => {
   try {
     await assertRuntimeRoleIsNotSuperuser();
+    await assertOwnedTablesForceRls();
     await worker.run();
   } catch (error) {
     process.stderr.write(`Worker failed to start: ${error.message}\n`);

@@ -18,6 +18,27 @@ const ApiError = require("../utils/api-error");
 const secretBox = require("../utils/secret-box");
 const sandbox = require("./sandbox-gsp.service");
 
+// sandbox-gsp.service throws a plain SandboxError (not an ApiError) for the
+// "not_configured" case, which errorHandler's production message-hiding
+// treats like any other unhandled exception — statusCode defaults to 500,
+// so a firm that simply hasn't set up Sandbox GSP credentials yet sees an
+// opaque "Internal server error" with no way to tell that apart from a real
+// crash. Translating it to a clean, known ApiError here (503, not 500 —
+// "this optional integration isn't set up" is categorically different from
+// "something broke") lets the real message reach the UI either way.
+const withSandboxConfigCheck = async (fn) => {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error && error.code === "not_configured") {
+      throw ApiError.serviceUnavailable(
+        "Live GSTR-2B isn't set up for this firm yet. Ask your administrator to configure the GST data provider, or upload the GSTR-2B file instead."
+      );
+    }
+    throw error;
+  }
+};
+
 // Refresh the taxpayer token when it is within this window of expiring, so a
 // reconciliation started near the edge doesn't fail mid-call.
 const REFRESH_SKEW_MS = 10 * 60 * 1000;
@@ -80,7 +101,7 @@ const requestOtp = async (db, { firmId, clientId, gstUsername }) => {
     await setGstUsername(db, { firmId, clientId, gstUsername });
   }
 
-  await sandbox.requestTaxpayerOtp({ username, gstin: client.gstin });
+  await withSandboxConfigCheck(() => sandbox.requestTaxpayerOtp({ username, gstin: client.gstin }));
 
   // Upsert a pending session row so the UI reflects "OTP sent".
   await db.query(
@@ -104,11 +125,13 @@ const verifyOtp = async (db, { firmId, clientId, userId, otp }) => {
     throw ApiError.badRequest("The client's GST portal username is missing; request an OTP first.");
   }
 
-  const verified = await sandbox.verifyTaxpayerOtp({
-    username: client.gst_username,
-    gstin: client.gstin,
-    otp
-  });
+  const verified = await withSandboxConfigCheck(() =>
+    sandbox.verifyTaxpayerOtp({
+      username: client.gst_username,
+      gstin: client.gstin,
+      otp
+    })
+  );
 
   const tokenExpiryMs = toMsOrNull(verified.tokenExpiry);
   const sessionExpiryMs = toMsOrNull(verified.sessionExpiry);

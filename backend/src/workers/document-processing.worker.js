@@ -29,7 +29,7 @@ const crashWithReport = (label) => (errorOrReason) => {
 process.on("uncaughtException", crashWithReport("Uncaught exception"));
 process.on("unhandledRejection", crashWithReport("Unhandled rejection"));
 const { DOCUMENT_PROCESSING_QUEUE } = require("../constants/queues");
-const { assertRuntimeRoleIsNotSuperuser } = require("../db/assert-safe-role");
+const { assertRuntimeRoleIsNotSuperuser, assertOwnedTablesForceRls } = require("../db/assert-safe-role");
 const { createScheduledRequestsWorker } = require("../jobs/scheduled-requests.job");
 const { createDocumentJobProcessor, createStuckDocumentRecovery } = require("./document-job.processor");
 
@@ -138,6 +138,7 @@ process.on("SIGTERM", () => {
 (async () => {
   try {
     await assertRuntimeRoleIsNotSuperuser();
+    await assertOwnedTablesForceRls();
     await sweepStuckDocuments();
     stuckSweepTimer = setInterval(sweepStuckDocuments, STUCK_SWEEP_INTERVAL_MS);
     const runs = [worker.run()];

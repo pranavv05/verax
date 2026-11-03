@@ -10,6 +10,7 @@ import { firmsApi } from "../api/firms-api";
 import { cn, parseApiError } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
 import { isAdmin } from "../utils/permissions";
+import FirmDataSection from "../components/settings/FirmDataSection";
 
 const firmSchema = z.object({
   name: z.string().min(2, "Firm name must be at least 2 characters").max(255, "Firm name is too long")
@@ -185,7 +186,8 @@ const SettingsPage = () => {
     { id: "plan", label: "Plan" },
     { id: "appearance", label: "Appearance" },
     { id: "profile", label: "Profile" },
-    canAdmin ? { id: "permissions", label: "Permissions" } : null
+    canAdmin ? { id: "permissions", label: "Permissions" } : null,
+    canAdmin ? { id: "data", label: "Your data" } : null
   ].filter(Boolean);
   const nameChanged = (settings?.name || "") !== form.name;
 
@@ -374,6 +376,8 @@ const SettingsPage = () => {
                 </TableScroll>
               </Card>
             ) : null}
+
+            {canAdmin ? <FirmDataSection firmName={settings?.name || ""} /> : null}
           </div>
         </div>
       )}

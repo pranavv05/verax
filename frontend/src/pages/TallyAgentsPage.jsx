@@ -21,6 +21,9 @@ const relativeTime = (iso) => {
   return `${Math.floor(hrs / 24)} d ago`;
 };
 
+// Where firms download the Windows agent; set per deployment.
+const AGENT_DOWNLOAD_URL = import.meta.env.VITE_TALLY_AGENT_DOWNLOAD_URL || "";
+
 // An agent seen within 2 minutes is considered online (it heartbeats on a short
 // poll). Anything older is offline/idle.
 const isOnline = (iso) => {
@@ -182,6 +185,20 @@ const TallyAgentsPage = () => {
                       {copied ? "Copied" : "Copy"}
                     </button>
                   </div>
+                  <ol className="mt-3 list-decimal space-y-1 pl-4 text-ui-fg-2">
+                    <li>
+                      {AGENT_DOWNLOAD_URL ? (
+                        <a className="font-medium text-ui-accent-text underline" href={AGENT_DOWNLOAD_URL}>
+                          Download the Verax Tally Agent
+                        </a>
+                      ) : (
+                        "Get the Verax Tally Agent installer from Verax support"
+                      )}{" "}
+                      on the PC that runs TallyPrime.
+                    </li>
+                    <li>Open TallyPrime with only this client&apos;s company loaded.</li>
+                    <li>Double-click <span className="ui-mono">verax-tally-agent.exe</span>, paste this token, and pick the company.</li>
+                  </ol>
                 </Alert>
               </div>
             ) : null}
@@ -223,6 +240,13 @@ const TallyAgentsPage = () => {
                           last seen {relativeTime(agent.last_seen_at)}
                           {agent.agent_version ? ` · ${agent.agent_version}` : ""}
                         </p>
+                        {online && agent.tally_status && agent.tally_status !== "ready" ? (
+                          <p className="mt-1 text-xs font-medium text-ui-warn">
+                            Holding vouchers: {agent.tally_status}
+                          </p>
+                        ) : online && agent.tally_status === "ready" ? (
+                          <p className="mt-1 text-xs text-ui-ok">Tally is open and ready</p>
+                        ) : null}
                       </div>
                       {agent.status !== "revoked" ? (
                         <button

@@ -1,3 +1,11 @@
+// "This month" in IST as a timestamptz range. Written as a range on the bare
+// column (not date_trunc(...) = date_trunc(...)) so it can use the
+// (firm_id, uploaded_at) index instead of scanning every document the firm has
+// ever had — the same month boundaries, India having no DST.
+const IST_MONTH_START = "(date_trunc('month', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')";
+const IST_NEXT_MONTH_START =
+  "((date_trunc('month', NOW() AT TIME ZONE 'Asia/Kolkata') + interval '1 month') AT TIME ZONE 'Asia/Kolkata')";
+
 const getDashboardOverview = async (db, { firmId }) => {
   const result = await db.query(
     `
@@ -148,8 +156,8 @@ const getClientProgress = async (db, { firmId, limit = CLIENT_PROGRESS_LIMIT }) 
         FROM documents
         WHERE firm_id = $1
           AND deleted_at IS NULL
-          AND date_trunc('month', uploaded_at AT TIME ZONE 'Asia/Kolkata')
-              = date_trunc('month', NOW() AT TIME ZONE 'Asia/Kolkata')
+          AND uploaded_at >= ${IST_MONTH_START}
+          AND uploaded_at < ${IST_NEXT_MONTH_START}
       )
       SELECT c.id,
              c.name,
@@ -170,12 +178,12 @@ const getClientProgress = async (db, { firmId, limit = CLIENT_PROGRESS_LIMIT }) 
   const coverage = await db.query(
     `
       SELECT
-        COUNT(*) FILTER (WHERE EXISTS (
-          SELECT 1 FROM documents d
-          WHERE d.client_id = c.id
+        COUNT(*) FILTER (WHERE c.id IN (
+          SELECT d.client_id FROM documents d
+          WHERE d.firm_id = $1
             AND d.deleted_at IS NULL
-            AND date_trunc('month', d.uploaded_at AT TIME ZONE 'Asia/Kolkata')
-                = date_trunc('month', NOW() AT TIME ZONE 'Asia/Kolkata')
+            AND d.uploaded_at >= ${IST_MONTH_START}
+            AND d.uploaded_at < ${IST_NEXT_MONTH_START}
         ))::int AS with_uploads,
         COUNT(*)::int AS active_clients
       FROM clients c
@@ -225,10 +233,10 @@ const getDocumentTrend = async (db, { firmId, days = TREND_DAYS }) => {
         SELECT (e.reviewed_at AT TIME ZONE 'Asia/Kolkata')::date AS day, COUNT(*)::int AS n
         FROM extractions e
         JOIN documents d ON d.id = e.document_id
-        WHERE d.firm_id = $1
-          AND d.deleted_at IS NULL
+        WHERE e.firm_id = $1
           AND e.deleted_at IS NULL
           AND e.reviewed_at >= NOW() - ($2::int + 1) * interval '1 day'
+          AND d.deleted_at IS NULL
         GROUP BY 1
       )
       SELECT to_char(days.day, 'YYYY-MM-DD') AS date,
