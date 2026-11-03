@@ -1,10 +1,12 @@
 # paddle imports setuptools at runtime (paddle/utils/cpp_extension), and
 # python:3.12-slim no longer ships setuptools by default, so it must be explicit
 # or the AI service crashes on startup with ModuleNotFoundError: setuptools.
-# 83.0.0 fixes two advisories (PYSEC-2025-49 path traversal, PYSEC-2026-3447)
-# in the deprecated package_index downloader; not on our call path but a
-# free bump, and still within python:3.12-slim's requires-python floor.
-setuptools==83.0.0
+# 84.2.1 fixes three advisories (PYSEC-2025-49 path traversal, PYSEC-2026-3447
+# in the deprecated package_index downloader, and GHSA-xmj3-9gf7-h52w — a
+# Windows-only legacy-egg-install path traversal, not reachable on this
+# Linux-only deployment either); none on our call path but a free bump, and
+# still within python:3.12-slim's requires-python floor (>=3.10).
+setuptools==84.2.1
 # 0.116.2 pulls in starlette >=0.40,<0.49, which resolves to a starlette
 # patch fixing PYSEC-2026-1941 (large multipart uploads block the event
 # loop thread rolling the spooled file to disk) — this service accepts

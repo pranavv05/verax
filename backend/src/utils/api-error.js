@@ -29,6 +29,10 @@ class ApiError extends Error {
   static invalidFileType(message = "Only PDF, JPG, PNG, and Excel files are allowed") {
     return new ApiError(422, message, "INVALID_FILE_TYPE");
   }
+
+  static serviceUnavailable(message) {
+    return new ApiError(503, message, "SERVICE_UNAVAILABLE");
+  }
 }
 
 module.exports = ApiError;

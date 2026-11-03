@@ -63,6 +63,24 @@ describe("requestOtp", () => {
     const db = makeDb({ client: { id: CLIENT, gstin: GSTIN, gst_username: null } });
     await expect(session.requestOtp(db, { firmId: FIRM, clientId: CLIENT })).rejects.toThrow(/username/i);
   });
+
+  test("a firm with no Sandbox credentials gets a clear 503, not an opaque 500", async () => {
+    // Regression test: sandbox-gsp.service's getAppToken throws a plain
+    // SandboxError (not an ApiError) with code "not_configured" and no
+    // statusCode when GSP credentials aren't set. Before this fix, that error
+    // passed straight through to errorHandler, which defaults an unset
+    // statusCode to 500 and — in production — replaces any non-ApiError 5xx's
+    // message with generic "Internal server error", leaving an admin unable
+    // to tell "not configured yet" apart from a real crash.
+    const db = makeDb({ client: { id: CLIENT, gstin: GSTIN, gst_username: "acme@x.com" } });
+    const notConfigured = new Error("Sandbox API key/secret are not configured");
+    notConfigured.code = "not_configured";
+    sandbox.requestTaxpayerOtp.mockRejectedValue(notConfigured);
+
+    const promise = session.requestOtp(db, { firmId: FIRM, clientId: CLIENT });
+    await expect(promise).rejects.toThrow(/live gstr-2b isn't set up/i);
+    await expect(promise).rejects.toMatchObject({ statusCode: 503, name: "ApiError" });
+  });
 });
 
 describe("verifyOtp", () => {
@@ -82,6 +100,17 @@ describe("verifyOtp", () => {
     expect(stored).toMatch(/^v1:/); // encrypted envelope
     expect(stored).not.toContain("plain-taxpayer-token");
     expect(secretBox.decrypt(stored)).toBe("plain-taxpayer-token");
+  });
+
+  test("a firm with no Sandbox credentials gets a clear 503 on verify too", async () => {
+    const db = makeDb({ client: { id: CLIENT, gstin: GSTIN, gst_username: "acme@x.com" } });
+    const notConfigured = new Error("Sandbox API key/secret are not configured");
+    notConfigured.code = "not_configured";
+    sandbox.verifyTaxpayerOtp.mockRejectedValue(notConfigured);
+
+    const promise = session.verifyOtp(db, { firmId: FIRM, clientId: CLIENT, userId: "u1", otp: "123456" });
+    await expect(promise).rejects.toThrow(/live gstr-2b isn't set up/i);
+    await expect(promise).rejects.toMatchObject({ statusCode: 503, name: "ApiError" });
   });
 });
 

@@ -97,6 +97,7 @@ describeIfDb("GSTR-2B snapshots + Tally connector — isolation & concurrency", 
     await adminPool.query(`DELETE FROM tally_sync_jobs WHERE firm_id IN ($1,$2)`, [firmA, firmB]);
     await adminPool.query(`DELETE FROM tally_agents WHERE firm_id IN ($1,$2)`, [firmA, firmB]);
     await adminPool.query(`DELETE FROM gstr2b_snapshots WHERE firm_id IN ($1,$2)`, [firmA, firmB]);
+    await adminPool.query(`DELETE FROM gstr2b_taxpayer_sessions WHERE firm_id IN ($1,$2)`, [firmA, firmB]);
     await adminPool.query(`DELETE FROM documents WHERE firm_id IN ($1,$2)`, [firmA, firmB]);
     await adminPool.query(`DELETE FROM clients WHERE firm_id IN ($1,$2)`, [firmA, firmB]);
     await adminPool.query(`DELETE FROM firms WHERE id IN ($1,$2)`, [firmA, firmB]);
@@ -117,6 +118,31 @@ describeIfDb("GSTR-2B snapshots + Tally connector — isolation & concurrency", 
       client.query(`SELECT id FROM gstr2b_snapshots WHERE firm_id = $1`, [firmA])
     );
     expect(bSees.rows).toHaveLength(0);
+  });
+
+  test("gstr2b_taxpayer_sessions: firm B cannot read firm A's encrypted taxpayer token", async () => {
+    // This table holds the encrypted live-GST taxpayer token (see
+    // secret-box.js) — the most sensitive row this feature writes. It gets
+    // the same RLS pattern as the other tables here, but unlike them never
+    // had its isolation actually proven.
+    await asFirmCommitted(firmA, (client) =>
+      client.query(
+        `INSERT INTO gstr2b_taxpayer_sessions (firm_id, client_id, gstin, token_encrypted, status)
+         VALUES ($1,$2,'29ABCDE1234F1Z5','v1:fake:fake:fake','active')`,
+        [firmA, clientA]
+      )
+    );
+    const bSees = await asFirm(firmB, {}, (client) =>
+      client.query(`SELECT id, token_encrypted FROM gstr2b_taxpayer_sessions WHERE firm_id = $1`, [firmA])
+    );
+    expect(bSees.rows).toHaveLength(0);
+
+    // Sanity check the row really exists for firm A, so the empty result
+    // above is RLS doing its job and not just an empty table.
+    const aSees = await asFirm(firmA, {}, (client) =>
+      client.query(`SELECT id FROM gstr2b_taxpayer_sessions WHERE firm_id = $1`, [firmA])
+    );
+    expect(aSees.rows.length).toBeGreaterThan(0);
   });
 
   test("tally_agents: firm B cannot read firm A's agent rows", async () => {
