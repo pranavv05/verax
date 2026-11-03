@@ -190,7 +190,9 @@ agentRouter.use(requireAgentAuth);
 agentRouter.use(agentApiLimiter);
 
 const heartbeatSchema = Joi.object({
-  agentVersion: Joi.string().trim().max(50).allow("").optional()
+  agentVersion: Joi.string().trim().max(50).allow("").optional(),
+  // "ready", or why the agent is holding jobs back (Tally closed, wrong company).
+  tallyStatus: Joi.string().trim().max(200).allow("").optional()
 });
 
 const resultSchema = Joi.object({
@@ -211,7 +213,12 @@ agentRouter.post(
   asyncHandler(async (req, res) => {
     const { id: agentId, firmId } = req.agent;
     await req.withTenantTransaction((db) =>
-      connector.recordHeartbeat(db, { agentId, firmId, agentVersion: req.body.agentVersion })
+      connector.recordHeartbeat(db, {
+        agentId,
+        firmId,
+        agentVersion: req.body.agentVersion,
+        tallyStatus: req.body.tallyStatus
+      })
     );
     res.status(200).json({ ok: true });
   })
@@ -259,7 +266,11 @@ agentRouter.post(
   })
 );
 
-router.use("/", appRouter);
+// Order matters: appRouter is mounted at "/" and its router-level requireAuth
+// runs for every request that enters it — including /agent/*, whose agent
+// token is not a firm JWT. Mounted first, it rejected every agent call with
+// 401, so the agent router must come first.
 router.use("/agent", agentRouter);
+router.use("/", appRouter);
 
 module.exports = router;

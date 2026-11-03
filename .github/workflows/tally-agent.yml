@@ -1,0 +1,42 @@
+name: Tally agent
+
+on:
+  pull_request:
+    paths:
+      - "tally-agent/**"
+      - ".github/workflows/tally-agent.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tally-agent/**"
+
+jobs:
+  test-and-build:
+    name: Test + build Windows exe
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tally-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tally-agent/go.mod
+          cache-dependency-path: tally-agent/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: vet (linux + windows — the service and DPAPI code only compile for windows)
+        run: |
+          go vet ./...
+          GOOS=windows GOARCH=amd64 go vet ./...
+      - run: go test -race ./...
+      - name: Build verax-tally-agent.exe
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_SHA::7}" \
+            -o dist/verax-tally-agent.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verax-tally-agent-windows-amd64
+          path: tally-agent/dist/verax-tally-agent.exe
+          retention-days: 30

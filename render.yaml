@@ -73,6 +73,9 @@
 #
 # Then in Vercel, set:
 #   - VITE_API_BASE_URL = verax-backend's custom domain, e.g. https://api.yourdomain.in
+#   - VITE_TALLY_AGENT_DOWNLOAD_URL (optional) = where firms download the signed
+#     verax-tally-agent.exe (built from tally-agent/, see its README). Unset,
+#     the Tally agent page tells firms to ask support for the installer.
 
 databases:
   - name: verax-postgres

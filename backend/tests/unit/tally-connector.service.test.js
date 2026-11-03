@@ -64,6 +64,17 @@ describe("parseTallyResponse", () => {
   });
 });
 
+// The Windows agent (tally-agent/, Go) re-implements this parser. Both read the
+// same fixture file, so the two implementations can't silently drift apart.
+describe("parseTallyResponse parity with the Tally agent", () => {
+  const fixtures = require("../../../tally-agent/testdata/tally_responses.json");
+  test.each(fixtures.map((f) => [f.name, f]))("%s", (_name, fixture) => {
+    const result = parseTallyResponse(fixture.xml);
+    expect(result).toMatchObject(fixture.expect);
+    expect(result.retryable).toBe(false);
+  });
+});
+
 describe("buildVoucherXml idempotency (REMOTEID injection)", () => {
   const invoiceDoc = {
     id: "doc-1",
