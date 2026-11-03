@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Logical backup (pg_dump custom format) of the Verax database.
+# Logical backup of the Verax database, safe to run while the app is live.
 #
 # Why this script exists: on managed Postgres (Render and most others) the
 # only role you get is the database OWNER, not a superuser. Every tenant table
@@ -8,89 +8,102 @@
 # security policy"), and `pg_dump --enable-row-security` is worse: with no
 # firm selected it writes a dump with ZERO tenant rows and exits 0.
 #
-# So, when the role is not a superuser / BYPASSRLS, this script lifts FORCE
-# RLS, dumps, and puts FORCE back (also on error or Ctrl-C), then checks it
-# really is back. While FORCE is lifted, RLS does not bind the owner role —
-# and on Render the app connects as that role. STOP the backend and worker
-# first (Render: suspend both services). The script also refuses while it can
-# see another session of the role, but an idle app may hold no connection at
-# that moment, so that check is a backstop, not a substitute. ALLOW_LIVE=1
-# skips it, accepting the window knowingly.
+# How it works for an owner role:
+#   - schema: pg_dump --schema-only (reads no rows, so RLS doesn't apply);
+#   - data: one shared snapshot is exported, then each table is copied in its
+#     own transaction that imports that snapshot, lifts FORCE RLS, copies,
+#     and ROLLS BACK. The lifted FORCE is never committed: no other session
+#     ever sees it, and a crash or kill mid-backup leaves nothing to undo.
+#     Every table is read at the same instant, so the backup is consistent.
+#   - Lifting FORCE takes an exclusive lock on that one table for as long as
+#     its copy runs, so app requests touching it wait (not fail) meanwhile.
+#     lock_timeout stops the backup, rather than the app, from waiting long.
 #
-# The dump records the tables as NO FORCE (that is how they were while it
-# ran). Restore it with backend/scripts/db-restore.sh, which puts FORCE back;
-# the backend also refuses to start if any RLS table it owns lacks FORCE.
+# Superuser / BYPASSRLS roles (self-hosted docker-compose) use pg_dump -Fc.
 #
-# Superuser / BYPASSRLS roles (self-hosted docker-compose) dump directly.
-#
-# Usage:  DATABASE_URL=postgres://... backend/scripts/db-backup.sh [output.dump]
-# Restore: DATABASE_URL=postgres://... backend/scripts/db-restore.sh output.dump
-# Uploaded documents live in S3, not in this dump — back the bucket up
-# separately (S3 versioning or replication).
+# Usage:   DATABASE_URL=postgres://... backend/scripts/db-backup.sh [output]
+# Restore: DATABASE_URL=postgres://<empty db> backend/scripts/db-restore.sh <output>
+# Uploaded documents live in S3, not in this backup — enable S3 versioning.
 set -euo pipefail
 
 URL="${DATABASE_URL:?set DATABASE_URL to the database owner connection string}"
-OUT="${1:-verax-$(date -u +%Y%m%dT%H%M%SZ).dump}"
-q() { psql "$URL" -v ON_ERROR_STOP=1 -tAqc "$1"; }
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+LOCK_TIMEOUT="${BACKUP_LOCK_TIMEOUT:-15s}"
+q() { psql "$URL" -X -v ON_ERROR_STOP=1 -tAqc "$1"; }
 
 if [ "$(q "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")" = "t" ]; then
+  OUT="${1:-verax-$STAMP.dump}"
   pg_dump --format=custom --file="$OUT.partial" "$URL"
   mv "$OUT.partial" "$OUT"
   pg_restore --list "$OUT" > /dev/null
-  echo "backup ok: $OUT"
+  echo "backup ok: $OUT (pg_dump custom format)"
   exit 0
 fi
 
-others="$(q "SELECT count(*) FROM pg_stat_activity WHERE usename = current_user AND datname = current_database() AND pid <> pg_backend_pid()")"
-if [ "$others" != "0" ] && [ "${ALLOW_LIVE:-}" != "1" ]; then
-  echo "Refusing: $others other session(s) are connected as this role (the backend/worker?)." >&2
-  echo "Row Level Security is lifted for this role while the dump runs. Stop the backend and" >&2
-  echo "worker first, or re-run with ALLOW_LIVE=1 to accept that window." >&2
-  exit 1
-fi
-
-tables="$(q "SELECT string_agg(format('%I.%I', n.nspname, c.relname), ',' ORDER BY c.relname)
-             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relkind = 'r' AND c.relforcerowsecurity")"
-if [ -z "$tables" ]; then
-  echo "No FORCE RLS tables found — refusing, this does not look like a Verax database." >&2
-  exit 1
-fi
-
-alter_all() {
-  local mode="$1" sql="" t
-  IFS=',' read -ra list <<< "$tables"
-  for t in "${list[@]}"; do sql+="ALTER TABLE $t $mode ROW LEVEL SECURITY;"; done
-  psql "$URL" -v ON_ERROR_STOP=1 -q -1 -c "$sql"
-}
-
-restore_force() {
+OUT="${1:-verax-$STAMP.vxbak}"
+WORK="$(mktemp -d)"
+cleanup() {
   local status=$?
-  trap - EXIT INT TERM
-  if alter_all FORCE; then
-    local missing
-    missing="$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                  WHERE format('%I.%I', n.nspname, c.relname) = ANY (string_to_array('$tables', ','))
-                    AND NOT c.relforcerowsecurity")"
-    if [ "$missing" = "0" ]; then
-      echo "FORCE ROW LEVEL SECURITY restored on all tables."
-    else
-      echo "!!! $missing table(s) still lack FORCE ROW LEVEL SECURITY. Fix before restarting the app:" >&2
-      echo "!!!   run this script's FORCE step again, or ALTER TABLE <t> FORCE ROW LEVEL SECURITY" >&2
-      status=1
-    fi
-  else
-    echo "!!! Could not restore FORCE ROW LEVEL SECURITY. Before restarting the app, run for each of:" >&2
-    echo "!!!   $tables" >&2
-    echo "!!!   ALTER TABLE <table> FORCE ROW LEVEL SECURITY;" >&2
-    status=1
-  fi
+  if [ -n "${HOLD_PID:-}" ]; then kill "$HOLD_PID" 2> /dev/null || true; fi
+  rm -rf "$WORK"
+  [ "$status" = "0" ] || rm -f "$OUT.partial"
   exit "$status"
 }
+trap cleanup EXIT INT TERM
+mkdir -p "$WORK/data"
 
-trap restore_force EXIT INT TERM
-alter_all "NO FORCE"
-pg_dump --format=custom --file="$OUT.partial" "$URL"
+# 1. Hold one snapshot open for the whole backup.
+coproc HOLD { psql "$URL" -X -v ON_ERROR_STOP=1 -tAq; }
+echo "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SELECT pg_export_snapshot();" >&"${HOLD[1]}"
+read -r -t 30 SNAPSHOT <&"${HOLD[0]}" || { echo "could not export a snapshot" >&2; exit 1; }
+
+# 2. Schema, from that same snapshot. No ownership, so it restores as any role.
+pg_dump "$URL" --snapshot="$SNAPSHOT" --no-owner --section=pre-data --file="$WORK/pre-data.sql"
+pg_dump "$URL" --snapshot="$SNAPSHOT" --no-owner --section=post-data --file="$WORK/post-data.sql"
+
+# 3. Data, one table per rolled-back transaction on the shared snapshot.
+: > "$WORK/load.sql"
+: > "$WORK/manifest.tsv"
+n=0
+while IFS='|' read -r qualified forced; do
+  [ -n "$qualified" ] || continue
+  n=$((n + 1))
+  file="data/$n.copy"
+  lift=""
+  [ "$forced" = "t" ] && lift="ALTER TABLE $qualified NO FORCE ROW LEVEL SECURITY;"
+  psql "$URL" -X -v ON_ERROR_STOP=1 -tAq > /dev/null <<SQL
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SET TRANSACTION SNAPSHOT '$SNAPSHOT';
+SET LOCAL lock_timeout = '$LOCK_TIMEOUT';
+$lift
+\\copy $qualified TO '$WORK/$file'
+ROLLBACK;
+SQL
+  # Text-format COPY escapes newlines inside values: one line per row.
+  rows="$(wc -l < "$WORK/$file" | tr -d ' ')"
+  printf '\\copy %s FROM %s\n' "$qualified" "'$file'" >> "$WORK/load.sql"
+  printf '%s\t%s\n' "$qualified" "$rows" >> "$WORK/manifest.tsv"
+done < <(q "SELECT format('%I.%I', n.nspname, c.relname), c.relforcerowsecurity
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r', 'p')
+               AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND NOT EXISTS (SELECT 1 FROM pg_depend dep
+                               WHERE dep.objid = c.oid AND dep.deptype = 'e')
+             ORDER BY 1")
+
+# 4. Sequence positions (not covered by the snapshot; read at the end, so
+#    they are never behind the copied rows).
+q "SELECT format('SELECT pg_catalog.setval(%L, %s, %s);', format('%I.%I', schemaname, sequencename), last_value, 'true')
+     FROM pg_sequences WHERE last_value IS NOT NULL" > "$WORK/sequences.sql"
+
+echo "COMMIT;" >&"${HOLD[1]}"
+exec {HOLD[1]}>&-
+wait "$HOLD_PID" 2> /dev/null || true
+HOLD_PID=""
+
+printf 'format\tverax-backup-1\ncreated\t%s\ntables\t%s\n' "$STAMP" "$n" > "$WORK/VERSION"
+tar -czf "$OUT.partial" -C "$WORK" VERSION manifest.tsv pre-data.sql load.sql sequences.sql post-data.sql data
 mv "$OUT.partial" "$OUT"
-pg_restore --list "$OUT" > /dev/null
-echo "backup ok: $OUT"
+total="$(awk -F'\t' '{s += $2} END {print s + 0}' "$WORK/manifest.tsv")"
+echo "backup ok: $OUT ($n tables, $total rows)"
