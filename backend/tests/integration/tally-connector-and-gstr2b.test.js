@@ -20,6 +20,8 @@ const APP_URL = process.env.APP_DATABASE_URL;
 const describeIfDb = ADMIN_URL && APP_URL ? describe : describe.skip;
 
 const sharedAppPool = require("../../src/db/pool");
+const { withTenantTransaction } = require("../../src/db/tenant-context");
+const { claimNextJob } = require("../../src/services/tally-connector.service");
 
 describeIfDb("GSTR-2B snapshots + Tally connector — isolation & concurrency", () => {
   let adminPool;
@@ -213,5 +215,55 @@ describeIfDb("GSTR-2B snapshots + Tally connector — isolation & concurrency", 
       client.query(`SELECT id FROM tally_sync_jobs WHERE firm_id = $1`, [firmA])
     );
     expect(bSees.rows).toHaveLength(0);
+  });
+
+  test("two agents racing claimNextJob on one queued job: exactly one wins, through the real service function", async () => {
+    const agent1 = "aaaaaaaa-2222-4000-8000-000000000001";
+    const agent2 = "aaaaaaaa-2222-4000-8000-000000000002";
+    const raceDoc = "aaaaaaaa-2222-4000-8000-000000000111";
+
+    await adminPool.query(
+      `INSERT INTO documents (id, client_id, firm_id, file_name, s3_key, status) VALUES
+         ($1, $2, $3, 'conn-doc-race.pdf', 'conn-test-key-race', 'reviewed')
+       ON CONFLICT (id) DO NOTHING`,
+      [raceDoc, clientA, firmA]
+    );
+    await adminPool.query(
+      `INSERT INTO tally_agents (id, firm_id, name, token_hash) VALUES
+         ($1, $2, 'Race Agent 1', $3), ($4, $2, 'Race Agent 2', $5)
+       ON CONFLICT (id) DO NOTHING`,
+      [agent1, firmA, hash("raceAgent1"), agent2, hash("raceAgent2")]
+    );
+    // The earlier "one live sync job per document" test leaves its own queued
+    // row behind (verax-doc-again) — settle it so this firm has exactly the
+    // one queued job below for the two agents to actually contend over.
+    await adminPool.query(
+      `UPDATE tally_sync_jobs SET status = 'succeeded', completed_at = NOW()
+       WHERE firm_id = $1 AND status = 'queued'`,
+      [firmA]
+    );
+    await adminPool.query(
+      `INSERT INTO tally_sync_jobs (firm_id, client_id, document_id, remote_id, voucher_xml, status)
+       VALUES ($1,$2,$3,'verax-doc-race','<x/>','queued')`,
+      [firmA, clientA, raceDoc]
+    );
+
+    // Fire both claims genuinely concurrently — each opens its own connection
+    // and transaction, like two real agent processes polling at once — so the
+    // SKIP LOCKED row lock is actually contended, not just logically argued.
+    const [resultA, resultB] = await Promise.all([
+      withTenantTransaction({ firmId: firmA }, (db) => claimNextJob(db, { firmId: firmA, agentId: agent1 })),
+      withTenantTransaction({ firmId: firmA }, (db) => claimNextJob(db, { firmId: firmA, agentId: agent2 }))
+    ]);
+
+    const claims = [resultA, resultB].filter(Boolean);
+    expect(claims).toHaveLength(1);
+    expect(claims[0].remote_id).toBe("verax-doc-race");
+
+    const row = await adminPool.query(`SELECT agent_id, status FROM tally_sync_jobs WHERE document_id = $1`, [
+      raceDoc
+    ]);
+    expect(row.rows[0].status).toBe("claimed");
+    expect([agent1, agent2]).toContain(row.rows[0].agent_id);
   });
 });
